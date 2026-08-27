@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="queue-focus">
+  <schema id="org.gnome.shell.extensions.queue-focus" path="/org/gnome/shell/extensions/queue-focus/">
+    <key name="toggle-queue" type="as">
+      <default><![CDATA[['<Super>q']]]></default>
+      <summary>Show/hide the queue panel</summary>
+    </key>
+    <key name="quick-add" type="as">
+      <default><![CDATA[['<Super><Shift>q']]]></default>
+      <summary>Open the floating quick-add entry</summary>
+    </key>
+    <key name="show-board" type="as">
+      <default><![CDATA[['<Super><Alt>q']]]></default>
+      <summary>Show the board</summary>
+    </key>
+    <key name="complete-current" type="as">
+      <default><![CDATA[['<Super><Control>q']]]></default>
+      <summary>Complete (delete) the current task and pull the next one</summary>
+    </key>
+  </schema>
+</schemalist>

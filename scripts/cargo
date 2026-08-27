@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# cargo wrapper: uses the GTK -dev packages when present, otherwise links
+# straight against the runtime libraries (see devlibs-env.sh).
+export PATH="$HOME/.cargo/bin:$PATH"
+if ! pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
+  source "$(dirname "${BASH_SOURCE[0]}")/devlibs-env.sh"
+fi
+exec cargo "$@"

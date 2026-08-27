@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Queue Focus
+Comment=Minimal focus queue: Now / Next / Later / Side
+Exec=queue-focus toggle
+Icon=org.queuefocus.QueueFocus
+Terminal=false
+Categories=Utility;GNOME;GTK;
+Keywords=task;focus;todo;queue;
+DBusActivatable=true
+StartupNotify=false

@@ -1,0 +1,18 @@
+.qf-box { spacing: 6px; }
+.qf-dot { font-size: 9px; }
+.qf-dot-none { color: rgba(255, 255, 255, 0.35); }
+.qf-dot-work { color: #62a0ea; }
+.qf-dot-personal { color: #57e389; }
+.qf-label { font-weight: 600; }
+.qf-timer { font-family: monospace; opacity: 0.7; }
+
+.qf-section { font-size: 0.8em; font-weight: 700; letter-spacing: 0.08em; opacity: 0.6; }
+.qf-hint { opacity: 0.55; font-size: 0.9em; margin-left: 12px; }
+.qf-entry { width: 320px; }
+.qf-chip {
+  border-radius: 99px; padding: 0 6px; margin-right: 8px;
+  font-size: 0.75em; font-weight: 800; color: white;
+}
+.qf-chip-work { background-color: #3584e4; }
+.qf-chip-personal { background-color: #26a269; }
+.qf-open-btn { margin: 2px 4px; padding: 4px 8px; }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#1c71d8"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- rounded tile -->
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+  <rect x="8" y="8" width="112" height="56" rx="26" fill="url(#shine)"/>
+  <!-- the queue: one bright "now" bar, two fading "next" bars -->
+  <rect x="28" y="34" width="72" height="18" rx="9" fill="#ffffff"/>
+  <circle cx="37" cy="43" r="4.5" fill="#1c71d8"/>
+  <rect x="28" y="60" width="58" height="14" rx="7" fill="#ffffff" fill-opacity="0.55"/>
+  <rect x="28" y="82" width="44" height="14" rx="7" fill="#ffffff" fill-opacity="0.3"/>
+</svg>

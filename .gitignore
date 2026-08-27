@@ -1,0 +1,3 @@
+/target
+/.devlibs
+/extension/*/schemas/gschemas.compiled

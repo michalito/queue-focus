@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/qf-core", "crates/queue-focus"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Michael Sinoplis"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

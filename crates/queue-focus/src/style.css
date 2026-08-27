@@ -1,0 +1,109 @@
+/* Accent follows the current task's tag (libadwaita ≥ 1.6 CSS variables). */
+window.tag-work {
+  --accent-bg-color: #3584e4;
+  --accent-color: #3584e4;
+}
+window.tag-personal {
+  --accent-bg-color: #2ec27e;
+  --accent-color: #26a269;
+}
+window.tag-work headerbar,
+window.tag-work .entry-bar {
+  background: color-mix(in srgb, #3584e4 22%, var(--headerbar-bg-color));
+}
+window.tag-personal headerbar,
+window.tag-personal .entry-bar {
+  background: color-mix(in srgb, #2ec27e 22%, var(--headerbar-bg-color));
+}
+
+.entry-bar {
+  padding: 6px 10px 8px 10px;
+}
+.main-entry {
+  border-radius: 999px;
+}
+
+.queue-column {
+  padding: 0 12px 12px 12px;
+}
+.board {
+  padding: 0 6px 8px 6px;
+}
+.board-column {
+  padding: 0 6px;
+}
+.bucket-header {
+  padding: 14px 4px 6px 4px;
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.8em;
+}
+
+.task-row {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.task-row .row-btn {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 3px;
+  opacity: 0.45;
+}
+.task-row:hover .row-btn,
+.task-row:focus-within .row-btn {
+  opacity: 1;
+}
+
+/* The one task you're doing right now. */
+.task-row.current {
+  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
+  border-left: 3px solid var(--accent-bg-color);
+}
+.task-row.current .title {
+  font-size: 1.15em;
+  font-weight: 700;
+}
+.task-row.current .subtitle {
+  font-family: monospace;
+  font-weight: 600;
+  color: var(--accent-color);
+}
+
+.chip {
+  border-radius: 999px;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 5px;
+  font-size: 0.72em;
+  font-weight: 800;
+  color: white;
+}
+.chip.work { background: #3584e4; }
+.chip.personal { background: #26a269; }
+
+.hints {
+  padding: 4px 12px 8px 12px;
+  font-size: 0.75em;
+}
+
+.quick-add {
+  padding: 8px;
+}
+.quick-entry {
+  font-size: 1.2em;
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.placeholder {
+  padding: 8px;
+  font-style: italic;
+  opacity: 0.5;
+}
+.later-expander > title {
+  padding: 0;
+}
+.later-expander .bucket-header {
+  padding-left: 0;
+}

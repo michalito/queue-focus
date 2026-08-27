@@ -1,0 +1,13 @@
+{
+  "uuid": "queue-focus@queuefocus.org",
+  "name": "Queue Focus",
+  "description": "Shows your current task in the top bar; quick access to Now / Side / Next.",
+  "shell-version": [
+    "48",
+    "49",
+    "50"
+  ],
+  "url": "",
+  "version": 2,
+  "settings-schema": "org.gnome.shell.extensions.queue-focus"
+}
