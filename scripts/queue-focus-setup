@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Per-user GNOME integration for Queue Focus.
+#
+#   queue-focus-setup                 enable the extension and global shortcuts
+#   queue-focus-setup enable --allow-user-extensions
+#                                     also clear GNOME's global safety switch
+#   queue-focus-setup keys            show the current shortcuts
+#   queue-focus-setup key NAME KEY    change one, e.g. key toggle-queue '<Super>space'
+#   queue-focus-setup disable         disable the extension
+set -euo pipefail
+
+readonly UUID="queue-focus@queuefocus.org"
+readonly SCHEMA="org.gnome.shell.extensions.queue-focus"
+readonly MANUAL_ENABLE_STATUS=10
+readonly KEYS=(toggle-queue quick-add show-board complete-current)
+
+die() {
+  echo "queue-focus-setup: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command '$1' was not found"
+}
+
+(( EUID != 0 )) || die "do not run this per-user setup command as root or with sudo"
+
+data_home() {
+  if [ -n "${XDG_DATA_HOME:-}" ] && [[ "$XDG_DATA_HOME" = /* ]]; then
+    printf '%s\n' "$XDG_DATA_HOME"
+  else
+    : "${HOME:?HOME must be set}"
+    printf '%s\n' "$HOME/.local/share"
+  fi
+}
+
+ext_dir() {
+  local candidate
+  for candidate in \
+    "$(data_home)/gnome-shell/extensions/$UUID" \
+    "/usr/share/gnome-shell/extensions/$UUID"; do
+    if [ -d "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_schema() {
+  local directory
+  directory=$(ext_dir) || die "extension not installed (run 'make install' or install the .deb)"
+  if [ ! -f "$directory/schemas/gschemas.compiled" ]; then
+    require_command glib-compile-schemas
+    glib-compile-schemas --strict "$directory/schemas"
+  fi
+}
+
+gs() {
+  local directory
+  directory=$(ext_dir) || die "extension not installed (run 'make install' or install the .deb)"
+  gsettings --schemadir "$directory/schemas" "$@"
+}
+
+valid_key() {
+  local candidate
+  for candidate in "${KEYS[@]}"; do
+    [ "$candidate" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# Add or remove an item from a GSettings string-array without relying on the
+# exact whitespace or quoting emitted by a particular GLib version.
+set_array_membership() {
+  local schema=$1 key=$2 item=$3 action=$4 current updated
+  current=$(gsettings get "$schema" "$key")
+  updated=$(python3 - "$current" "$item" "$action" <<'PY'
+import ast
+import sys
+
+raw, item, action = sys.argv[1:]
+if raw.startswith("@as "):
+    raw = raw[4:]
+values = list(ast.literal_eval(raw))
+values = [value for value in values if value != item]
+if action == "add":
+    values.append(item)
+print(repr(values) if values else "@as []")
+PY
+)
+  gsettings set "$schema" "$key" "$updated"
+}
+
+show_keys() {
+  local key
+  ensure_schema
+  for key in "${KEYS[@]}"; do
+    printf '  %-18s %s\n' "$key" "$(gs get "$SCHEMA" "$key")"
+  done
+  echo "change with: queue-focus-setup key NAME '<Super>x'"
+}
+
+case "${1:-enable}" in
+  enable)
+    [ "$#" -le 2 ] && { [ "$#" -lt 2 ] || [ "$2" = "--allow-user-extensions" ]; } || {
+      echo "usage: queue-focus-setup enable [--allow-user-extensions]" >&2
+      exit 2
+    }
+    require_command gsettings
+    require_command gnome-extensions
+    require_command python3
+    ensure_schema
+
+    if [ "$(gsettings get org.gnome.shell disable-user-extensions)" = "true" ]; then
+      if [ "${2:-}" != "--allow-user-extensions" ]; then
+        echo "GNOME's global extension safety switch is active; it was left unchanged." >&2
+        echo "After reviewing your enabled extensions, explicitly clear it with:" >&2
+        printf '  %q enable --allow-user-extensions\n' "$0" >&2
+        exit "$MANUAL_ENABLE_STATUS"
+      fi
+      gsettings set org.gnome.shell disable-user-extensions false
+    fi
+
+    if gnome-extensions info "$UUID" >/dev/null 2>&1; then
+      gnome-extensions enable "$UUID"
+      echo "extension enabled"
+    else
+      # The running shell scans extension directories at login. Prepare both
+      # lists now so the extension loads cleanly at the next session.
+      set_array_membership org.gnome.shell enabled-extensions "$UUID" add
+      set_array_membership org.gnome.shell disabled-extensions "$UUID" remove
+      echo "extension enabled — log out and back in for it to load"
+    fi
+    show_keys
+    ;;
+  keys)
+    [ "$#" -eq 1 ] || { echo "usage: queue-focus-setup keys" >&2; exit 2; }
+    require_command gsettings
+    show_keys
+    ;;
+  key)
+    [ "$#" -eq 3 ] || { echo "usage: queue-focus-setup key NAME KEY" >&2; exit 2; }
+    valid_key "$2" || die "unknown shortcut '$2' (expected: ${KEYS[*]})"
+    require_command gsettings
+    require_command python3
+    ensure_schema
+    shortcut_value=$(python3 - "$3" <<'PY'
+import sys
+print(repr([sys.argv[1]]))
+PY
+)
+    gs set "$SCHEMA" "$2" "$shortcut_value"
+    show_keys
+    ;;
+  disable)
+    [ "$#" -eq 1 ] || { echo "usage: queue-focus-setup disable" >&2; exit 2; }
+    require_command gsettings
+    require_command gnome-extensions
+    require_command python3
+    gnome-extensions disable "$UUID" 2>/dev/null || true
+    set_array_membership org.gnome.shell enabled-extensions "$UUID" remove
+    set_array_membership org.gnome.shell disabled-extensions "$UUID" remove
+    echo "extension disabled"
+    ;;
+  *)
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

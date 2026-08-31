@@ -20,7 +20,7 @@ name = "queue-focus"
 maintainer = "Michael Sinoplis <sinoplismichael@gmail.com>"
 section = "utils"
 priority = "optional"
-depends = "libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.6), libglib2.0-bin"
+depends = "$auto, libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.6), libglib2.0-bin, python3"
 recommends = "gnome-shell (>= 48)"
 extended-description = """\
 A minimal focus queue for GNOME. Tasks are titles arranged in four buckets

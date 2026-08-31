@@ -80,27 +80,90 @@ so the extension starts it on demand.
 
 ## Data
 
-`~/.local/share/queue-focus/tasks.json` (or `$XDG_DATA_HOME`). Plain JSON,
-written atomically; safe to edit by hand or sync.
+`$XDG_DATA_HOME/queue-focus/tasks.json` (default:
+`~/.local/share/queue-focus/tasks.json`). Plain JSON, written atomically; safe
+to edit by hand or sync.
 
 ## Install / update
 
-Rust ≥ 1.80 (`curl https://sh.rustup.rs | sh`). GTK dev packages are optional:
-without them the build links straight against the runtime libraries every GNOME
-system already has (`scripts/cargo` picks the right mode).
+Prerequisites: GNOME Shell 48–50, Rust ≥ 1.80
+(`curl https://sh.rustup.rs | sh`), Python 3, and GLib's
+`glib-compile-schemas`. GTK development packages are optional: without them the
+build links directly against the GTK 4.16+/libadwaita 1.6+ runtime libraries
+already provided by a supported GNOME system (`scripts/cargo` selects the
+appropriate mode).
 
 ```
-make install        # build, install into ~/.local, restart the service, enable the extension
-make update         # git pull --ff-only (if this is a clone with a remote) + make install
+make install        # ask for a version, then build and install into ~/.local
+make update         # git pull --ff-only, ask for a version, then install
 make uninstall      # remove everything except your tasks
 ```
 
-Re-run `make install` (or `make update`) whenever you want the latest version:
-the service restarts with the new binary and the top-bar extension reconnects by
-itself. Changes to the extension's own code load at the next login (Wayland).
+`make install` is a self-contained per-user installation: it copies the binary
+and setup helper into `~/.local/bin`, then installs the D-Bus service, desktop
+entry, icons, and extension under `$XDG_DATA_HOME` (default:
+`~/.local/share`). It builds and validates everything before replacing existing
+files, so moving the checkout or running `make clean` afterward does not break
+the installed app. No `sudo` is used.
 
-Other targets: `make build`, `make test`, `make check` (fmt + clippy + JS syntax),
-`make deb`, `make help`.
+Re-run `make install` (or `make update`) whenever you want the latest version.
+The service restarts with the new binary and the top-bar extension reconnects by
+itself. Changes to the extension's own code load at the next login on Wayland.
+If `~/.local/bin` is not on `PATH`, installation still works from GNOME, but the
+installer prints the command-line setup warning.
+
+### Choosing the version number
+
+Installation always uses the latest code in the working tree. When `VERSION` is
+omitted, the version-aware commands prompt you and show the current version as
+the default; press Enter to keep it:
+
+```
+make version
+make install
+make update          # pulls first, then prompts
+```
+
+For a non-interactive command, or simply to provide the answer up front, pass
+the semantic version explicitly:
+
+```
+make version VERSION=0.2.0
+```
+
+This validates and atomically updates the workspace version in `Cargo.toml`,
+both workspace packages in `Cargo.lock`, and GNOME's separate integer extension
+revision. The extension revision increments automatically whenever the semantic
+version changes. To choose it explicitly:
+
+```
+make version VERSION=0.2.0 EXTENSION_VERSION=4
+```
+
+You can combine versioning with either installation workflow:
+
+```
+make install VERSION=0.2.0   # version the current working tree, then install it
+make update VERSION=0.2.0    # pull the latest code, version it, then install it
+```
+
+Pre-release and build versions such as `0.2.0-rc.1+build.5` are supported. The
+version command does not change dependency versions, create a Git tag, or make a
+commit. Non-interactive environments must pass `VERSION` explicitly rather than
+waiting for input. `queue-focus version` and the `.deb` version are derived from
+the Cargo workspace version automatically.
+
+If GNOME's global extension safety switch is active, the app is still installed
+successfully and the switch is left unchanged. After reviewing your enabled
+extensions, explicitly clear it with:
+
+```
+queue-focus-setup enable --allow-user-extensions
+```
+
+Other targets: `make build`, `make test`, `make check` (fmt, clippy, JS, Python,
+and shell syntax), `make test-install`, `make test-version`, `make deb`, and
+`make help`.
 
 ### System-wide .deb
 
@@ -111,10 +174,6 @@ sudo apt install ./target/debian/queue-focus_*.deb
 queue-focus-setup                              # once per user: enable the extension
 ```
 
-If GNOME's global extension safety switch is active, setup leaves it active and
-exits with an explanation. After checking your enabled extensions, explicitly
-clear it with `queue-focus-setup enable --allow-user-extensions`.
-
 Upgrading = build a new `.deb` and `apt install` it again.
 
 ## Layout
@@ -124,6 +183,6 @@ crates/qf-core      model + JSON storage, no GTK (unit tested)
 crates/queue-focus  GTK4/libadwaita app, D-Bus service, CLI
 extension/          GNOME Shell extension (top bar)
 data/               .desktop, D-Bus service file
-scripts/            cargo wrapper, per-user install, queue-focus-setup
-Makefile            install / update / check / deb
+scripts/            build, install, setup, versioning, and integration-test tooling
+Makefile            install / update / version / check / deb
 ```

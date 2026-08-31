@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""Set Queue Focus's semantic version and GNOME extension revision safely."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import tempfile
+import tomllib
+
+
+ROOT = Path(__file__).resolve().parent.parent
+CARGO_TOML = ROOT / "Cargo.toml"
+CARGO_LOCK = ROOT / "Cargo.lock"
+EXTENSION_METADATA = (
+    ROOT / "extension/queue-focus@queuefocus.org/metadata.json"
+)
+WORKSPACE_PACKAGES = {"qf-core", "queue-focus"}
+MAX_EXTENSION_VERSION = 2_147_483_647
+
+SEMVER = re.compile(
+    r"^(?P<major>0|[1-9][0-9]*)\."
+    r"(?P<minor>0|[1-9][0-9]*)\."
+    r"(?P<patch>0|[1-9][0-9]*)"
+    r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+
+
+class VersionError(RuntimeError):
+    pass
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "set the Cargo workspace version and GNOME extension revision"
+        )
+    )
+    parser.add_argument(
+        "version", nargs="?", help="semantic version, for example 0.2.0"
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="prompt for the semantic version when it is not supplied",
+    )
+    parser.add_argument(
+        "--extension-version",
+        type=int,
+        metavar="N",
+        help=(
+            "GNOME's positive integer revision; defaults to the current "
+            "revision plus one when the semantic version changes"
+        ),
+    )
+    return parser.parse_args()
+
+
+def prompt_for_version(current: str) -> str:
+    terminal = None
+    try:
+        terminal = open("/dev/tty", "r+", encoding="utf-8", buffering=1)
+    except OSError:
+        input_stream = sys.stdin
+        output_stream = sys.stderr
+    else:
+        input_stream = terminal
+        output_stream = terminal
+
+    try:
+        while True:
+            print(
+                f"Queue Focus version [{current}]: ",
+                end="",
+                file=output_stream,
+                flush=True,
+            )
+            response = input_stream.readline()
+            if response == "":
+                raise VersionError(
+                    "no interactive input is available; pass VERSION explicitly, "
+                    "for example: make install VERSION=0.2.0"
+                )
+            candidate = response.strip() or current
+            try:
+                validate_semver(candidate)
+            except VersionError as error:
+                print(f"Invalid version: {error}", file=output_stream)
+                continue
+            return candidate
+    finally:
+        if terminal is not None:
+            terminal.close()
+
+
+def validate_semver(version: str) -> None:
+    match = SEMVER.fullmatch(version)
+    if match is None:
+        raise VersionError(
+            f"invalid semantic version {version!r}; expected MAJOR.MINOR.PATCH"
+            " with optional -PRERELEASE and +BUILD"
+        )
+    prerelease = match.group("prerelease")
+    if prerelease:
+        for identifier in prerelease.split("."):
+            if identifier.isdigit() and len(identifier) > 1 and identifier[0] == "0":
+                raise VersionError(
+                    f"invalid semantic version {version!r}; numeric prerelease "
+                    "identifiers may not contain leading zeroes"
+                )
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise VersionError(f"could not read {path.relative_to(ROOT)}: {error}") from error
+
+
+def workspace_version(cargo_text: str) -> str:
+    try:
+        manifest = tomllib.loads(cargo_text)
+        version = manifest["workspace"]["package"]["version"]
+    except (tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        raise VersionError(
+            "Cargo.toml must define [workspace.package] version"
+        ) from error
+    if not isinstance(version, str):
+        raise VersionError("Cargo.toml workspace version must be a string")
+    validate_semver(version)
+    return version
+
+
+def replace_workspace_version(cargo_text: str, old: str, new: str) -> str:
+    lines = cargo_text.splitlines(keepends=True)
+    in_workspace_package = False
+    replacements = 0
+    pattern = re.compile(r'^(\s*version\s*=\s*)"([^"]*)"(\s*(?:#.*)?(?:\n)?)$')
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_workspace_package = stripped == "[workspace.package]"
+            continue
+        if not in_workspace_package:
+            continue
+        match = pattern.fullmatch(line)
+        if match is None:
+            continue
+        if match.group(2) != old:
+            raise VersionError(
+                "Cargo.toml parsed workspace version does not match its version line"
+            )
+        lines[index] = f'{match.group(1)}"{new}"{match.group(3)}'
+        replacements += 1
+
+    if replacements != 1:
+        raise VersionError(
+            f"expected one workspace version line in Cargo.toml, found {replacements}"
+        )
+    return "".join(lines)
+
+
+PACKAGE_BLOCK = re.compile(
+    r"^\[\[package\]\]\n.*?(?=^\[\[package\]\]\n|\Z)", re.MULTILINE | re.DOTALL
+)
+LOCK_VERSION_LINE = re.compile(r'^(version\s*=\s*)"([^"]*)"(\s*)$', re.MULTILINE)
+
+
+def replace_lock_versions(lock_text: str, old: str, new: str) -> str:
+    try:
+        lock = tomllib.loads(lock_text)
+    except tomllib.TOMLDecodeError as error:
+        raise VersionError(f"Cargo.lock is invalid TOML: {error}") from error
+
+    workspace_entries = {
+        package["name"]: package
+        for package in lock.get("package", [])
+        if package.get("name") in WORKSPACE_PACKAGES and "source" not in package
+    }
+    if set(workspace_entries) != WORKSPACE_PACKAGES:
+        missing = ", ".join(sorted(WORKSPACE_PACKAGES - set(workspace_entries)))
+        raise VersionError(f"Cargo.lock is missing workspace package entries: {missing}")
+    for name, package in workspace_entries.items():
+        if package.get("version") != old:
+            raise VersionError(
+                f"Cargo.lock has {name} at {package.get('version')!r}, expected {old!r}"
+            )
+
+    replaced: set[str] = set()
+
+    def update_block(match: re.Match[str]) -> str:
+        block = match.group(0)
+        try:
+            package = tomllib.loads(block)["package"][0]
+        except (tomllib.TOMLDecodeError, KeyError, IndexError, TypeError) as error:
+            raise VersionError("could not parse a Cargo.lock package block") from error
+        name = package.get("name")
+        if name not in WORKSPACE_PACKAGES or "source" in package:
+            return block
+        version_matches = list(LOCK_VERSION_LINE.finditer(block))
+        if len(version_matches) != 1:
+            raise VersionError(
+                f"expected one version line for {name} in Cargo.lock, "
+                f"found {len(version_matches)}"
+            )
+        version_match = version_matches[0]
+        if version_match.group(2) != old:
+            raise VersionError(f"Cargo.lock text for {name} is not at {old}")
+        replaced.add(name)
+        return (
+            block[: version_match.start()]
+            + f'{version_match.group(1)}"{new}"{version_match.group(3)}'
+            + block[version_match.end() :]
+        )
+
+    updated = PACKAGE_BLOCK.sub(update_block, lock_text)
+    if replaced != WORKSPACE_PACKAGES:
+        missing = ", ".join(sorted(WORKSPACE_PACKAGES - replaced))
+        raise VersionError(f"did not update Cargo.lock entries: {missing}")
+    return updated
+
+
+METADATA_VERSION_LINE = re.compile(
+    r'^(\s*"version"\s*:\s*)([0-9]+)(\s*,?\s*)$', re.MULTILINE
+)
+
+
+def extension_version(metadata_text: str) -> int:
+    try:
+        metadata = json.loads(metadata_text)
+        version = metadata["version"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise VersionError("extension metadata must contain an integer version") from error
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise VersionError("extension metadata version must be a positive integer")
+    return version
+
+
+def replace_extension_version(metadata_text: str, old: int, new: int) -> str:
+    matches = list(METADATA_VERSION_LINE.finditer(metadata_text))
+    if len(matches) != 1:
+        raise VersionError(
+            "expected exactly one integer version in extension metadata, "
+            f"found {len(matches)}"
+        )
+    match = matches[0]
+    if int(match.group(2)) != old:
+        raise VersionError(
+            "parsed extension version does not match its metadata line"
+        )
+    return (
+        metadata_text[: match.start()]
+        + f"{match.group(1)}{new}{match.group(3)}"
+        + metadata_text[match.end() :]
+    )
+
+
+def validate_extension_target(current: int, requested: int, app_changed: bool) -> None:
+    if requested < 1 or requested > MAX_EXTENSION_VERSION:
+        raise VersionError(
+            f"extension version must be between 1 and {MAX_EXTENSION_VERSION}"
+        )
+    if requested < current or (app_changed and requested == current):
+        comparison = "greater than" if app_changed else "at least"
+        raise VersionError(
+            f"extension version must be {comparison} the current revision {current}"
+        )
+
+
+def replace_transactionally(updates: dict[Path, str]) -> None:
+    prepared: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    committed: list[Path] = []
+    try:
+        for path, contents in updates.items():
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{path.name}.version-new.", dir=path.parent
+            )
+            temporary = Path(temporary_name)
+            prepared[path] = temporary
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as file:
+                    file.write(contents)
+                    file.flush()
+                    os.fsync(file.fileno())
+                shutil.copymode(path, temporary)
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+
+        for path in updates:
+            descriptor, backup_name = tempfile.mkstemp(
+                prefix=f".{path.name}.version-old.", dir=path.parent
+            )
+            os.close(descriptor)
+            backup = Path(backup_name)
+            backups[path] = backup
+            shutil.copy2(path, backup)
+            os.replace(prepared[path], path)
+            committed.append(path)
+
+        for directory in {path.parent for path in updates}:
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    except BaseException:
+        for path in reversed(committed):
+            backup = backups.get(path)
+            if backup is not None and backup.exists():
+                os.replace(backup, path)
+        raise
+    finally:
+        for temporary in prepared.values():
+            temporary.unlink(missing_ok=True)
+        for backup in backups.values():
+            backup.unlink(missing_ok=True)
+
+
+def main() -> int:
+    arguments = parse_args()
+
+    cargo_text = read_text(CARGO_TOML)
+    lock_text = read_text(CARGO_LOCK)
+    metadata_text = read_text(EXTENSION_METADATA)
+    current_version = workspace_version(cargo_text)
+    current_extension_version = extension_version(metadata_text)
+    if arguments.version is None:
+        if not arguments.interactive:
+            raise VersionError(
+                "version is required; pass one explicitly or use --interactive"
+            )
+        requested_version = prompt_for_version(current_version)
+    elif arguments.interactive:
+        raise VersionError("do not combine an explicit version with --interactive")
+    else:
+        requested_version = arguments.version
+    validate_semver(requested_version)
+    app_changed = requested_version != current_version
+
+    if arguments.extension_version is None:
+        requested_extension_version = (
+            current_extension_version + 1 if app_changed else current_extension_version
+        )
+    else:
+        requested_extension_version = arguments.extension_version
+    validate_extension_target(
+        current_extension_version, requested_extension_version, app_changed
+    )
+
+    updated_cargo = replace_workspace_version(
+        cargo_text, current_version, requested_version
+    )
+    updated_lock = replace_lock_versions(lock_text, current_version, requested_version)
+    updated_metadata = replace_extension_version(
+        metadata_text, current_extension_version, requested_extension_version
+    )
+
+    updates = {
+        path: contents
+        for path, original, contents in (
+            (CARGO_TOML, cargo_text, updated_cargo),
+            (CARGO_LOCK, lock_text, updated_lock),
+            (EXTENSION_METADATA, metadata_text, updated_metadata),
+        )
+        if contents != original
+    }
+    if updates:
+        replace_transactionally(updates)
+
+    print(f"app version: {current_version} -> {requested_version}")
+    print(
+        "GNOME extension revision: "
+        f"{current_extension_version} -> {requested_extension_version}"
+    )
+    if not updates:
+        print("version files already up to date")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("\nset-version: cancelled", file=sys.stderr)
+        raise SystemExit(130) from None
+    except VersionError as error:
+        print(f"set-version: {error}", file=sys.stderr)
+        raise SystemExit(2) from error

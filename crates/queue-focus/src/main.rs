@@ -29,6 +29,10 @@ usage: queue-focus [COMMAND]
 
 fn main() -> glib::ExitCode {
     let first_arg = std::env::args().nth(1);
+    if matches!(first_arg.as_deref(), Some("version" | "--version")) {
+        println!(concat!("queue-focus ", env!("CARGO_PKG_VERSION")));
+        return glib::ExitCode::from(0);
+    }
     if first_arg.as_deref() != Some("service") {
         ensure_service();
     }

@@ -30,16 +30,49 @@ data_home() {
   fi
 }
 
-quote_exec_arg() {
+quote_desktop_exec_arg() {
   local value=$1
   case "$value" in
     *$'\n'*|*$'\r'*) die "installation paths may not contain newlines" ;;
   esac
-  value=${value//\\/\\\\}
-  value=${value//\"/\\\"}
-  value=${value//\$/\\$}
-  value=${value//\`/\\\`}
-  printf '"%s"' "$value"
+  python3 - "$value" <<'PY'
+import sys
+
+value = sys.argv[1]
+escaped = []
+for character in value:
+    if character == "\\":
+        escaped.append("\\\\\\\\")
+    elif character in {'"', '`', '$'}:
+        escaped.append("\\\\" + character)
+    else:
+        escaped.append(character)
+print('"' + ''.join(escaped) + '"', end='')
+PY
+}
+
+# D-Bus service files use key-file escaping, where \$ and \` are invalid even
+# though desktop Exec fields require them. D-Bus does not invoke a shell, so
+# those characters are already literal here.
+quote_service_exec_arg() {
+  local value=$1
+  case "$value" in
+    *$'\n'*|*$'\r'*) die "installation paths may not contain newlines" ;;
+  esac
+  python3 - "$value" <<'PY'
+import sys
+
+value = sys.argv[1]
+escaped = []
+for character in value:
+    if character == "\\":
+        escaped.append("\\\\\\\\")
+    elif character == '"':
+        escaped.append("\\\\\"")
+    else:
+        escaped.append(character)
+print('"' + ''.join(escaped) + '"', end='')
+PY
 }
 
 atomic_copy() {
@@ -90,7 +123,10 @@ replace_extension() {
 
   if [ -e "$EXT_DIR" ] || [ -L "$EXT_DIR" ]; then
     EXTENSION_BACKUP=$(mktemp -d "$EXTENSION_PARENT/.${UUID}.old.XXXXXX")
-    rmdir "$EXTENSION_BACKUP"
+    if ! rmdir "$EXTENSION_BACKUP"; then
+      EXTENSION_BACKUP=""
+      return 1
+    fi
     if ! mv -- "$EXT_DIR" "$EXTENSION_BACKUP"; then
       EXTENSION_BACKUP=""
       return 1
@@ -99,8 +135,9 @@ replace_extension() {
 
   if ! mv -- "$EXTENSION_STAGE" "$EXT_DIR"; then
     if [ -n "$EXTENSION_BACKUP" ]; then
-      mv -- "$EXTENSION_BACKUP" "$EXT_DIR" || true
-      EXTENSION_BACKUP=""
+      if mv -- "$EXTENSION_BACKUP" "$EXT_DIR"; then
+        EXTENSION_BACKUP=""
+      fi
     fi
     return 1
   fi
@@ -119,6 +156,7 @@ fi
 
 : "${HOME:?HOME must be set}"
 [[ "$HOME" = /* ]] || die "HOME must be an absolute path"
+(( EUID != 0 )) || die "do not run this per-user installer as root or with sudo"
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly BUILD_BIN="$ROOT/target/release/queue-focus"
@@ -176,7 +214,8 @@ for required in \
   [ -e "$required" ] || die "required project file is missing: $required"
 done
 
-for command in cp glib-compile-schemas gnome-extensions gsettings install mktemp mv python3 rm rustc; do
+for command in bash chmod cp glib-compile-schemas gnome-extensions gsettings \
+  install mkdir mktemp mv python3 rm rmdir; do
   require_command "$command"
 done
 
@@ -192,7 +231,7 @@ if (( rust_major < 1 || (rust_major == 1 && rust_minor < 80) )); then
   die "Rust 1.80 or newer is required (found $rust_version)"
 fi
 
-if ! "$ROOT/scripts/cargo" --version >/dev/null 2>&1; then
+if ! PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" cargo --version >/dev/null 2>&1; then
   die "Cargo is unavailable; install Rust 1.80 or newer from https://rustup.rs"
 fi
 
@@ -216,12 +255,13 @@ if command -v node >/dev/null 2>&1; then
 fi
 bash -n "$ROOT/scripts/queue-focus-setup"
 
-quoted_binary=$(quote_exec_arg "$INSTALLED_BIN")
+quoted_service_binary=$(quote_service_exec_arg "$INSTALLED_BIN")
+quoted_desktop_binary=$(quote_desktop_exec_arg "$INSTALLED_BIN")
 printf '[D-BUS Service]\nName=%s\nExec=%s service\n' \
-  "$APPID" "$quoted_binary" >"$STAGED_SERVICE"
+  "$APPID" "$quoted_service_binary" >"$STAGED_SERVICE"
 while IFS= read -r line || [ -n "$line" ]; do
   if [[ "$line" = Exec=* ]]; then
-    printf 'Exec=%s toggle\n' "$quoted_binary"
+    printf 'Exec=%s toggle\n' "$quoted_desktop_binary"
   else
     printf '%s\n' "$line"
   fi
@@ -253,14 +293,15 @@ echo "installed $installed_version at $INSTALLED_BIN"
 
 setup_status=0
 "$SETUP_BIN" enable || setup_status=$?
+printf -v quoted_setup_bin '%q' "$SETUP_BIN"
 case "$setup_status" in
   0) ;;
   "$MANUAL_ENABLE_STATUS")
     warn "the app is installed, but the GNOME extension was not enabled"
-    warn "after reviewing your enabled extensions, run: $SETUP_BIN enable --allow-user-extensions"
+    warn "after reviewing your enabled extensions, run: $quoted_setup_bin enable --allow-user-extensions"
     ;;
   *)
-    die "the app is installed, but GNOME extension setup failed (status $setup_status); retry with: $SETUP_BIN enable"
+    die "the app is installed, but GNOME extension setup failed (status $setup_status); retry with: $quoted_setup_bin enable"
     ;;
 esac
 
