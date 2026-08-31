@@ -8,6 +8,6 @@
     "50"
   ],
   "url": "",
-  "version": 2,
+  "version": 3,
   "settings-schema": "org.gnome.shell.extensions.queue-focus"
 }
