@@ -1,188 +1,527 @@
 # Queue Focus
 
-A minimal focus queue for Ubuntu/GNOME. Tasks are just titles, arranged in four
-buckets. The head of **Now** is the one thing you're doing; it lives in the GNOME
-top bar with a running timer. Done tasks are deleted — there is no history.
+Queue Focus is a task queue for GNOME. It keeps one task visible in the top bar and stores the rest in four ordered buckets.
 
-| Bucket | Meaning |
-|--------|---------|
-| **Now** | What you're doing. The first item is *the* current task (timed, shown in the top bar). |
-| **Side** | Things running in parallel to the current task (builds, waiting on someone, a slow download). |
-| **Next** | Ordered queue. Finishing the current task pulls the head of Next into Now. |
-| **Later** | Backlog. |
+A task has a title, a bucket, and an optional `work` or `personal` tag. There are no projects, dates, priorities, or completion history. Marking a task done deletes it.
 
-Each task can carry a `work` or `personal` tag. Both live in the same queue; the
-window accent and the top-bar dot follow the tag of the current task.
+Queue Focus supports GNOME Shell 48, 49, and 50.
 
-## Three zoom levels
+## The four buckets
 
-1. **Top bar** (GNOME Shell extension) – current task + elapsed time. Click for a
-   popup with quick-add, *Done*, and one-click promotion of Side/Next items.
-2. **Queue** (`Super+Q`) – a narrow panel: Now, Side, Next, and a collapsed Later.
-3. **Board** (`Super+Alt+Q`) – four columns for the occasional big reshuffle.
+1. Now contains active tasks. The first task in Now is the current task. It appears in the top bar and has a running timer.
 
-Plus **quick add** (`Super+Shift+Q`): a floating entry, type, Enter, gone — and
-`Super+Ctrl+Q` completes the current task with an on-screen confirmation.
+2. Side contains work that can continue beside the current task. A build, download, or request waiting for a reply can go here.
 
-The shortcuts belong to the extension; see them with `queue-focus-setup keys` and
-change one with `queue-focus-setup key toggle-queue '<Super>space'`.
+3. Next is an ordered queue. If completing the current task leaves Now empty, the first task in Next moves to Now.
 
-## Quick-add syntax
+4. Later is the backlog.
 
-```
-fix the login bug #w          → Next, tagged work
-!ship v0.1                    → straight to Now (becomes current)
-call mum #p @later            → Later, tagged personal
-wait for CI @side             → Side
-```
-`#w`/`#work`, `#p`/`#personal`; `@now @next @later @side`; `!` prefix = Now.
-`Ctrl+Enter` in any entry also sends to Now. A `#` that isn't a tag (`#123`) is kept.
+Promoting a task puts it first in Now. The previous current task stays in Now behind it. A task starts a new timer whenever it becomes current.
 
-## Keyboard (in the window)
+## What you can open
 
-| Key | Action |
-|-----|--------|
-| `j` / `k` | move focus down / up (across sections) |
-| `J` / `K` | move task down / up within its bucket |
-| `Enter` | make focused task current |
-| `d`, `x`, `Delete` | done → delete (current task pulls the next one) |
-| `1` `2` `3` `4` | move to Now / Next / Later / Side |
-| `t` | cycle tag: none → work → personal |
-| `r`, `F2` | rename |
-| `l` | expand/collapse Later (queue view) |
-| `n`, `/`, `a` | focus the add entry |
-| `q` / `b`, `Ctrl+1` / `Ctrl+2` | queue / board view |
-| `Esc`, `Ctrl+W` | hide window |
+### Top bar
 
-Mouse: drag rows between/within lists (or onto a section header, e.g. the collapsed
-Later); hover a row for its buttons; double-click to make current; `⋮` menu for
-move/rename/delete.
+The GNOME Shell extension shows the current title and elapsed time. Its dot uses the tag of the current task. Work, personal, and untagged tasks have different dot styles.
 
-## CLI
+The app window also changes its accent to match the tag of the current task.
 
-```
-queue-focus toggle|queue|board|hide      windows
-queue-focus add "text"                   add (quick-add syntax)
-queue-focus add                          open the floating quick-add
-queue-focus done                         complete the current task
-queue-focus status                       JSON snapshot
-queue-focus quit                         stop the background service
-queue-focus version
+Open the top bar menu to add a task, complete the current task, or promote a task from Now, Side, or Next. The menu shows up to eight Next tasks and the number of Later tasks. It also has buttons for the Queue and Board views.
+
+The extension starts the app service when needed. It reconnects after an install, update, or service restart. A save warning appears as a GNOME notification.
+
+### Queue view
+
+The Queue view is a narrow window with Now, Side, Next, and Later in one column. Later starts collapsed.
+
+### Board view
+
+The Board view shows the same tasks in four columns. Use it when you need to move several tasks.
+
+### Quick add window
+
+The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next. Press `Ctrl+Enter` to add to Now. Press `Escape` to close it.
+
+All views use the same service and task file. A change in one view appears in the others.
+
+## Install for the current user
+
+Run this from the repository root:
+
+```sh
+make install
 ```
 
-## D-Bus
+The command asks for the app version. Press Enter to keep the version shown in brackets. The installer then builds the latest code in the current working tree and installs it for the current user.
 
-Bus `org.queuefocus.QueueFocus`, object `/org/queuefocus/QueueFocus`, interface
-`org.queuefocus.QueueFocus1`: `GetState`, `Add(text, bucket)`, `CompleteCurrent`,
-`Promote(id)`, `Remove(id)`, `Move(id, bucket, index)`, `SetTag(id, tag)`,
-`Show(view)`, `Hide`; signal `Changed(json)`. The service is D-Bus activatable,
-so the extension starts it on demand.
+Do not use `sudo` with `make install`.
 
-## Data
+The install contains these files:
 
-`$XDG_DATA_HOME/queue-focus/tasks.json` (default:
-`~/.local/share/queue-focus/tasks.json`). Plain JSON, written atomically; safe
-to edit by hand or sync.
+1. `~/.local/bin/queue-focus`
 
-## Install / update
+2. `~/.local/bin/queue-focus-setup`
 
-Prerequisites: GNOME Shell 48–50, Rust ≥ 1.80
-(`curl https://sh.rustup.rs | sh`), Python 3, and GLib's
-`glib-compile-schemas`. GTK development packages are optional: without them the
-build links directly against the GTK 4.16+/libadwaita 1.6+ runtime libraries
-already provided by a supported GNOME system (`scripts/cargo` selects the
-appropriate mode).
+3. The GNOME Shell extension under `$XDG_DATA_HOME/gnome-shell/extensions`
 
+4. The D Bus service under `$XDG_DATA_HOME/dbus-1/services`
+
+5. The desktop entry under `$XDG_DATA_HOME/applications`
+
+6. The app icons under `$XDG_DATA_HOME/icons`
+
+If `XDG_DATA_HOME` is not an absolute path, the installer uses `~/.local/share`.
+
+The installed app does not refer back to the repository. You can move the repository or run `make clean` after installation.
+
+The installer builds and checks staged files before replacing an installed extension. It validates the GNOME schema and extension metadata. It also checks the JavaScript when Node.js is available. Existing extension files are restored if replacement fails.
+
+On Wayland, log out and back in after the first install or after extension code changes. App binary updates do not need a logout. The extension reconnects when the new service starts.
+
+If `~/.local/bin` is not in `PATH`, GNOME can still open the app. Add that directory to `PATH` if you want to use `queue-focus` and `queue-focus-setup` in a terminal.
+
+### Requirements
+
+The local install needs:
+
+1. GNOME Shell 48, 49, or 50
+
+2. Rust and Cargo 1.80 or newer
+
+3. GTK 4.16 or newer and libadwaita 1.6 or newer at runtime
+
+4. `make`, Bash, Python 3.11 or newer, a C compiler, and common Unix file tools
+
+5. `glib-compile-schemas`, `gsettings`, and `gnome-extensions`
+
+6. Internet access when Cargo needs to download a dependency
+
+Install Rust from [rustup.rs](https://rustup.rs/) if it is not present.
+
+GTK development packages are optional. `scripts/cargo` uses them through `pkg-config` when they are installed. Otherwise it links against the GTK and libadwaita runtime libraries on the system. Use `scripts/cargo` or the Make targets so this choice is made for you.
+
+Node.js is optional for installation and required by `make check`.
+
+## Update and uninstall
+
+To pull the current branch and install it:
+
+```sh
+make update
 ```
-make install        # ask for a version, then build and install into ~/.local
-make update         # git pull --ff-only, ask for a version, then install
-make uninstall      # remove everything except your tasks
+
+If an `origin` remote exists, the pull uses fast forward mode. If the branch has diverged or local changes block the pull, resolve the Git state and run the command again. If there is no `origin` remote, the command installs the current working tree.
+
+To reinstall the current working tree without pulling:
+
+```sh
+make install
 ```
 
-`make install` is a self-contained per-user installation: it copies the binary
-and setup helper into `~/.local/bin`, then installs the D-Bus service, desktop
-entry, icons, and extension under `$XDG_DATA_HOME` (default:
-`~/.local/share`). It builds and validates everything before replacing existing
-files, so moving the checkout or running `make clean` afterward does not break
-the installed app. No `sudo` is used.
+To remove the current user install:
 
-Re-run `make install` (or `make update`) whenever you want the latest version.
-The service restarts with the new binary and the top-bar extension reconnects by
-itself. Changes to the extension's own code load at the next login on Wayland.
-If `~/.local/bin` is not on `PATH`, installation still works from GNOME, but the
-installer prints the command-line setup warning.
-
-### Choosing the version number
-
-Installation always uses the latest code in the working tree. When `VERSION` is
-omitted, the version-aware commands prompt you and show the current version as
-the default; press Enter to keep it:
-
+```sh
+make uninstall
 ```
+
+Uninstall removes the app, extension, desktop entry, service file, and icons. It keeps the task file.
+
+## Choose the version
+
+Queue Focus has two version numbers.
+
+The app version is a semantic version such as `0.2.0`. Cargo, the binary, and the Debian package use it.
+
+The GNOME extension revision is a positive integer. GNOME uses it to tell extension builds apart.
+
+### Interactive use
+
+These commands ask for the app version when `VERSION` is not given:
+
+```sh
 make version
 make install
-make update          # pulls first, then prompts
+make update
 ```
 
-For a non-interactive command, or simply to provide the answer up front, pass
-the semantic version explicitly:
+The prompt looks like this:
 
+```text
+Queue Focus version [0.1.0]:
 ```
+
+Press Enter to keep the current version. Invalid input is rejected and the prompt is shown again.
+
+### Explicit use
+
+Pass the version on the Make command line when no prompt is wanted:
+
+```sh
 make version VERSION=0.2.0
+make install VERSION=0.2.0
+make update VERSION=0.2.0
 ```
 
-This validates and atomically updates the workspace version in `Cargo.toml`,
-both workspace packages in `Cargo.lock`, and GNOME's separate integer extension
-revision. The extension revision increments automatically whenever the semantic
-version changes. To choose it explicitly:
+Ambient environment variables named `VERSION` or `EXTENSION_VERSION` are ignored. This prevents an unrelated shell setting from changing project files. Put each value after the Make target as shown above.
 
+In a noninteractive job such as CI, pass `VERSION` explicitly. The command stops with an error if it cannot read an answer.
+
+Pre release and build information are supported:
+
+```sh
+make version VERSION=0.2.0-rc.1+build.5
 ```
+
+When the app version changes, the GNOME extension revision increases by one. Set it yourself when needed:
+
+```sh
 make version VERSION=0.2.0 EXTENSION_VERSION=4
 ```
 
-You can combine versioning with either installation workflow:
+The extension revision must be from 1 through 2147483647. It must increase when the app version changes. It cannot go backwards when the app version stays the same.
 
+The version command updates `Cargo.toml`, the local workspace entries in `Cargo.lock`, and the extension `metadata.json` as one operation. If one replacement fails, it restores the old files. It does not change dependency versions, create a Git tag, or create a commit.
+
+Check the installed binary version with:
+
+```sh
+queue-focus version
 ```
-make install VERSION=0.2.0   # version the current working tree, then install it
-make update VERSION=0.2.0    # pull the latest code, version it, then install it
+
+## Global shortcuts
+
+The GNOME extension owns four global shortcuts.
+
+1. `Super+Q` shows or hides the Queue view.
+
+2. `Super+Shift+Q` opens the quick add window.
+
+3. `Super+Alt+Q` opens the Board view.
+
+4. `Super+Ctrl+Q` completes the current task. GNOME shows the result on screen.
+
+Show the current shortcut values with:
+
+```sh
+queue-focus-setup keys
 ```
 
-Pre-release and build versions such as `0.2.0-rc.1+build.5` are supported. The
-version command does not change dependency versions, create a Git tag, or make a
-commit. Non-interactive environments must pass `VERSION` explicitly rather than
-waiting for input. `queue-focus version` and the `.deb` version are derived from
-the Cargo workspace version automatically.
+Change one shortcut with:
 
-If GNOME's global extension safety switch is active, the app is still installed
-successfully and the switch is left unchanged. After reviewing your enabled
-extensions, explicitly clear it with:
-
+```sh
+queue-focus-setup key toggle-queue '<Super>space'
+queue-focus-setup key quick-add '<Super><Shift>space'
+queue-focus-setup key show-board '<Super><Alt>space'
+queue-focus-setup key complete-current '<Super><Control>space'
 ```
+
+The valid names are `toggle-queue`, `quick-add`, `show-board`, and `complete-current`.
+
+Disable the extension with:
+
+```sh
+queue-focus-setup disable
+```
+
+Enable it again with:
+
+```sh
+queue-focus-setup enable
+```
+
+GNOME has a global safety switch that can disable every user extension. Queue Focus does not clear it without an explicit command. Review the extensions enabled for your account, then run this if you want to clear the switch:
+
+```sh
 queue-focus-setup enable --allow-user-extensions
 ```
 
-Other targets: `make build`, `make test`, `make check` (fmt, clippy, JS, Python,
-and shell syntax), `make test-install`, `make test-version`, `make deb`, and
-`make help`.
+## Add tasks
 
-### System-wide .deb
+An entry adds to Next by default. Use markers anywhere in the text to set a tag or bucket.
 
+```text
+fix the login bug #w
+!ship version 0.2.0
+call mum #p @later
+wait for CI @side
 ```
+
+The accepted tag markers are:
+
+1. `#w` and `#work` select work.
+
+2. `#p` and `#personal` select personal.
+
+The accepted bucket markers are `@now`, `@next`, `@later`, and `@side`. Their short forms are `@n`, `@x`, `@l`, and `@s`.
+
+Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. A leading `!` always selects Now.
+
+In the main window, Enter adds to Next and `Ctrl+Enter` adds to Now. `Escape` clears a nonempty entry. Press it again to return focus to the task list.
+
+## Use the app window
+
+### Keyboard
+
+Task keys work when an entry is not being edited.
+
+1. `j` and `k` move focus down and up across visible sections.
+
+2. `J` and `K` move the focused task down and up within its bucket.
+
+3. `Enter` makes the focused task current.
+
+4. `d`, `x`, and `Delete` mark the focused task done. A task that is not current is deleted. Completing the current task also pulls from Next when Now becomes empty.
+
+5. `1`, `2`, `3`, and `4` move the task to Now, Next, Later, and Side.
+
+6. `t` cycles the tag through no tag, work, personal, and no tag.
+
+7. `r` and `F2` open rename. Enter saves the new title. Escape or a click outside cancels it. An empty title is not saved.
+
+8. `l` expands or collapses Later in the Queue view.
+
+9. `n`, `/`, and `a` focus the add entry.
+
+10. `q` and `b` open the Queue and Board views.
+
+11. `Ctrl+1` and `Ctrl+2` open the Queue and Board views.
+
+12. `Escape`, `Ctrl+W`, and `Ctrl+Q` hide the window.
+
+### Mouse
+
+Double click a task to make it current. Drag a task to a new position or bucket. Drop it on a bucket heading to place it at the end of that bucket. This also works with an empty bucket or the collapsed Later section.
+
+Queue rows have buttons for making a task current, cycling its tag, opening its menu, and marking it done. Board rows put these actions in the menu because the columns are narrower. The menu can also move, rename, or delete a task.
+
+Closing an app window hides it. The service continues running so the top bar and global shortcuts keep working.
+
+## Command line use
+
+Most commands start the D Bus service when it is not running.
+
+```sh
+queue-focus
+queue-focus toggle
+queue-focus queue
+queue-focus show
+queue-focus board
+queue-focus add
+queue-focus add "fix login #w @next"
+queue-focus done
+queue-focus status
+queue-focus hide
+queue-focus service
+queue-focus quit
+queue-focus version
+queue-focus --version
+queue-focus help
+queue-focus -h
+queue-focus --help
+```
+
+`queue-focus` with no command and `queue-focus toggle` both show or hide the Queue view.
+
+`queue-focus queue` and `queue-focus show` open the Queue view. `queue-focus board` opens the Board view.
+
+`queue-focus add` opens the quick add window. When text follows `add`, the task is added without opening a window. The same marker syntax is accepted.
+
+`queue-focus done` completes the current task. It prints the deleted title, or `nothing in Now`.
+
+`queue-focus status` prints a compact JSON snapshot with `current`, `now`, `side`, `next`, and `later` fields. This is a view of the current state, not the storage file format.
+
+`queue-focus hide` hides every app window. `queue-focus quit` stops the service. The next app or extension request starts it again.
+
+`queue-focus service` starts the service without opening a window. It is mainly used by D Bus activation and `make run`.
+
+## Task data
+
+Tasks are stored at:
+
+```text
+$XDG_DATA_HOME/queue-focus/tasks.json
+```
+
+The default path is:
+
+```text
+~/.local/share/queue-focus/tasks.json
+```
+
+The file is readable JSON. It contains the next task id and an ordered list of tasks. Each task has an id, title, bucket, creation time, optional tag, and optional start time.
+
+The app creates the data directory with mode `0700` and the file with mode `0600`. It sets those modes when it loads an older file. It rejects a task file that is a symbolic link.
+
+Each save writes and syncs a temporary file, replaces the task file atomically, and syncs its directory. A failure before replacement rolls the change back in memory. A directory sync failure after replacement keeps the committed change and reports a warning. The app shows the warning in a dialog, the extension shows a GNOME notification, and a command line change writes it to standard error.
+
+Malformed JSON is not replaced with an empty queue. The service refuses to start and prints an error so the file can be repaired.
+
+Stop the service before editing or syncing the task file:
+
+```sh
+queue-focus quit
+```
+
+The next Queue Focus command reloads the file. Editing or replacing it while the service is running can be overwritten by the next task change.
+
+## D Bus interface
+
+Queue Focus is a session D Bus service.
+
+```text
+Bus name: org.queuefocus.QueueFocus
+Object path: /org/queuefocus/QueueFocus
+Interface: org.queuefocus.QueueFocus1
+```
+
+The service exports these methods:
+
+1. `GetState()` returns the same JSON snapshot as `queue-focus status`.
+
+2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown value defaults to Next. A bucket marker in the text takes precedence.
+
+3. `CompleteCurrent()` deletes the current task and returns a Boolean.
+
+4. `Promote(id)` moves a task to the front of Now.
+
+5. `Remove(id)` deletes a task.
+
+6. `Move(id, bucket, index)` moves a task to a zero based position. It accepts the same bucket values as `Add`. A negative index or an index past the bucket length places it at the end.
+
+7. `SetTag(id, tag)` accepts `work`, `personal`, `w`, or `p`. An empty string clears the tag.
+
+8. `Show(view)` accepts `queue`, `board`, `add`, or `toggle`. Any other value opens the Queue view.
+
+9. `Hide()` hides all app windows.
+
+The `Changed(json)` signal is emitted after a saved task change. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced.
+
+Invalid arguments use `org.queuefocus.Error.InvalidArgs`. Save failures use `org.queuefocus.Error.Persistence`.
+
+The service is activated on demand through its D Bus service file. A client does not need to start it first.
+
+## Developer commands
+
+Run these commands from the repository root.
+
+```sh
+make help
+make build
+make run
+make check
+make test
+make test-install
+make test-version
+make deb
+make clean
+```
+
+`make help` lists the Make targets.
+
+`make build` compiles the GNOME schema and builds the release binary at `target/release/queue-focus`.
+
+`make run` builds the app and runs the service in the foreground. Stop an installed service first so the development process can own the D Bus name:
+
+```sh
+queue-focus quit
+make run
+```
+
+`make check` checks Rust formatting, runs Clippy for all targets with warnings denied, checks the extension JavaScript with Node.js, checks the version script, and checks shell files with the `.sh` suffix.
+
+`make test` runs the Rust workspace tests, the local installer integration tests, and the version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
+
+`make test-install` runs only the installer tests. `make test-version` runs only the version tests.
+
+`make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
+
+For a direct Cargo command, use the repository wrapper:
+
+```sh
+scripts/cargo test --workspace
+scripts/cargo build --release -p queue-focus
+```
+
+### Source layout
+
+```text
+crates/qf-core
+crates/queue-focus
+extension/queue-focus@queuefocus.org
+data
+scripts
+Makefile
+```
+
+`crates/qf-core` contains the task model, add parser, JSON store, and unit tests. It has no GTK dependency.
+
+`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, and app styles.
+
+`extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, its GSettings schema, metadata, and styles.
+
+`data` contains the desktop entry, system D Bus service file, and icons.
+
+`scripts` contains the Cargo wrapper, local installer, setup helper, version command, and integration tests.
+
+`Makefile` provides the supported build, test, version, install, and package commands.
+
+## Debian package
+
+Install `cargo-deb`, build the package, and install it:
+
+```sh
 cargo install cargo-deb
-make deb                                       # → target/debian/queue-focus_*.deb
+make deb
 sudo apt install ./target/debian/queue-focus_*.deb
-queue-focus-setup                              # once per user: enable the extension
+queue-focus-setup
 ```
 
-Upgrading = build a new `.deb` and `apt install` it again.
+The package is written to `target/debian`. It installs the binary and integration files under `/usr`.
 
-## Layout
+Run `queue-focus-setup` once for each user who wants the extension and shortcuts. Build and install a package with a newer app version to upgrade it. Removing the package does not remove task files from user home directories.
 
+## Common problems
+
+### The command is not found
+
+Add `~/.local/bin` to `PATH`, then open a new terminal. The installer prints this warning when needed.
+
+### The extension is installed but not visible
+
+Log out and back in. GNOME Shell on Wayland does not load new extension code into the current session. Check its state with:
+
+```sh
+gnome-extensions info queue-focus@queuefocus.org
 ```
-crates/qf-core      model + JSON storage, no GTK (unit tested)
-crates/queue-focus  GTK4/libadwaita app, D-Bus service, CLI
-extension/          GNOME Shell extension (top bar)
-data/               .desktop, D-Bus service file
-scripts/            build, install, setup, versioning, and integration-test tooling
-Makefile            install / update / version / check / deb
+
+### GNOME says user extensions are disabled
+
+Review the enabled extensions, then run:
+
+```sh
+queue-focus-setup enable --allow-user-extensions
 ```
+
+### A shortcut does not work
+
+Check the stored value and look for a conflict with another GNOME shortcut:
+
+```sh
+queue-focus-setup keys
+```
+
+Set a different key with `queue-focus-setup key`.
+
+### The service refuses to start
+
+Run the service in a terminal to see the error:
+
+```sh
+queue-focus service
+```
+
+If the task file contains malformed JSON, back it up and repair it. Queue Focus will not overwrite it.
+
+### The app cannot load GTK or libadwaita
+
+Confirm that GTK 4.16 or newer and libadwaita 1.6 or newer are installed. The installer tests the built binary before copying it.
