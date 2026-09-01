@@ -1,109 +1,346 @@
-/* Accent follows the current task's tag (libadwaita ≥ 1.6 CSS variables). */
+/* Queue Focus.
+   Colour is reserved for task tags: the accent follows the current task's tag
+   and tints the header bar, the quick-add bar and the Now banner. Radii are a
+   flat 6px for controls and 12px for cards — no pills, no circles. */
+
+/* ---- accent follows the current task's tag ------------------------- */
+/* (libadwaita ≥ 1.6 CSS variables) */
+
 window.tag-work {
   --accent-bg-color: #3584e4;
   --accent-color: #3584e4;
 }
 window.tag-personal {
-  --accent-bg-color: #2ec27e;
-  --accent-color: #26a269;
-}
-window.tag-work headerbar,
-window.tag-work .entry-bar {
-  background: color-mix(in srgb, #3584e4 22%, var(--headerbar-bg-color));
-}
-window.tag-personal headerbar,
-window.tag-personal .entry-bar {
-  background: color-mix(in srgb, #2ec27e 22%, var(--headerbar-bg-color));
+  --accent-bg-color: #e66100;
+  --accent-color: #c64600;
 }
 
-.entry-bar {
-  padding: 6px 10px 8px 10px;
+/* AdwToolbarView leaves a few pixels below the last top bar, so the container
+   is tinted too — otherwise the window background shows through as a dark strip
+   under the quick-add bar. */
+headerbar,
+.entry-bar,
+toolbarview .collapse-spacing {
+  background: color-mix(in srgb, var(--accent-bg-color) 22%, var(--headerbar-bg-color));
+  transition: background 150ms ease;
 }
-.main-entry {
-  border-radius: 999px;
-}
+/* ---- header bar ---------------------------------------------------- */
 
-.queue-column {
-  padding: 0 12px 12px 12px;
+.view-switch {
+  padding: 2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
-.board {
-  padding: 0 6px 8px 6px;
+.view-switch button {
+  min-height: 0;
+  padding: 3px 14px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  box-shadow: none;
+  font-size: 0.85em;
+  font-weight: 400;
+  opacity: 0.7;
 }
-.board-column {
-  padding: 0 6px;
+.view-switch button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  opacity: 1;
 }
-.bucket-header {
-  padding: 14px 4px 6px 4px;
-  opacity: 0.75;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 0.8em;
-}
-
-.task-row {
-  padding-top: 2px;
-  padding-bottom: 2px;
-}
-.task-row .row-btn {
-  min-width: 24px;
-  min-height: 24px;
-  padding: 3px;
-  opacity: 0.45;
-}
-.task-row:hover .row-btn,
-.task-row:focus-within .row-btn {
+/* The same treatment libadwaita's own segmented control uses: an opaque chip
+   in light, a soft white lift in dark. */
+.view-switch > button:checked {
+  background: var(--active-toggle-bg-color);
+  color: var(--active-toggle-fg-color);
+  font-weight: 700;
   opacity: 1;
 }
 
-/* The one task you're doing right now. */
-.task-row.current {
-  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
-  border-left: 3px solid var(--accent-bg-color);
-}
-.task-row.current .title {
-  font-size: 1.15em;
+.hint-btn {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 6px;
   font-weight: 700;
 }
-.task-row.current .subtitle {
-  font-family: monospace;
-  font-weight: 600;
-  color: var(--accent-color);
+popover.shortcuts-pop > contents {
+  padding: 0;
+  border-radius: 12px;
+}
+.shortcuts {
+  padding: 12px 14px;
+  font-size: 0.8em;
+}
+.shortcuts .key {
+  min-width: 44px;
+  font-size: 1em;
+  opacity: 0.7;
 }
 
-.chip {
-  border-radius: 999px;
-  min-width: 18px;
-  min-height: 18px;
-  padding: 0 5px;
-  font-size: 0.72em;
-  font-weight: 800;
-  color: white;
-}
-.chip.work { background: #3584e4; }
-.chip.personal { background: #26a269; }
+/* ---- quick-add ----------------------------------------------------- */
 
-.hints {
-  padding: 4px 12px 8px 12px;
-  font-size: 0.75em;
+.entry-bar {
+  /* Symmetric, so the entry sits centred in its band rather than tucked up
+     under the header bar. */
+  padding: 10px;
 }
-
+.main-entry {
+  border-radius: 6px;
+  font-size: 0.85em;
+}
 .quick-add {
   padding: 8px;
 }
 .quick-entry {
   font-size: 1.2em;
-  border-radius: 999px;
+  border-radius: 6px;
   padding: 6px 14px;
 }
 
-.placeholder {
-  padding: 8px;
-  font-style: italic;
-  opacity: 0.5;
+/* ---- the one task you're doing right now --------------------------- */
+
+.current-banner {
+  padding: 18px 20px;
+  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
+  border-bottom: 1px solid var(--card-shade-color);
+  transition: background 150ms ease;
 }
-.later-expander > title {
+.current-banner.empty {
+  background: none;
+}
+.current-banner:focus-visible {
+  outline-color: var(--accent-color);
+  outline-style: solid;
+  outline-width: 2px;
+  outline-offset: -3px;
+}
+.now-label {
+  font-size: 0.8em;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-color);
+}
+.current-title {
+  font-size: 1.3em;
+  font-weight: 800;
+}
+.banner-btn {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  opacity: 0.55;
+}
+.banner-btn:hover,
+.banner-btn:focus,
+.banner-btn:checked {
+  opacity: 1;
+}
+.timer-btn {
+  padding: 1px 7px;
+  border-radius: 6px;
+}
+.timer {
+  font-weight: 600;
+  font-size: 1.1em;
+  color: var(--accent-color);
+  transition: opacity 150ms ease;
+}
+.timer-btn.paused .timer {
+  opacity: 0.45;
+}
+/* Reserve the glyph's width so the timer never shifts; reveal it on hover. */
+.pause-glyph {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.timer-btn:hover .pause-glyph,
+.timer-btn.paused .pause-glyph {
+  opacity: 0.7;
+}
+
+/* ---- buckets ------------------------------------------------------- */
+
+.bucket-header {
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.section-count {
+  font-size: 0.75em;
+  opacity: 0.55;
+}
+.placeholder {
+  font-style: italic;
+  opacity: 0.55;
+}
+
+.queue-column {
+  padding: 14px 12px;
+}
+/* One flat card holds Side and Next; the sections are split by a hairline. */
+.queue-card {
+  background: var(--card-bg-color);
+  border: 1px solid var(--card-shade-color);
+  border-radius: 12px;
+}
+.section-header {
+  padding: 10px 12px 4px 12px;
+}
+.section-header.divided {
+  margin-top: 6px;
+  border-top: 1px solid var(--card-shade-color);
+}
+.queue-card .placeholder {
+  padding: 6px 12px 10px 12px;
+}
+.bucket-list {
+  background: none;
+}
+
+/* ---- rows ---------------------------------------------------------- */
+
+.task-row {
   padding: 0;
 }
-.later-expander .bucket-header {
-  padding-left: 0;
+.row-box {
+  padding: 8px 12px;
+}
+.row-btn {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  opacity: 0.45;
+}
+/* A GtkMenuButton paints through an inner `button` node, which otherwise keeps
+   Adwaita's 24px minimum, 5px padding and 9px radius. */
+.row-btn > button,
+.banner-btn > button,
+.hint-btn > button {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 6px;
+}
+.task-row:hover .row-btn,
+.task-row:focus-within .row-btn {
+  opacity: 1;
+}
+.rename-entry {
+  border-radius: 6px;
+  min-height: 0;
+  padding: 1px 6px;
+}
+.rename-entry.rename-title {
+  padding: 2px 8px;
+  font-size: 1.15em;
+  font-weight: 800;
+}
+
+.chip {
+  min-width: 22px;
+  min-height: 18px;
+  padding: 1px 0;
+  border-radius: 6px;
+  font-size: 0.72em;
+  font-weight: 800;
+  color: #ffffff;
+}
+.chip.work {
+  background: #3584e4;
+}
+.chip.personal {
+  background: #c64600;
+}
+.chip-btn {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 6px;
+}
+
+/* Tint only — the current task needs no border to be the loudest thing here. */
+.task-row.current {
+  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
+}
+.task-row.current .row-title {
+  font-size: 1.15em;
+  font-weight: 700;
+}
+.task-row.current .timer {
+  font-size: 1em;
+}
+
+/* ---- Later, pinned to the bottom ----------------------------------- */
+
+.later-footer {
+  background: var(--card-bg-color);
+  border-top: 1px solid var(--card-shade-color);
+}
+.later-toggle {
+  padding: 10px 16px;
+  border-radius: 0;
+}
+.later-caret {
+  opacity: 0.6;
+}
+.later-list {
+  padding: 0 16px 12px 16px;
+}
+.later-list .row-box {
+  padding: 6px 0;
+}
+.later-list .row-title {
+  opacity: 0.55;
+}
+.later-list .chip {
+  opacity: 0.8;
+}
+.to-next-btn {
+  /* 20px + the 1px border on each side = the design's 22px box. */
+  min-height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--card-shade-color);
+  border-radius: 6px;
+  font-size: 0.72em;
+  font-weight: 700;
+  opacity: 0.55;
+}
+.to-next-btn:hover,
+.to-next-btn:focus {
+  opacity: 1;
+}
+
+/* ---- row / banner menus -------------------------------------------- */
+
+popover.task-menu > contents {
+  padding: 6px;
+  border-radius: 12px;
+}
+.menu-item {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-weight: 400;
+}
+.menu-item.destructive {
+  color: var(--destructive-color);
+}
+.menu-accel {
+  font-size: 0.85em;
+  opacity: 0.5;
+}
+.menu-sep {
+  margin: 4px 6px;
+}
+
+/* ---- board --------------------------------------------------------- */
+
+.board {
+  padding: 0 6px 8px 6px;
+}
+.board-column {
+  padding: 0 6px;
 }

@@ -86,16 +86,26 @@ pub struct Task {
     /// Unix seconds since this task became the current (head of Now) task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<u64>,
+    /// Unix seconds at which the timer was paused; `None` while it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<u64>,
 }
 
 impl Task {
+    /// Time on the clock: frozen at `paused_at` while paused.
     pub fn elapsed_secs(&self, now: u64) -> Option<u64> {
-        self.started_at.map(|s| now.saturating_sub(s))
+        let started = self.started_at?;
+        Some(self.paused_at.unwrap_or(now).saturating_sub(started))
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.started_at.is_some() && self.paused_at.is_some()
     }
 }
 
 /// Result of parsing quick-add syntax:
-/// `!title` -> Now, `title #work` / `#w` / `#p`, `@later` / `@side` / `@next` / `@now`.
+/// `!title` or a bare `!now` -> Now, `title #work` / `#w` / `#p`,
+/// `@later` / `@side` / `@next` / `@now`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuickAdd {
     pub title: String,
@@ -113,6 +123,9 @@ impl QuickAdd {
                 tag = Some(t);
             } else if let Some(b) = w.strip_prefix('@').and_then(Bucket::parse) {
                 bucket = Some(b);
+            } else if is_now_marker(w) {
+                // The entry's placeholder advertises "!now" as a word of its own.
+                bucket = Some(Bucket::Now);
             } else {
                 words.push(w);
             }
@@ -126,6 +139,15 @@ impl QuickAdd {
             return None;
         }
         Some(QuickAdd { title, bucket, tag })
+    }
+}
+
+/// A standalone "!" / "!now" / "!n" word: shorthand for the Now bucket.
+fn is_now_marker(word: &str) -> bool {
+    match word.strip_prefix('!') {
+        Some("") => true,
+        Some(rest) => Bucket::parse(rest) == Some(Bucket::Now),
+        None => false,
     }
 }
 
@@ -192,6 +214,7 @@ impl Store {
             tag,
             created_at: unix_now(),
             started_at: None,
+            paused_at: None,
         };
         if front {
             let pos = self.first_pos(bucket).unwrap_or(self.tasks.len());
@@ -295,6 +318,26 @@ impl Store {
         self.set_tag(id, Tag::cycle(cur))
     }
 
+    /// Pause or resume the current task's timer. Resuming keeps the time already
+    /// on the clock by shifting `started_at` forward by the paused duration.
+    pub fn toggle_pause(&mut self) -> bool {
+        let Some(id) = self.current().map(|t| t.id) else {
+            return false;
+        };
+        let now = unix_now();
+        let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        let Some(started) = task.started_at else {
+            return false;
+        };
+        match task.paused_at.take() {
+            Some(paused) => task.started_at = Some(started + now.saturating_sub(paused)),
+            None => task.paused_at = Some(now.max(started)),
+        }
+        true
+    }
+
     pub fn rename(&mut self, id: u64, title: &str) -> bool {
         let title = title.trim();
         if title.is_empty() {
@@ -309,7 +352,7 @@ impl Store {
         }
     }
 
-    /// Only the current task carries a running timer.
+    /// Only the current task carries a (possibly paused) timer.
     fn normalize(&mut self) {
         let cur = self.current().map(|t| t.id);
         let now = unix_now();
@@ -317,9 +360,11 @@ impl Store {
             if Some(t.id) == cur {
                 if t.started_at.is_none() {
                     t.started_at = Some(now);
+                    t.paused_at = None;
                 }
             } else {
                 t.started_at = None;
+                t.paused_at = None;
             }
         }
     }
@@ -336,6 +381,7 @@ impl Store {
                 "title": t.title,
                 "tag": t.tag.map(Tag::as_str),
                 "started_at": t.started_at,
+                "paused_at": t.paused_at,
             })
         };
         let list = |b: Bucket| self.in_bucket(b).map(task).collect::<Vec<_>>();
@@ -445,6 +491,20 @@ mod tests {
         assert!(QuickAdd::parse("  #w ").is_none());
         let q = QuickAdd::parse("issue #123").unwrap();
         assert_eq!(q.title, "issue #123");
+        // The quick-add placeholder advertises "!now" as a word: honour it
+        // wherever it appears, and never leave it in the title.
+        for input in [
+            "!now fix the build",
+            "fix the build !now",
+            "! fix the build",
+        ] {
+            let q = QuickAdd::parse(input).unwrap();
+            assert_eq!(q.title, "fix the build", "{input}");
+            assert_eq!(q.bucket, Some(Bucket::Now), "{input}");
+        }
+        assert!(QuickAdd::parse("!now").is_none(), "nothing left to add");
+        let q = QuickAdd::parse("!important thing").unwrap();
+        assert_eq!(q.title, "important thing", "a bare ! still means Now");
         let mut s = Store::new();
         let id = s.quick_add("!do it", Bucket::Next).unwrap();
         assert_eq!(s.current().unwrap().id, id);
@@ -463,6 +523,75 @@ mod tests {
         assert!(s.rename(a, "  new "));
         assert_eq!(s.get(a).unwrap().title, "new");
         assert!(!s.rename(a, "  "));
+    }
+
+    #[test]
+    fn pause_freezes_the_clock_and_resume_keeps_it() {
+        let mut s = Store::new();
+        let a = s.add("a", Bucket::Now, None, false);
+        // Pretend the task has been running for a minute.
+        let now = unix_now();
+        s.tasks[0].started_at = Some(now - 60);
+
+        assert!(s.toggle_pause());
+        assert!(s.get(a).unwrap().is_paused());
+        let task = s.get(a).unwrap();
+        assert_eq!(
+            task.elapsed_secs(now + 30),
+            task.elapsed_secs(now + 3000),
+            "the clock is frozen while paused"
+        );
+        assert!((60..=61).contains(&task.elapsed_secs(now).unwrap()));
+
+        // Resuming keeps the 60s already on the clock rather than restarting.
+        assert!(s.toggle_pause());
+        assert!(!s.get(a).unwrap().is_paused());
+        assert!((60..=61).contains(&s.get(a).unwrap().elapsed_secs(unix_now()).unwrap()));
+    }
+
+    #[test]
+    fn pause_needs_a_current_task_and_never_outlives_it() {
+        let mut s = Store::new();
+        assert!(!s.toggle_pause(), "nothing in Now");
+        let a = s.add("a", Bucket::Now, None, false);
+        let b = s.add("b", Bucket::Next, None, false);
+        assert!(s.toggle_pause());
+        assert!(s.get(a).unwrap().is_paused());
+
+        // Losing the current slot clears the pause with the timer.
+        s.promote(b);
+        assert!(!s.get(a).unwrap().is_paused());
+        assert!(s.get(a).unwrap().started_at.is_none());
+        assert!(!s.get(b).unwrap().is_paused());
+    }
+
+    /// `paused_at` is the contract with the shell extension, which freezes its
+    /// own clock on it. Pin the key name and the round-trip.
+    #[test]
+    fn a_paused_task_survives_the_snapshot_and_the_file() {
+        let mut s = Store::new();
+        s.add("a", Bucket::Now, Some(Tag::Work), false);
+        s.tasks[0].started_at = Some(1000);
+        assert!(s.toggle_pause());
+        let paused_at = s.current().unwrap().paused_at;
+        assert!(paused_at.is_some());
+
+        let v: serde_json::Value = serde_json::from_str(&s.snapshot_json()).unwrap();
+        assert_eq!(v["current"]["paused_at"], serde_json::json!(paused_at));
+        assert_eq!(v["now"][0]["paused_at"], serde_json::json!(paused_at));
+
+        let back: Store = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.tasks, s.tasks);
+        assert!(back.current().unwrap().is_paused());
+    }
+
+    #[test]
+    fn tasks_without_the_pause_field_still_load() {
+        let json = r#"{"next_id":2,"tasks":[{"id":1,"title":"a","bucket":"now",
+            "created_at":0,"started_at":10}]}"#;
+        let s: Store = serde_json::from_str(json).unwrap();
+        assert_eq!(s.current().unwrap().paused_at, None);
+        assert_eq!(s.current().unwrap().elapsed_secs(70), Some(60));
     }
 
     #[test]

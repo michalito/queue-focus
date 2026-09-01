@@ -44,11 +44,13 @@ const KEYBINDINGS = {
     'complete-current': ind => ind.completeCurrent(),
 };
 
-function elapsed(startedAt) {
+function elapsed(startedAt, pausedAt) {
     if (!startedAt) return '';
-    const s = Math.max(0, Math.floor(Date.now() / 1000) - startedAt);
+    // A paused task keeps the time it had; the app freezes the same clock.
+    const s = Math.max(0, (pausedAt || Math.floor(Date.now() / 1000)) - startedAt);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}m`;
+    const t = h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}m`;
+    return pausedAt ? `${t} ⏸` : t;
 }
 
 const Indicator = GObject.registerClass(
@@ -136,7 +138,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     _updateTimer() {
         const cur = this._state?.current ?? null;
-        this._timer.text = cur?.started_at ? `  ${elapsed(cur.started_at)}` : '';
+        this._timer.text = cur?.started_at ? `  ${elapsed(cur.started_at, cur.paused_at)}` : '';
     }
 
     call(name, ...args) {

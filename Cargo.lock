@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "qf-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "libc",
  "serde",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "queue-focus"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "gio",
  "gtk4",
