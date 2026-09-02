@@ -63,7 +63,7 @@ cat >target/release/queue-focus <<'APP'
 [ -z "${QF_TEST_APP_LOG:-}" ] || printf '%s\n' "$*" >>"$QF_TEST_APP_LOG"
 case "${1:-}" in
   version) echo "queue-focus 0.1.0-test" ;;
-  quit) exit 0 ;;
+  quit|restart) exit 0 ;;
   *) exit 0 ;;
 esac
 APP

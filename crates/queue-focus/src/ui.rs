@@ -7,7 +7,7 @@
 //! of Now lives in the banner, so the rest of the Now bucket is listed under the
 //! Next header — everything queued behind what you are doing.
 
-use crate::state::SharedState;
+use crate::state::{SharedState, UpdateOutcome};
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
 use qf_core::{Bucket, Store, Tag, Task};
@@ -158,12 +158,6 @@ impl Ui {
             }
         });
         let weak = Rc::downgrade(&ui);
-        state.on_durability_warning(move |warning| {
-            if let Some(ui) = weak.upgrade() {
-                ui.show_durability_warning(&warning.to_string());
-            }
-        });
-        let weak = Rc::downgrade(&ui);
         glib::timeout_add_seconds_local(1, move || {
             if let Some(ui) = weak.upgrade() {
                 ui.tick();
@@ -205,37 +199,64 @@ impl Ui {
         }
     }
 
-    /// Run a persisted mutation. The state listeners make warnings visible;
-    /// this path handles failures that prevented the mutation from committing.
+    /// Run a persisted mutation asked for from this window and report on it.
     fn update<R>(&self, f: impl FnOnce(&mut Store) -> R) -> Result<R, std::io::Error> {
-        self.state
-            .update(f)
-            .map(|outcome| outcome.into_value())
-            .inspect_err(|e| {
-                eprintln!("queue-focus: {e}");
-                let dialog = adw::AlertDialog::new(
-                    Some("Could not safely save task changes"),
-                    Some(&e.to_string()),
-                );
-                dialog.add_response("ok", "OK");
-                if let Some(win) = self.win.borrow().as_ref() {
-                    dialog.present(Some(win));
-                } else if let Some((win, _)) = self.quick.borrow().as_ref() {
-                    dialog.present(Some(win));
-                }
-            })
+        self.report(self.state.update(f))
     }
 
-    fn show_durability_warning(&self, message: &str) {
-        let dialog = adw::AlertDialog::new(Some("Task change saved with a warning"), Some(message));
-        dialog.add_response("ok", "OK");
-        if let Some(win) = self.win.borrow().as_ref() {
-            dialog.present(Some(win));
-        } else if let Some((win, _)) = self.quick.borrow().as_ref() {
-            dialog.present(Some(win));
-        } else {
-            eprintln!("queue-focus: warning: {message}");
+    /// Mark a task done. Only completing the current task pulls the head of
+    /// Next, and only that can be undone (from the top bar).
+    fn complete(&self, id: u64) -> bool {
+        self.report(self.state.complete(id)).unwrap_or(false)
+    }
+
+    /// A failure to commit is an error the user must see; a change that
+    /// committed but may not be crash-safe is a warning. Both go to the
+    /// window the user is looking at, and always to stderr.
+    fn report<R>(
+        &self,
+        result: Result<UpdateOutcome<R>, std::io::Error>,
+    ) -> Result<R, std::io::Error> {
+        match result {
+            Ok(outcome) => {
+                let (value, warning) = outcome.into_parts();
+                if let Some(warning) = warning {
+                    self.alert("Task change saved with a warning", &warning.to_string());
+                }
+                Ok(value)
+            }
+            Err(e) => {
+                self.alert("Could not safely save task changes", &e.to_string());
+                Err(e)
+            }
         }
+    }
+
+    fn alert(&self, heading: &str, body: &str) {
+        eprintln!("queue-focus: {heading}: {body}");
+        let Some(win) = self.visible_window() else {
+            return;
+        };
+        let dialog = adw::AlertDialog::new(Some(heading), Some(body));
+        dialog.add_response("ok", "OK");
+        dialog.present(Some(&win));
+    }
+
+    /// A dialog presented on a hidden window is never seen: only offer visible ones.
+    fn visible_window(&self) -> Option<gtk::Window> {
+        let main = self
+            .win
+            .borrow()
+            .as_ref()
+            .filter(|w| w.is_visible())
+            .map(|w| w.clone().upcast::<gtk::Window>());
+        main.or_else(|| {
+            self.quick
+                .borrow()
+                .as_ref()
+                .filter(|(w, _)| w.is_visible())
+                .map(|(w, _)| w.clone())
+        })
     }
 
     /// Tiny floating entry for capture from anywhere.
@@ -934,7 +955,7 @@ impl Ui {
             "Done — delete and pull the next task (d)",
             &["flat", "banner-btn"],
             move || {
-                let _ = this.update(|s| complete_task(s, id));
+                this.complete(id);
             },
         ));
         title_row.append(&self.task_menu(id, true, Bucket::Now, &["flat", "banner-btn"]));
@@ -1092,7 +1113,7 @@ impl Ui {
         ));
         let this = self.clone();
         items.append(&menu_item(&popover, "Done", Some("d"), false, move || {
-            let _ = this.update(|s| complete_task(s, id));
+            this.complete(id);
         }));
 
         items.append(&menu_separator());
@@ -1290,9 +1311,7 @@ impl Ui {
                 let changed = match key {
                     gdk::Key::J => self.update(|s| s.shift(id, 1)),
                     gdk::Key::K => self.update(|s| s.shift(id, -1)),
-                    gdk::Key::d | gdk::Key::x | gdk::Key::Delete => {
-                        self.update(|s| complete_task(s, id))
-                    }
+                    gdk::Key::d | gdk::Key::x | gdk::Key::Delete => Ok(self.complete(id)),
                     gdk::Key::t => self.update(|s| s.cycle_tag(id)),
                     gdk::Key::_1 => self.update(|s| s.promote(id)),
                     gdk::Key::_2 => self.update(|s| s.move_to(id, Bucket::Next, None)),
@@ -1576,16 +1595,6 @@ fn menu_separator() -> gtk::Separator {
     separator
 }
 
-/// "Done" completes the focused task. Only completing the current task pulls
-/// the head of Next into an otherwise-empty Now bucket.
-fn complete_task(store: &mut Store, id: u64) -> bool {
-    if store.current().is_some_and(|task| task.id == id) {
-        store.complete_current().is_some()
-    } else {
-        store.remove(id)
-    }
-}
-
 /// ListBox reports the destination before the dragged row has been removed.
 /// Account for that row when moving downward within the same bucket.
 fn adjusted_drop_index(
@@ -1652,16 +1661,6 @@ mod tests {
         assert_eq!(fmt_elapsed(762), "12:42");
         assert_eq!(fmt_elapsed(3600), "1:00:00");
         assert_eq!(fmt_elapsed(3725), "1:02:05");
-    }
-
-    #[test]
-    fn completing_current_from_main_window_pulls_next() {
-        let mut store = Store::new();
-        let now = store.add("now", Bucket::Now, None, false);
-        let next = store.add("next", Bucket::Next, None, false);
-
-        assert!(complete_task(&mut store, now));
-        assert_eq!(store.current().map(|task| task.id), Some(next));
     }
 
     #[test]

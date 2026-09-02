@@ -2,7 +2,7 @@
 
 Queue Focus is a task queue for GNOME. It keeps one task visible in the top bar and stores the rest in four ordered buckets.
 
-A task has a title, a bucket, and an optional `work` or `personal` tag. There are no projects, dates, priorities, or completion history. Marking a task done deletes it.
+A task has a title, a bucket, and an optional `work` or `personal` tag. There are no projects, dates, priorities, or completion history. Marking a task done deletes it. A completion made from the top bar can be undone from its notification for a few seconds.
 
 Queue Focus supports GNOME Shell 48, 49, and 50.
 
@@ -28,7 +28,9 @@ The app window also changes its accent to match the tag of the current task.
 
 Open the top bar menu to add a task, complete the current task, or promote a task from Now, Side, or Next. The menu shows up to eight Next tasks and the number of Later tasks. It also has buttons for the Queue and Board views.
 
-The extension starts the app service when needed. It reconnects after an install, update, or service restart. A save warning appears as a GNOME notification.
+Completing the current task from the menu or with the shortcut shows a GNOME notification with an Undo button. Undo makes the task current again with its timer intact and returns any task that was pulled from Next. Only the most recent completion can be undone, and only while nothing else in the queue has changed.
+
+The extension starts the app service when needed and restarts it if it crashes. After `queue-focus quit` the top bar reads `queue-focus` until the next request starts the service again. Save warnings and failed requests appear as GNOME notifications.
 
 ### Queue view
 
@@ -82,7 +84,7 @@ The installed app does not refer back to the repository. You can move the reposi
 
 The installer builds and checks staged files before replacing an installed extension. It validates the GNOME schema and extension metadata. It also checks the JavaScript when Node.js is available. Existing extension files are restored if replacement fails.
 
-On Wayland, log out and back in after the first install or after extension code changes. App binary updates do not need a logout. The extension reconnects when the new service starts.
+On Wayland, log out and back in after the first install or after extension code changes. App binary updates do not need a logout. The installer restarts the service, and the extension reconnects when the new service appears.
 
 If `~/.local/bin` is not in `PATH`, GNOME can still open the app. Add that directory to `PATH` if you want to use `queue-focus` and `queue-focus-setup` in a terminal.
 
@@ -204,7 +206,7 @@ The GNOME extension owns four global shortcuts.
 
 3. `Super+Alt+Q` opens the Board view.
 
-4. `Super+Ctrl+Q` completes the current task. GNOME shows the result on screen.
+4. `Super+Ctrl+Q` completes the current task. GNOME shows a notification with an Undo button.
 
 Show the current shortcut values with:
 
@@ -326,6 +328,7 @@ queue-focus done
 queue-focus status
 queue-focus hide
 queue-focus service
+queue-focus restart
 queue-focus quit
 queue-focus version
 queue-focus --version
@@ -344,7 +347,7 @@ queue-focus --help
 
 `queue-focus status` prints a compact JSON snapshot with `current`, `now`, `side`, `next`, and `later` fields. Each task in it carries its id, title, tag, start time, and pause time. This is a view of the current state, not the storage file format.
 
-`queue-focus hide` hides every app window. `queue-focus quit` stops the service. The next app or extension request starts it again.
+`queue-focus hide` hides every app window. `queue-focus quit` stops the service and keeps it stopped until the next app or extension request. `queue-focus restart` stops the service and starts it again, for example after replacing the binary.
 
 `queue-focus service` starts the service without opening a window. It is mainly used by D Bus activation and `make run`.
 

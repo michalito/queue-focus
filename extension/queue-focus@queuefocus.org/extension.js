@@ -10,32 +10,38 @@ import Shell from 'gi://Shell';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+const APP_NAME = 'Queue Focus';
+const APP_ICON = 'org.queuefocus.QueueFocus-symbolic';
 const BUS_NAME = 'org.queuefocus.QueueFocus';
 const OBJ_PATH = '/org/queuefocus/QueueFocus';
+// The part of org.queuefocus.QueueFocus1 this indicator uses.
 const IFACE_XML = `
 <node>
   <interface name="org.queuefocus.QueueFocus1">
     <method name="GetState"><arg type="s" name="json" direction="out"/></method>
     <method name="Add"><arg type="s" name="text" direction="in"/><arg type="s" name="bucket" direction="in"/><arg type="t" name="id" direction="out"/></method>
-    <method name="CompleteCurrent"><arg type="b" name="completed" direction="out"/></method>
+    <method name="CompleteCurrent"><arg type="t" name="id" direction="out"/><arg type="s" name="title" direction="out"/></method>
+    <method name="UndoComplete"><arg type="t" name="id" direction="in"/><arg type="b" name="undone" direction="out"/></method>
     <method name="Promote"><arg type="t" name="id" direction="in"/></method>
-    <method name="Remove"><arg type="t" name="id" direction="in"/></method>
     <method name="Show"><arg type="s" name="view" direction="in"/></method>
-    <method name="Hide"/>
     <signal name="Changed"><arg type="s" name="json"/></signal>
     <signal name="DurabilityWarning"><arg type="s" name="message"/></signal>
+    <signal name="Stopping"/>
   </interface>
 </node>`;
 const QueueFocusProxy = Gio.DBusProxy.makeProxyWrapper(IFACE_XML);
 
-// Reconnect delay after the service goes away (e.g. restarted by an update).
-// Doubles per attempt up to the max so a binary that crashes at startup is not
-// respawned in a tight loop; reset as soon as state flows again.
-const REACTIVATE_MS = 1500;
-const REACTIVATE_MAX_MS = 60000;
+// Delay before asking the service for state again after it went away without
+// notice or a call failed. Doubles per attempt up to the max so a binary that
+// crashes at startup is not respawned in a tight loop; reset once state flows.
+const RETRY_MS = 1500;
+const RETRY_MAX_MS = 60000;
+// How many Next tasks the menu lists before summarising the rest.
+const NEXT_PREVIEW = 8;
 // gschema key → what to do when pressed.
 const KEYBINDINGS = {
     'toggle-queue': ind => ind.call('Show', 'toggle'),
@@ -44,9 +50,8 @@ const KEYBINDINGS = {
     'complete-current': ind => ind.completeCurrent(),
 };
 
+/** "12m" or "1h02"; a paused task keeps the time it had and shows ⏸. */
 function elapsed(startedAt, pausedAt) {
-    if (!startedAt) return '';
-    // A paused task keeps the time it had; the app freezes the same clock.
     const s = Math.max(0, (pausedAt || Math.floor(Date.now() / 1000)) - startedAt);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
     const t = h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}m`;
@@ -56,13 +61,22 @@ function elapsed(startedAt, pausedAt) {
 const Indicator = GObject.registerClass(
 class QueueFocusIndicator extends PanelMenu.Button {
     _init() {
-        super._init(0.5, 'Queue Focus');
+        super._init(0.5, APP_NAME);
         this._state = null;
         this._quickAddPending = false;
         this._entry = null;
+        // Focus key → actor, for the menu currently built (see _buildMenu).
+        this._focusTargets = new Map();
+        this._focusKey = null;
         this._focusId = 0;
-        this._reactivateId = 0;
-        this._retryMs = REACTIVATE_MS;
+        this._tickId = 0;
+        this._retryId = 0;
+        this._retryMs = RETRY_MS;
+        // Set when the service says it is exiting on request, cleared when it is back.
+        this._stopping = false;
+        this._source = null;
+        // The notification offering to undo the latest completion, if still shown.
+        this._doneNotification = null;
 
         const box = new St.BoxLayout({style_class: 'qf-box'});
         this._dot = new St.Label({text: '●', style_class: 'qf-dot', y_align: Clutter.ActorAlign.CENTER});
@@ -74,59 +88,91 @@ class QueueFocusIndicator extends PanelMenu.Button {
         box.add_child(this._timer);
         this.add_child(box);
 
-        this._proxy = new QueueFocusProxy(Gio.DBus.session, BUS_NAME, OBJ_PATH, (proxy, error) => {
-            if (error) { console.warn(`queue-focus: proxy error: ${error.message}`); this._apply(null); return; }
+        this._proxy = new QueueFocusProxy(Gio.DBus.session, BUS_NAME, OBJ_PATH, (_proxy, error) => {
+            if (error) {
+                console.warn(`queue-focus: proxy error: ${error.message}`);
+                this._apply(null);
+                return;
+            }
             this._refresh();
         });
-        this._signalId = this._proxy.connectSignal('Changed', (_p, _s, [json]) => this._apply(json));
-        this._warningId = this._proxy.connectSignal('DurabilityWarning',
-            (_p, _s, [message]) => Main.notifyError('Queue Focus', message));
-        this._ownerId = this._proxy.connect('notify::g-name-owner', () => {
-            if (this._proxy.g_name_owner) { this._refresh(); return; }
-            this._apply(null);
-            // Service gone (quit / updated / crashed): re-activate it, backing off.
-            this._scheduleReactivation();
-        });
-        this._tickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
-            this._updateTimer();
-            return GLib.SOURCE_CONTINUE;
-        });
+        this._signalIds = [
+            this._proxy.connectSignal('Changed', (_p, _s, [json]) => this._apply(json)),
+            this._proxy.connectSignal('DurabilityWarning',
+                (_p, _s, [message]) => Main.notifyError(APP_NAME, message)),
+            this._proxy.connectSignal('Stopping', () => {
+                this._stopping = true;
+            }),
+        ];
+        this._ownerId = this._proxy.connect('notify::g-name-owner', () => this._onOwnerChanged());
 
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open && !this._quickAddPending) this._buildMenu(true);
         });
     }
 
+    // ---- service lifecycle ------------------------------------------------
+
+    _onOwnerChanged() {
+        if (this._proxy.g_name_owner) {
+            this._stopping = false;
+            this._cancelRetry();
+            this._refresh();
+            return;
+        }
+        this._apply(null);
+        // Gone without notice (crashed or killed): bring it back. A service
+        // that announced it was stopping stays down until the next request.
+        if (!this._stopping) this._scheduleRetry();
+    }
+
+    /** Ask for state. Like any method call, this starts the service via D-Bus activation. */
     _refresh() {
-        if (!this._proxy) return;
-        // Calling a method auto-starts the service via D-Bus activation.
-        this._proxy.GetStateRemote((res, err) => {
+        this._proxy?.GetStateRemote((res, err) => {
             if (!this._proxy) return;
-            if (err) {
-                console.warn(`queue-focus: GetState failed: ${err.message}`);
-                this._apply(null);
-                this._scheduleReactivation();
+            if (!err) {
+                this._apply(res[0]);
                 return;
             }
-            this._apply(res[0]);
+            this._apply(null);
+            if (err.matches(Gio.DBusError, Gio.DBusError.SERVICE_UNKNOWN)) {
+                // Nothing to activate (not installed, or uninstalled under us):
+                // stay idle until the user asks again.
+                console.warn(`queue-focus: service unavailable: ${err.message}`);
+                return;
+            }
+            console.warn(`queue-focus: GetState failed: ${err.message}`);
+            this._scheduleRetry();
         });
     }
 
-    _scheduleReactivation() {
-        if (!this._proxy || this._reactivateId || this._proxy.g_name_owner) return;
-        this._reactivateId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._retryMs, () => {
-            this._reactivateId = 0;
+    _scheduleRetry() {
+        if (!this._proxy || this._retryId) return;
+        this._retryId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._retryMs, () => {
+            this._retryId = 0;
             this._refresh();
             return GLib.SOURCE_REMOVE;
         });
-        this._retryMs = Math.min(this._retryMs * 2, REACTIVATE_MAX_MS);
+        this._retryMs = Math.min(this._retryMs * 2, RETRY_MAX_MS);
     }
 
+    _cancelRetry() {
+        if (!this._retryId) return;
+        GLib.source_remove(this._retryId);
+        this._retryId = 0;
+    }
+
+    // ---- state → panel ----------------------------------------------------
+
     _apply(json) {
-        try { this._state = json ? JSON.parse(json) : null; } catch (_e) { this._state = null; }
+        try {
+            this._state = json ? JSON.parse(json) : null;
+        } catch (_e) {
+            this._state = null;
+        }
         if (this._state) {
-            this._retryMs = REACTIVATE_MS;
-            if (this._reactivateId) { GLib.source_remove(this._reactivateId); this._reactivateId = 0; }
+            this._retryMs = RETRY_MS;
+            this._cancelRetry();
         }
         const cur = this._state?.current ?? null;
         for (const c of ['qf-dot-work', 'qf-dot-personal', 'qf-dot-none']) this._dot.remove_style_class_name(c);
@@ -136,43 +182,151 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (this.menu.isOpen && !this._quickAddPending) this._buildMenu();
     }
 
+    /** Show the clock, then wake up right after its next minute boundary. */
     _updateTimer() {
-        const cur = this._state?.current ?? null;
-        this._timer.text = cur?.started_at ? `  ${elapsed(cur.started_at, cur.paused_at)}` : '';
+        this._cancelTick();
+        const cur = this._state?.current;
+        this._timer.text = cur?.started_at ? elapsed(cur.started_at, cur.paused_at) : '';
+        if (!cur?.started_at || cur.paused_at) return;
+        const secs = Math.max(0, Math.floor(Date.now() / 1000) - cur.started_at);
+        this._tickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60 - (secs % 60), () => {
+            this._tickId = 0;
+            this._updateTimer();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
+    _cancelTick() {
+        if (!this._tickId) return;
+        GLib.source_remove(this._tickId);
+        this._tickId = 0;
+    }
+
+    // ---- actions ----------------------------------------------------------
+
+    /** Fire-and-forget method call; a failure is shown to the user, not just logged. */
     call(name, ...args) {
-        this._proxy[`${name}Remote`](...args, (_res, err) => {
-            if (err) console.warn(`queue-focus: ${name} failed: ${err.message}`);
+        this._proxy?.[`${name}Remote`](...args, (_res, err) => {
+            if (err) this._fail(name, err);
         });
     }
 
-    /** Complete the current task and confirm on screen. */
+    _fail(name, err) {
+        Gio.DBusError.strip_remote_error(err);
+        console.warn(`queue-focus: ${name} failed: ${err.message}`);
+        Main.notifyError(APP_NAME, err.message);
+    }
+
+    /** Complete the current task; the notification offers to undo that completion. */
     completeCurrent() {
-        const title = this._state?.current?.title;
-        this._proxy.CompleteCurrentRemote((res, err) => {
-            if (err) { console.warn(`queue-focus: CompleteCurrent failed: ${err.message}`); return; }
-            const [done] = res;
-            const icon = Gio.ThemedIcon.new(done ? 'object-select-symbolic' : 'dialog-information-symbolic');
-            Main.osdWindowManager.show(-1, icon, done ? `Done: ${title}` : 'Nothing in Now');
+        this._proxy?.CompleteCurrentRemote((res, err) => {
+            if (err) {
+                this._fail('CompleteCurrent', err);
+                return;
+            }
+            const [id, title] = res;
+            if (!id) {
+                this._notify('Nothing in Now');
+                return;
+            }
+            // Only the latest completion can be undone: retire the earlier offer.
+            this._doneNotification?.destroy();
+            this._doneNotification = this._notify('Done', title,
+                {label: 'Undo', activate: () => this._undoComplete(id)});
+            this._doneNotification.connect('destroy', notification => {
+                if (this._doneNotification === notification) this._doneNotification = null;
+            });
         });
     }
 
-    _taskItem(task, {activateLabel, onActivate, reactive = true} = {}) {
-        const item = new PopupMenu.PopupBaseMenuItem({reactive, can_focus: reactive});
+    _undoComplete(id) {
+        this._proxy?.UndoCompleteRemote(id, (res, err) => {
+            if (err) {
+                this._fail('UndoComplete', err);
+                return;
+            }
+            if (!res[0]) this._notify('Nothing to undo', 'The queue changed since.');
+        });
+    }
+
+    /** Show a transient banner from the extension's own source and return it. */
+    _notify(title, body = null, action = null) {
+        if (!this._source) {
+            this._source = new MessageTray.Source({title: APP_NAME, iconName: APP_ICON});
+            this._source.connect('destroy', () => {
+                this._source = null;
+            });
+            Main.messageTray.add(this._source);
+        }
+        const notification = new MessageTray.Notification({
+            source: this._source, title, body, isTransient: true,
+        });
+        if (action) notification.addAction(action.label, action.activate);
+        this._source.addNotification(notification);
+        return notification;
+    }
+
+    // ---- menu -------------------------------------------------------------
+
+    /** Remember `actor` under `key` so a rebuild can hand focus back to it. */
+    _focusable(key, actor) {
+        this._focusTargets.set(key, actor);
+        return actor;
+    }
+
+    /** The focus target holding key focus, or the one a pending restore is about to. */
+    _focusedKey() {
+        if (this._focusId) return this._focusKey;
+        const focus = global.stage.get_key_focus();
+        if (!focus) return null;
+        for (const [key, actor] of this._focusTargets) {
+            if (actor.contains(focus)) return key;
+        }
+        return null;
+    }
+
+    /**
+     * Give key focus to a target once the menu has settled (the shell moves
+     * focus itself while opening). A target that no longer exists, because
+     * its task went away, falls back to the entry.
+     */
+    _restoreFocus(key) {
+        this._cancelFocus();
+        if (!key) return;
+        this._focusKey = key;
+        this._focusId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._focusId = 0;
+            (this._focusTargets.get(key) ?? this._entry)?.grab_key_focus();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _cancelFocus() {
+        if (!this._focusId) return;
+        GLib.source_remove(this._focusId);
+        this._focusId = 0;
+    }
+
+    _taskItem(task, hint, onActivate) {
+        const item = new PopupMenu.PopupBaseMenuItem();
         if (task.tag) {
-            const chip = new St.Label({text: task.tag === 'work' ? 'W' : 'P', style_class: `qf-chip qf-chip-${task.tag}`, y_align: Clutter.ActorAlign.CENTER});
+            const chip = new St.Label({
+                text: task.tag === 'work' ? 'W' : 'P',
+                style_class: `qf-chip qf-chip-${task.tag}`,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
             item.add_child(chip);
         }
         const label = new St.Label({text: task.title, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
         label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         item.add_child(label);
-        if (activateLabel) {
-            const hint = new St.Label({text: activateLabel, style_class: 'qf-hint', y_align: Clutter.ActorAlign.CENTER});
-            item.add_child(hint);
-        }
-        if (onActivate) item.connect('activate', onActivate);
-        return item;
+        item.add_child(new St.Label({text: hint, style_class: 'qf-hint', y_align: Clutter.ActorAlign.CENTER}));
+        item.connect('activate', onActivate);
+        return this._focusable(`task:${task.id}`, item);
+    }
+
+    _promoteItem(task) {
+        return this._taskItem(task, '↑', () => this.call('Promote', task.id));
     }
 
     _section(title) {
@@ -181,89 +335,90 @@ class QueueFocusIndicator extends PanelMenu.Button {
         return item;
     }
 
-    _buildMenu(focusEntry = false) {
+    _buildMenu(fresh = false) {
         // A rebuild while the menu is open (a Changed signal from another client)
-        // must not eat what the user is doing: carry the quick-add draft over,
-        // and only re-grab focus on a fresh open, if the entry already had it,
-        // or if a previous build had already queued that focus.
-        const focus = global.stage.get_key_focus();
-        const grabFocus = focusEntry || !!this._focusId ||
-            !!(this._entry && focus && this._entry.contains(focus));
+        // must not eat what the user is doing: carry the quick-add draft over
+        // and put key focus back where it was. A fresh open focuses the entry.
+        const focusKey = fresh ? 'entry' : this._focusedKey();
         const draft = this._entry?.get_text() ?? '';
-        if (this._focusId) { GLib.source_remove(this._focusId); this._focusId = 0; }
+        this._focusTargets = new Map();
         this._entry = null;
         this.menu.removeAll();
         const st = this._state;
 
-        // Quick-add entry.
         const entryItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const entry = new St.Entry({hint_text: 'Add…  !now  #w #p  @later @side', x_expand: true, style_class: 'qf-entry', can_focus: true});
-        if (draft) entry.set_text(draft);
+        const entry = new St.Entry({
+            hint_text: 'Add…  !now  #w #p  @later @side',
+            text: draft,
+            x_expand: true,
+            style_class: 'qf-entry',
+            can_focus: true,
+        });
         entry.clutter_text.connect('activate', () => {
             if (this._quickAddPending) return;
             const text = entry.get_text().trim();
             if (!text) return;
             this._quickAddPending = true;
-            this._proxy.AddRemote(text, 'next', (_res, err) => {
+            this._proxy?.AddRemote(text, 'next', (_res, err) => {
                 this._quickAddPending = false;
-                if (err) { console.warn(`queue-focus: Add failed: ${err.message}`); return; }
+                if (err) {
+                    this._fail('Add', err);
+                    return;
+                }
                 entry.set_text('');
                 this.menu.close();
             });
         });
         entryItem.add_child(entry);
         this.menu.addMenuItem(entryItem);
-        this._entry = entry;
-        if (grabFocus) {
-            this._focusId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this._focusId = 0;
-                entry.grab_key_focus();
-                return GLib.SOURCE_REMOVE;
-            });
-        }
+        this._entry = this._focusable('entry', entry);
 
         if (!st) {
             const start = new PopupMenu.PopupMenuItem('service not running — click to start');
             start.connect('activate', () => this._refresh());
-            this.menu.addMenuItem(start);
+            this.menu.addMenuItem(this._focusable('start', start));
             this.menu.addMenuItem(this._openItems());
+            this._restoreFocus(focusKey);
             return;
         }
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         if (st.current) {
             this.menu.addMenuItem(this._section('NOW'));
-            this.menu.addMenuItem(this._taskItem(st.current, {activateLabel: '✓ done', onActivate: () => this.call('CompleteCurrent')}));
-            for (const t of st.now.slice(1))
-                this.menu.addMenuItem(this._taskItem(t, {activateLabel: '↑', onActivate: () => this.call('Promote', t.id)}));
+            this.menu.addMenuItem(this._taskItem(st.current, '✓ done', () => this.completeCurrent()));
+            for (const t of st.now.slice(1)) this.menu.addMenuItem(this._promoteItem(t));
         } else {
-            this.menu.addMenuItem(this._section('NOW — nothing. Pick one:'));
+            const pickable = st.side.length > 0 || st.next.length > 0;
+            this.menu.addMenuItem(this._section(pickable ? 'NOW — nothing. Pick one:' : 'NOW — nothing. Add one:'));
         }
         if (st.side.length) {
             this.menu.addMenuItem(this._section('SIDE'));
-            for (const t of st.side)
-                this.menu.addMenuItem(this._taskItem(t, {activateLabel: '↑', onActivate: () => this.call('Promote', t.id)}));
+            for (const t of st.side) this.menu.addMenuItem(this._promoteItem(t));
         }
         if (st.next.length) {
             this.menu.addMenuItem(this._section('NEXT'));
-            for (const t of st.next.slice(0, 8))
-                this.menu.addMenuItem(this._taskItem(t, {activateLabel: '↑', onActivate: () => this.call('Promote', t.id)}));
-            if (st.next.length > 8)
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(`… ${st.next.length - 8} more`, {reactive: false, can_focus: false}));
+            for (const t of st.next.slice(0, NEXT_PREVIEW)) this.menu.addMenuItem(this._promoteItem(t));
+            if (st.next.length > NEXT_PREVIEW) {
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                    `… ${st.next.length - NEXT_PREVIEW} more`, {reactive: false, can_focus: false}));
+            }
         }
-        if (st.later.length)
-            this.menu.addMenuItem(this._section(`LATER · ${st.later.length}`));
+        if (st.later.length) this.menu.addMenuItem(this._section(`LATER · ${st.later.length}`));
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.menu.addMenuItem(this._openItems());
+        this._restoreFocus(focusKey);
     }
 
     _openItems() {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         const mk = (label, view) => {
             const b = new St.Button({label, style_class: 'button qf-open-btn', x_expand: true, can_focus: true});
-            b.connect('clicked', () => { this.call('Show', view); this.menu.close(); });
-            return b;
+            b.connect('clicked', () => {
+                this.call('Show', view);
+                this.menu.close();
+            });
+            return this._focusable(`open:${view}`, b);
         };
         item.add_child(mk('Queue', 'queue'));
         item.add_child(mk('Board', 'board'));
@@ -271,16 +426,17 @@ class QueueFocusIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        if (this._tickId) { GLib.source_remove(this._tickId); this._tickId = 0; }
-        if (this._reactivateId) { GLib.source_remove(this._reactivateId); this._reactivateId = 0; }
-        if (this._focusId) { GLib.source_remove(this._focusId); this._focusId = 0; }
+        this._cancelTick();
+        this._cancelRetry();
+        this._cancelFocus();
         if (this._proxy) {
-            if (this._signalId) this._proxy.disconnectSignal(this._signalId);
-            if (this._warningId) this._proxy.disconnectSignal(this._warningId);
-            if (this._ownerId) this._proxy.disconnect(this._ownerId);
+            for (const id of this._signalIds) this._proxy.disconnectSignal(id);
+            this._proxy.disconnect(this._ownerId);
             this._proxy = null;
         }
+        this._source?.destroy();
         this._entry = null;
+        this._focusTargets.clear();
         super.destroy();
     }
 });
@@ -296,7 +452,9 @@ export default class QueueFocusExtension extends Extension {
             Main.wm.addKeybinding(name, this._settings,
                 Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
                 Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
-                () => { if (this._indicator) action(this._indicator); });
+                () => {
+                    if (this._indicator) action(this._indicator);
+                });
         }
     }
 

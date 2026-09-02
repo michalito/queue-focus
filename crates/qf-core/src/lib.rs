@@ -4,5 +4,5 @@
 mod model;
 mod store;
 
-pub use model::{unix_now, Bucket, QuickAdd, Store, Tag, Task};
+pub use model::{unix_now, Bucket, Completed, QuickAdd, Store, Tag, Task};
 pub use store::{data_path, load, save, SaveError};

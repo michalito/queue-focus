@@ -23,18 +23,25 @@ usage: queue-focus [COMMAND]
   status          print the current state as JSON
   hide            hide all windows
   service         start in the background only (used by D-Bus activation)
-  quit            exit the background service
+  restart         stop the background service and start it again
+  quit            exit the background service until the next request
   version         print the version
 ";
 
 fn main() -> glib::ExitCode {
     let first_arg = std::env::args().nth(1);
-    if matches!(first_arg.as_deref(), Some("version" | "--version")) {
-        println!(concat!("queue-focus ", env!("CARGO_PKG_VERSION")));
-        return glib::ExitCode::from(0);
-    }
-    if first_arg.as_deref() != Some("service") {
-        ensure_service();
+    let restart = first_arg.as_deref() == Some("restart");
+    match first_arg.as_deref() {
+        Some("version" | "--version") => {
+            println!(concat!("queue-focus ", env!("CARGO_PKG_VERSION")));
+            return glib::ExitCode::from(0);
+        }
+        Some("service") => {}
+        // Nothing to stop: just start the installed binary.
+        Some("restart") if !service_running() => return started(ensure_service()),
+        _ => {
+            ensure_service();
+        }
     }
     let state = match state::State::load() {
         Ok(state) => state,
@@ -58,46 +65,86 @@ fn main() -> glib::ExitCode {
         glib::ExitCode::from(run_command(app, cmd, &app.ui(), &app.state()) as u8)
     });
 
-    app.run()
+    if !restart {
+        return app.run();
+    }
+    // A restart is a `quit` sent to the running service, followed by starting
+    // it again from here. The service announces that it is stopping on purpose,
+    // so the top-bar extension leaves the restart to us.
+    let argv0 = std::env::args()
+        .next()
+        .unwrap_or_else(|| "queue-focus".into());
+    let code = app.run_with_args(&[argv0, "quit".into()]);
+    if code != glib::ExitCode::from(0) {
+        return code;
+    }
+    if !wait_for_release() {
+        eprintln!("queue-focus: the running service did not stop; restart failed");
+        return glib::ExitCode::from(1);
+    }
+    started(ensure_service())
+}
+
+fn started(running: bool) -> glib::ExitCode {
+    if !running {
+        eprintln!("queue-focus: the service could not be started");
+    }
+    glib::ExitCode::from(u8::from(!running))
+}
+
+fn session_bus() -> Option<gio::DBusConnection> {
+    gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok()
+}
+
+fn bus_call(
+    conn: &gio::DBusConnection,
+    method: &str,
+    args: glib::Variant,
+) -> Result<glib::Variant, glib::Error> {
+    conn.call_sync(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        method,
+        Some(&args),
+        None,
+        gio::DBusCallFlags::NONE,
+        5000,
+        gio::Cancellable::NONE,
+    )
+}
+
+fn name_has_owner(conn: &gio::DBusConnection) -> bool {
+    bus_call(conn, "NameHasOwner", (APP_ID,).to_variant())
+        .ok()
+        .and_then(|v| v.get::<(bool,)>())
+        .map(|(b,)| b)
+        .unwrap_or(false)
+}
+
+fn service_running() -> bool {
+    session_bus().is_some_and(|conn| name_has_owner(&conn))
 }
 
 /// Make sure a background service owns the bus name so this invocation acts as
 /// a short-lived remote rather than becoming the (terminal-blocking) primary.
-fn ensure_service() {
+/// Returns whether the name is owned afterwards.
+fn ensure_service() -> bool {
     use std::os::unix::process::CommandExt;
-    let Ok(conn) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
-        return;
+    let Some(conn) = session_bus() else {
+        return false;
     };
-    let bus_call = |method: &str, args: glib::Variant| {
-        conn.call_sync(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            "org.freedesktop.DBus",
-            method,
-            Some(&args),
-            None,
-            gio::DBusCallFlags::NONE,
-            5000,
-            gio::Cancellable::NONE,
-        )
-    };
-    let has_owner = || {
-        bus_call("NameHasOwner", (APP_ID,).to_variant())
-            .ok()
-            .and_then(|v| v.get::<(bool,)>())
-            .map(|(b,)| b)
-            .unwrap_or(false)
-    };
-    if has_owner() {
-        return;
+    if name_has_owner(&conn) {
+        return true;
     }
-    // Preferred: D-Bus activation (service file installed).
-    if bus_call("StartServiceByName", (APP_ID, 0u32).to_variant()).is_ok() {
-        return;
+    // Preferred: D-Bus activation (service file installed). The bus replies
+    // once the activated service owns the name.
+    if bus_call(&conn, "StartServiceByName", (APP_ID, 0u32).to_variant()).is_ok() {
+        return true;
     }
     // Fallback: spawn ourselves detached.
     let Ok(exe) = std::env::current_exe() else {
-        return;
+        return false;
     };
     let spawned = std::process::Command::new(exe)
         .arg("service")
@@ -107,14 +154,29 @@ fn ensure_service() {
         .process_group(0)
         .spawn();
     if spawned.is_err() {
-        return;
+        return false;
     }
+    poll(|| name_has_owner(&conn))
+}
+
+/// Give a service that was just told to quit time to let go of the bus name,
+/// so the next activation starts a fresh process.
+fn wait_for_release() -> bool {
+    let Some(conn) = session_bus() else {
+        return false;
+    };
+    poll(|| !name_has_owner(&conn))
+}
+
+/// Check `done` every 100 ms for up to five seconds.
+fn poll(done: impl Fn() -> bool) -> bool {
     for _ in 0..50 {
-        if has_owner() {
-            return;
+        if done() {
+            return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    false
 }
 
 fn run_command(
@@ -135,11 +197,17 @@ fn run_command(
         Some("board") => ui.show(Page::Board),
         Some("hide") => ui.hide(),
         Some("service") => {}
-        Some("quit") => app.quit(),
+        // The remote that sends `restart` starts the service again itself.
+        Some("quit") | Some("restart") => {
+            if let Some(conn) = app.dbus_connection() {
+                dbus::announce_stopping(&conn);
+            }
+            app.quit();
+        }
         Some("version") | Some("--version") => {
             cmd.print_literal(concat!("queue-focus ", env!("CARGO_PKG_VERSION"), "\n"));
         }
-        Some("done") => match command_update(cmd, state.update(|s| s.complete_current())) {
+        Some("done") => match command_update(cmd, state.complete_current()) {
             Ok(Some(t)) => cmd.print_literal(&format!("done: {}\n", t.title)),
             Ok(None) => cmd.print_literal("nothing in Now\n"),
             Err(e) => {

@@ -285,9 +285,10 @@ replace_extension "$STAGED_EXTENSION"
 
 refresh_caches
 
-# A new CLI invocation talks to the currently running primary instance and asks
-# it to exit. D-Bus will activate the newly installed copy on the next command.
-"$INSTALLED_BIN" quit 2>/dev/null || true
+# Hand the bus name to the newly installed binary: the new CLI asks whatever
+# service is running to quit (every version understands that), then starts
+# the installed copy. The extension refreshes when the new service appears.
+"$INSTALLED_BIN" restart 2>/dev/null || true
 installed_version=$("$INSTALLED_BIN" version 2>/dev/null || printf 'queue-focus')
 echo "installed $installed_version at $INSTALLED_BIN"
 

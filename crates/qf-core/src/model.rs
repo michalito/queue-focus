@@ -151,6 +151,15 @@ fn is_now_marker(word: &str) -> bool {
     }
 }
 
+/// What `Store::complete_current` removed and what it pulled into Now in its
+/// place, so the completion can be reversed exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completed {
+    pub task: Task,
+    /// The task moved from the head of Next to the head of Now, if any.
+    pub pulled: Option<u64>,
+}
+
 pub fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -159,7 +168,7 @@ pub fn unix_now() -> u64 {
 }
 
 /// Ordered task store. `tasks` order is the display order within each bucket.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Store {
     #[serde(default = "one")]
     pub next_id: u64,
@@ -244,18 +253,40 @@ impl Store {
     }
 
     /// Delete the current task; if Now becomes empty, pull the head of Next.
-    pub fn complete_current(&mut self) -> Option<Task> {
+    pub fn complete_current(&mut self) -> Option<Completed> {
         let id = self.current()?.id;
         let idx = self.tasks.iter().position(|t| t.id == id)?;
-        let done = self.tasks.remove(idx);
+        let task = self.tasks.remove(idx);
+        let mut pulled = None;
         if self.current().is_none() {
             let next = self.in_bucket(Bucket::Next).next().map(|t| t.id);
             if let Some(next) = next {
                 self.move_to(next, Bucket::Now, Some(0));
+                pulled = Some(next);
             }
         }
         self.normalize();
-        Some(done)
+        Some(Completed { task, pulled })
+    }
+
+    /// Reverse `complete_current`: the pulled task goes back to the head of
+    /// Next and the completed task becomes current again, clock intact.
+    /// Refuses if a task with that id already exists.
+    pub fn undo_complete(&mut self, completed: Completed) -> bool {
+        if self.get(completed.task.id).is_some() {
+            return false;
+        }
+        if let Some(pulled) = completed.pulled {
+            if self.get(pulled).is_some_and(|t| t.bucket == Bucket::Now) {
+                self.move_to(pulled, Bucket::Next, Some(0));
+            }
+        }
+        let mut task = completed.task;
+        task.bucket = Bucket::Now;
+        let at = self.first_pos(Bucket::Now).unwrap_or(self.tasks.len());
+        self.tasks.insert(at, task);
+        self.normalize();
+        true
     }
 
     /// Make a task the current one (head of Now).
@@ -435,7 +466,8 @@ mod tests {
         let b = s.add("b", Bucket::Next, None, false);
         let c = s.add("c", Bucket::Next, None, false);
         let done = s.complete_current().unwrap();
-        assert_eq!(done.id, a);
+        assert_eq!(done.task.id, a);
+        assert_eq!(done.pulled, Some(b));
         assert_eq!(s.current().unwrap().id, b);
         assert_eq!(ids(&s, Bucket::Next), vec![c]);
         assert_eq!(s.len(), 2, "done tasks are deleted, not kept");
@@ -452,10 +484,50 @@ mod tests {
         let a = s.add("a", Bucket::Now, None, false);
         let b = s.add("b", Bucket::Now, None, false);
         let c = s.add("c", Bucket::Next, None, false);
-        s.complete_current();
+        let done = s.complete_current().unwrap();
+        assert_eq!(done.task.id, a);
+        assert_eq!(done.pulled, None);
         assert_eq!(s.current().unwrap().id, b);
         assert_eq!(ids(&s, Bucket::Next), vec![c]);
-        let _ = a;
+    }
+
+    #[test]
+    fn undo_complete_restores_the_task_and_returns_the_pulled_one() {
+        let mut s = Store::new();
+        let a = s.add("a", Bucket::Now, Some(Tag::Work), false);
+        let b = s.add("b", Bucket::Next, None, false);
+        let c = s.add("c", Bucket::Next, None, false);
+        s.tasks[0].started_at = Some(1000);
+        let done = s.complete_current().unwrap();
+        assert!(s.undo_complete(done));
+        assert_eq!(ids(&s, Bucket::Now), vec![a]);
+        assert_eq!(ids(&s, Bucket::Next), vec![b, c]);
+        let cur = s.current().unwrap();
+        assert_eq!(cur.tag, Some(Tag::Work));
+        assert_eq!(cur.started_at, Some(1000), "the clock carries on");
+        assert!(s.get(b).unwrap().started_at.is_none());
+    }
+
+    #[test]
+    fn undo_complete_without_a_pull_puts_the_task_back_in_front() {
+        let mut s = Store::new();
+        let a = s.add("a", Bucket::Now, None, false);
+        let b = s.add("b", Bucket::Now, None, false);
+        let c = s.add("c", Bucket::Next, None, false);
+        let done = s.complete_current().unwrap();
+        assert!(s.undo_complete(done));
+        assert_eq!(ids(&s, Bucket::Now), vec![a, b]);
+        assert_eq!(ids(&s, Bucket::Next), vec![c]);
+    }
+
+    #[test]
+    fn undo_complete_refuses_a_task_that_already_exists() {
+        let mut s = Store::new();
+        s.add("a", Bucket::Now, None, false);
+        let done = s.complete_current().unwrap();
+        assert!(s.undo_complete(done.clone()));
+        assert!(!s.undo_complete(done));
+        assert_eq!(s.len(), 1);
     }
 
     #[test]
