@@ -4,6 +4,8 @@ Queue Focus is a task queue for GNOME. It keeps one task visible in the top bar 
 
 A task has a title, a bucket, and an optional `work` or `personal` tag. There are no projects, dates, priorities, or completion history. Marking a task done deletes it. A completion made from the top bar can be undone from its notification for a few seconds.
 
+Every so often the screen flashes the current task across the desktop. The reminder is described under [The flash reminder](#the-flash-reminder) and is configured in the Settings view.
+
 Queue Focus supports GNOME Shell 48, 49, and 50.
 
 ## The four buckets
@@ -45,6 +47,10 @@ The Queue view is a narrow window in three fixed bands.
 ### Board view
 
 The Board view shows the same tasks in four columns. Use it when you need to move several tasks.
+
+### Settings view
+
+The gear button in the header bar opens Settings in the same window. `Ctrl+,` does the same, and either one goes back to the view you came from. Settings covers the flash reminder, the rules that keep it quiet, the window theme, the top bar clock, and where Enter puts a new task. Every change applies at once and is saved a moment later.
 
 ### Quick add window
 
@@ -243,9 +249,47 @@ GNOME has a global safety switch that can disable every user extension. Queue Fo
 queue-focus-setup enable --allow-user-extensions
 ```
 
+## The flash reminder
+
+Every so often the whole screen flashes the task you are meant to be doing. The GNOME Shell extension draws it, so the reminder needs the extension enabled; the app service decides when it happens.
+
+A flash lasts under two seconds, dismisses itself, and never takes the pointer or the keyboard. A card sits in the middle of the screen with the heading `NOW`, the task title, and the time on its clock.
+
+There are six styles in three families.
+
+1. Wash tints the whole screen in the accent colour, either as one fade or as two beats.
+
+2. Edges lights the border of the screen and glows inward, either pulsing twice or as one slow breath.
+
+3. Top bar turns the GNOME panel the accent colour, either on its own or with a beam dropping from the panel to the card.
+
+Settings controls the reminder.
+
+1. Flash every, from 1 to 90 minutes.
+
+2. Vary the flash picks one of the six styles at random each time, never the same one twice in a row. Turn it off and every flash is the edges style.
+
+3. Intensity is subtle, normal, or strong. It sets how much of the screen the flash covers and how loud it is.
+
+4. Color follows the current task's tag by default: blue for work or no tag, orange for personal. Choose blue or orange to fix it.
+
+5. Flash now shows one immediately. Beside it is the time until the next one, or the reason there will not be one.
+
+The reminder holds back in three cases. It never flashes while Now is empty, because there is nothing to be reminded of. It holds back while the current task's timer is paused, unless you turn that off. It holds back outside the hours you choose, if you turn those on; a range whose end is before its start runs past midnight, and a range with the same start and end is the whole day.
+
+Whenever the reminder is held back the wait starts over, so a flash never arrives the moment you promote a task.
+
+The flash is drawn on the primary monitor, the one with the top bar.
+
+If you use GNOME with animations turned off, the flash is shown still for about a second and a half instead of fading in and out.
+
+New extension code is only loaded when GNOME Shell starts. On Wayland that means logging out and back in.
+
 ## Add tasks
 
 An entry adds to Next by default. Use markers anywhere in the text to set a tag or bucket.
+
+Task titles are limited to 256 characters. Longer titles and titles in older hand-edited task files are truncated to that limit; excessively large quick-add requests are rejected before parsing.
 
 ```text
 fix the login bug #w
@@ -300,7 +344,11 @@ The task keys act on the focused task. In the Queue view the current task's bann
 
 13. `Ctrl+1` and `Ctrl+2` open the Queue and Board views.
 
-14. `Escape`, `Ctrl+W`, and `Ctrl+Q` hide the window.
+14. `Ctrl+,` opens Settings, and opens it again to go back.
+
+15. `Escape`, `Ctrl+W`, and `Ctrl+Q` hide the window.
+
+The Settings view has no tasks on it, so the task keys do nothing there. `q` and `b` leave it for the Queue and Board views.
 
 ### Mouse
 
@@ -322,6 +370,7 @@ queue-focus toggle
 queue-focus queue
 queue-focus show
 queue-focus board
+queue-focus settings
 queue-focus add
 queue-focus add "fix login #w @next"
 queue-focus done
@@ -339,7 +388,7 @@ queue-focus --help
 
 `queue-focus` with no command and `queue-focus toggle` both show or hide the Queue view.
 
-`queue-focus queue` and `queue-focus show` open the Queue view. `queue-focus board` opens the Board view.
+`queue-focus queue` and `queue-focus show` open the Queue view. `queue-focus board` opens the Board view. `queue-focus settings` opens the Settings view.
 
 `queue-focus add` opens the quick add window. When text follows `add`, the task is added without opening a window. The same marker syntax is accepted.
 
@@ -381,6 +430,20 @@ queue-focus quit
 
 The next Queue Focus command reloads the file. Editing or replacing it while the service is running can be overwritten by the next task change.
 
+## Settings data
+
+Settings are stored beside the tasks:
+
+```text
+$XDG_DATA_HOME/queue-focus/settings.json
+```
+
+The file is readable JSON with one key per setting: `interval_min`, `vary`, `intensity`, `color`, `quiet_paused`, `quiet_hours`, `quiet_from`, `quiet_to`, `theme`, `show_timer`, and `default_bucket`. The two quiet hours are clock faces such as `"09:00"`. It is written with the same modes and the same atomic replacement as the task file.
+
+Settings you change are held in memory at once and written a second later, so dragging the interval slider does not write the file on every pixel. They are also written when the service stops.
+
+A missing file means the defaults. Unlike the task file, a settings file that cannot be read is not fatal: the service reports it, starts with the defaults, and leaves the old file alone until you change a setting.
+
 ## D Bus interface
 
 Queue Focus is a session D Bus service.
@@ -395,7 +458,7 @@ The service exports these methods:
 
 1. `GetState()` returns the same JSON snapshot as `queue-focus status`.
 
-2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown value defaults to Next. A bucket marker in the text takes precedence.
+2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence.
 
 3. `CompleteCurrent()` deletes the current task and returns a Boolean.
 
@@ -407,11 +470,17 @@ The service exports these methods:
 
 7. `SetTag(id, tag)` accepts `work`, `personal`, `w`, or `p`. An empty string clears the tag.
 
-8. `Show(view)` accepts `queue`, `board`, `add`, or `toggle`. Any other value opens the Queue view.
+8. `Show(view)` accepts `queue`, `board`, `settings`, `add`, or `toggle`. Any other value opens the Queue view.
 
 9. `Hide()` hides all app windows.
 
-The `Changed(json)` signal is emitted after a saved task change. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced.
+10. `GetSettings()` returns the settings as JSON, with the keys listed under [Settings data](#settings-data).
+
+11. `SetSettings(json)` takes a JSON object holding only the settings to change and returns them all. An unknown key or a value that cannot be used changes nothing and returns an error, so a rejected call never leaves half a change behind.
+
+The `Changed(json)` signal is emitted after a saved task change. The `SettingsChanged(json)` signal is emitted after a settings change, with the same JSON as `GetSettings`. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced.
+
+The `Flash(json)` signal asks the shell extension to draw one flash. Its JSON carries `style`, `intensity`, `palette`, `title`, and `timer`. The service resolves all five, so a shell that has only just connected still draws the right thing. `style` is one of `wash`, `wash2`, `edges`, `edgesSoft`, `topbar`, and `topbarBeam`; `palette` is `blue` or `orange`.
 
 Invalid arguments use `org.queuefocus.Error.InvalidArgs`. Save failures use `org.queuefocus.Error.Persistence`.
 
@@ -429,6 +498,7 @@ make check
 make test
 make test-install
 make test-version
+make test-extension
 make deb
 make clean
 ```
@@ -444,11 +514,13 @@ queue-focus quit
 make run
 ```
 
-`make check` checks Rust formatting, runs Clippy for all targets with warnings denied, checks the extension JavaScript with Node.js, checks the version script, and checks shell files with the `.sh` suffix.
+`make check` checks Rust formatting, runs Clippy for all targets with warnings denied, checks every extension JavaScript module with Node.js, checks the version script, and checks shell files with the `.sh` suffix.
 
-`make test` runs the Rust workspace tests, the local installer integration tests, and the version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
+`make test` runs the Rust workspace tests, the extension tests, the local installer integration tests, and the version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
 
-`make test-install` runs only the installer tests. `make test-version` runs only the version tests.
+`make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
+
+The extension tests need Node.js. The flash overlay draws through GNOME Shell, which cannot run under a test, so `extension/test` stubs the toolkit and loads the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
@@ -465,16 +537,19 @@ scripts/cargo build --release -p queue-focus
 crates/qf-core
 crates/queue-focus
 extension/queue-focus@queuefocus.org
+extension/test
 data
 scripts
 Makefile
 ```
 
-`crates/qf-core` contains the task model, add parser, JSON store, and unit tests. It has no GTK dependency.
+`crates/qf-core` contains the task model, add parser, settings model, JSON store, and unit tests. It has no GTK dependency, and no clock or randomness of its own: the reminder's decisions are ordinary functions that the caller supplies the time and a random number to.
 
-`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, and app styles.
+`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, the reminder's schedule, and app styles.
 
-`extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, its GSettings schema, metadata, and styles.
+`extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
+
+`extension/test` contains the extension tests and the stubbed GNOME Shell they run against. It is not installed.
 
 `data` contains the desktop entry, system D Bus service file, and icons.
 

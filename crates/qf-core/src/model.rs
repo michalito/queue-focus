@@ -1,5 +1,25 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Task titles are short, single-purpose labels, not documents. Keeping this
+/// invariant in the model bounds every snapshot and renderer fed by the store.
+pub const MAX_TITLE_CHARS: usize = 256;
+
+/// Quick-add includes optional bucket/tag markers as well as the title. Bound
+/// it before splitting so an IPC caller cannot make parsing allocate an
+/// unbounded word vector just to produce a bounded title.
+pub const MAX_QUICK_ADD_BYTES: usize = 4096;
+
+fn bounded_title(title: &str) -> String {
+    title.trim().chars().take(MAX_TITLE_CHARS).collect()
+}
+
+fn deserialize_title<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(|title| bounded_title(&title))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,6 +98,7 @@ impl Tag {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: u64,
+    #[serde(deserialize_with = "deserialize_title")]
     pub title: String,
     pub bucket: Bucket,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,6 +136,9 @@ pub struct QuickAdd {
 
 impl QuickAdd {
     pub fn parse(input: &str) -> Option<QuickAdd> {
+        if input.len() > MAX_QUICK_ADD_BYTES {
+            return None;
+        }
         let mut bucket = None;
         let mut tag = None;
         let mut words: Vec<&str> = Vec::new();
@@ -218,7 +242,7 @@ impl Store {
         self.next_id += 1;
         let task = Task {
             id,
-            title: title.trim().to_string(),
+            title: bounded_title(title),
             bucket,
             tag,
             created_at: unix_now(),
@@ -370,13 +394,13 @@ impl Store {
     }
 
     pub fn rename(&mut self, id: u64, title: &str) -> bool {
-        let title = title.trim();
+        let title = bounded_title(title);
         if title.is_empty() {
             return false;
         }
         match self.tasks.iter_mut().find(|t| t.id == id) {
             Some(t) => {
-                t.title = title.to_string();
+                t.title = title;
                 true
             }
             None => false,
@@ -595,6 +619,43 @@ mod tests {
         assert!(s.rename(a, "  new "));
         assert_eq!(s.get(a).unwrap().title, "new");
         assert!(!s.rename(a, "  "));
+    }
+
+    #[test]
+    fn task_titles_are_bounded_at_every_model_ingress() {
+        let oversized = "🦀".repeat(MAX_TITLE_CHARS + 20);
+        let mut store = Store::new();
+        let id = store.add(&oversized, Bucket::Next, None, false);
+        assert_eq!(
+            store.get(id).unwrap().title.chars().count(),
+            MAX_TITLE_CHARS
+        );
+
+        let replacement = "λ".repeat(MAX_TITLE_CHARS + 1);
+        assert!(store.rename(id, &replacement));
+        assert_eq!(
+            store.get(id).unwrap().title.chars().count(),
+            MAX_TITLE_CHARS
+        );
+        assert!(store.get(id).unwrap().title.chars().all(|c| c == 'λ'));
+
+        let json = serde_json::json!({
+            "next_id": 2,
+            "tasks": [{
+                "id": 1,
+                "title": oversized,
+                "bucket": "next",
+                "created_at": 1
+            }]
+        });
+        let loaded: Store = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded.tasks[0].title.chars().count(), MAX_TITLE_CHARS);
+    }
+
+    #[test]
+    fn quick_add_refuses_input_too_large_to_parse_safely() {
+        let oversized = "x".repeat(MAX_QUICK_ADD_BYTES + 1);
+        assert!(QuickAdd::parse(&oversized).is_none());
     }
 
     #[test]

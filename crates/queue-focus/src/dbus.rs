@@ -1,11 +1,13 @@
 //! Session-bus API used by the GNOME Shell extension (and anything else).
 //! Bus name is the application id; object path /org/queuefocus/QueueFocus.
 
+use crate::flash::SharedFlash;
+use crate::settings::SharedSettings;
 use crate::state::{DurabilityWarning, SharedState, UpdateOutcome};
 use crate::ui::{Page, Ui};
 use adw::prelude::*;
 use gtk::{gio, glib};
-use qf_core::{Bucket, Tag};
+use qf_core::{Bucket, Tag, MAX_QUICK_ADD_BYTES};
 use std::io;
 use std::rc::Rc;
 
@@ -42,7 +44,14 @@ const XML: &str = r#"
     </method>
     <method name="Show"><arg type="s" name="view" direction="in"/></method>
     <method name="Hide"/>
+    <method name="GetSettings"><arg type="s" name="json" direction="out"/></method>
+    <method name="SetSettings">
+      <arg type="s" name="json" direction="in"/>
+      <arg type="s" name="settings" direction="out"/>
+    </method>
     <signal name="Changed"><arg type="s" name="json"/></signal>
+    <signal name="SettingsChanged"><arg type="s" name="json"/></signal>
+    <signal name="Flash"><arg type="s" name="json"/></signal>
     <signal name="DurabilityWarning"><arg type="s" name="message"/></signal>
     <signal name="Stopping"/>
   </interface>
@@ -52,22 +61,31 @@ const XML: &str = r#"
 const ERR_INVALID_ARGS: &str = "org.queuefocus.Error.InvalidArgs";
 const ERR_PERSISTENCE: &str = "org.queuefocus.Error.Persistence";
 
+// Settings currently serialize to well under 1 KiB. Leave room for whitespace
+// and future fields without letting an untrusted bus caller hand serde_json an
+// arbitrarily expensive document on the GTK main loop.
+const MAX_SETTINGS_PATCH_BYTES: usize = 4 * 1024;
+const MAX_ERROR_FIELD_CHARS: usize = 64;
+
 /// Export the object on `conn` and start broadcasting state changes.
 /// Called from `QfApplication::dbus_register`, i.e. before the bus name is owned.
 pub fn export(
     conn: &gio::DBusConnection,
     state: &SharedState,
+    settings: &SharedSettings,
+    flash: &SharedFlash,
     ui: &Rc<Ui>,
 ) -> Result<gio::RegistrationId, glib::Error> {
     let node = gio::DBusNodeInfo::for_xml(XML)?;
     let iface = node.lookup_interface(IFACE).expect("interface in XML");
 
     let st = state.clone();
+    let cfg = settings.clone();
     let ui = ui.clone();
     let id = conn
         .register_object(PATH, &iface)
         .method_call(move |conn, _sender, _path, _iface, method, params, inv| {
-            handle(&conn, &st, &ui, method, params, inv);
+            handle(&conn, &st, &cfg, &ui, method, params, inv);
         })
         .build()?;
 
@@ -76,6 +94,22 @@ pub fn export(
     state.on_change(move || {
         let json = st.store().snapshot_json();
         emit(&changed_conn, "Changed", Some(&(json,).to_variant()));
+    });
+
+    let cfg = settings.clone();
+    let changed_conn = conn.clone();
+    settings.on_change(move || {
+        let json = cfg.get().to_json();
+        emit(
+            &changed_conn,
+            "SettingsChanged",
+            Some(&(json,).to_variant()),
+        );
+    });
+
+    let flash_conn = conn.clone();
+    flash.set_emitter(move |event| {
+        emit(&flash_conn, "Flash", Some(&(event.to_json(),).to_variant()));
     });
     Ok(id)
 }
@@ -103,6 +137,7 @@ fn emit(conn: &gio::DBusConnection, signal: &str, args: Option<&glib::Variant>) 
 fn handle(
     conn: &gio::DBusConnection,
     state: &SharedState,
+    settings: &SharedSettings,
     ui: &Rc<Ui>,
     method: &str,
     params: glib::Variant,
@@ -117,7 +152,11 @@ fn handle(
             let Some((text, bucket)) = params.get::<(String, String)>() else {
                 return bad(inv, "expected (ss)");
             };
-            let default = Bucket::parse(&bucket).unwrap_or(Bucket::Next);
+            if text.len() > MAX_QUICK_ADD_BYTES {
+                return bad(inv, "task text is too long");
+            }
+            // An unnamed bucket is the one the user chose in Settings.
+            let default = Bucket::parse(&bucket).unwrap_or_else(|| settings.get().default_bucket);
             let result = state.update(|s| s.quick_add(&text, default));
             reply(conn, inv, result, |id| {
                 id.map(|id| Some((id,).to_variant())).ok_or("empty title")
@@ -190,6 +229,25 @@ fn handle(
             ui.hide();
             inv.return_value(None);
         }
+        "GetSettings" => inv.return_value(Some(&(settings.get().to_json(),).to_variant())),
+        "SetSettings" => {
+            // GDBus validates this against the introspection signature before
+            // dispatch. Borrow the string so an oversized call is rejected
+            // without first copying its entire body into a Rust String.
+            let Some(json_arg) = params.try_child_value(0) else {
+                return bad(inv, "expected (s)");
+            };
+            let Some(json) = json_arg.str() else {
+                return bad(inv, "expected (s)");
+            };
+            if settings_patch_is_too_large(json) {
+                return bad(inv, "settings patch is too long");
+            }
+            match settings.apply_patch(json) {
+                Ok(()) => inv.return_value(Some(&(settings.get().to_json(),).to_variant())),
+                Err(e) => bad(inv, &bounded_settings_error(e)),
+            }
+        }
         _ => inv.return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", "unknown method"),
     }
 }
@@ -230,4 +288,64 @@ fn emit_warning(conn: &gio::DBusConnection, warning: &DurabilityWarning) {
 /// Reply for calls that name a task and return nothing.
 fn found(found: bool) -> Result<Option<glib::Variant>, &'static str> {
     found.then_some(None).ok_or("no such task")
+}
+
+fn settings_patch_is_too_large(patch: &str) -> bool {
+    patch.len() > MAX_SETTINGS_PATCH_BYTES
+}
+
+/// Bound the only settings error that reflects an attacker-controlled field
+/// name. Character-based truncation keeps the returned D-Bus string valid
+/// UTF-8 while preventing a long key from becoming a long error response.
+fn bounded_settings_error(error: String) -> String {
+    const PREFIX: &str = "unknown setting: ";
+    let Some(field) = error.strip_prefix(PREFIX) else {
+        return error;
+    };
+    let Some((end, _)) = field.char_indices().nth(MAX_ERROR_FIELD_CHARS) else {
+        return error;
+    };
+    format!("{PREFIX}{}…", &field[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_patch_limit_is_a_byte_limit() {
+        assert!(!settings_patch_is_too_large(
+            &qf_core::Settings::default().to_json()
+        ));
+        assert!(!settings_patch_is_too_large(
+            &"x".repeat(MAX_SETTINGS_PATCH_BYTES)
+        ));
+        assert!(settings_patch_is_too_large(
+            &"x".repeat(MAX_SETTINGS_PATCH_BYTES + 1)
+        ));
+        assert!(settings_patch_is_too_large(
+            &"é".repeat(MAX_SETTINGS_PATCH_BYTES / 2 + 1)
+        ));
+    }
+
+    #[test]
+    fn unknown_setting_names_are_truncated_without_splitting_utf8() {
+        let field = "é".repeat(MAX_ERROR_FIELD_CHARS + 1);
+        assert_eq!(
+            bounded_settings_error(format!("unknown setting: {field}")),
+            format!("unknown setting: {}…", "é".repeat(MAX_ERROR_FIELD_CHARS))
+        );
+    }
+
+    #[test]
+    fn short_and_unrelated_settings_errors_are_unchanged() {
+        assert_eq!(
+            bounded_settings_error("unknown setting: typo".into()),
+            "unknown setting: typo"
+        );
+        assert_eq!(
+            bounded_settings_error("settings patch is not JSON".into()),
+            "settings patch is not JSON"
+        );
+    }
 }

@@ -344,3 +344,81 @@ popover.task-menu > contents {
 .board-column {
   padding: 0 6px;
 }
+
+/* ---- settings ------------------------------------------------------ */
+
+/* Cards in the queue's clothes: one per group, hairlines between the rows. */
+.settings-page {
+  padding: 18px 20px 24px 20px;
+}
+.settings-title {
+  font-weight: 700;
+  font-size: 1.1em;
+}
+/* Lit while its page is showing, in the same clothes the view switcher's
+   selected segment wears. */
+.gear-btn.active {
+  background: var(--active-toggle-bg-color);
+  color: var(--active-toggle-fg-color);
+}
+.settings-heading {
+  padding: 0 2px;
+}
+.settings-group-title {
+  font-weight: 700;
+}
+.settings-description,
+.settings-subtitle {
+  font-size: 0.85em;
+  opacity: 0.55;
+}
+.settings-dim {
+  opacity: 0.75;
+}
+.settings-card {
+  background: var(--card-bg-color);
+  border: 1px solid var(--card-shade-color);
+  border-radius: 12px;
+  color: var(--card-fg-color);
+}
+.settings-row {
+  padding: 10px 14px;
+}
+.settings-row.divided {
+  border-top: 1px solid var(--card-shade-color);
+}
+/* The slider's marks hang below it, so the row needs less padding under. */
+.settings-slider-row {
+  padding: 10px 14px 4px 14px;
+}
+.settings-value {
+  font-weight: 600;
+  color: var(--accent-color);
+}
+/* The window is 400px wide: settings segments are tighter than the header
+   bar's two, and the four-bucket one tighter still. */
+.settings-row .view-switch button {
+  padding: 3px 12px;
+}
+.settings-row .view-switch.narrow button {
+  padding: 3px 8px;
+}
+.settings-slider-row scale {
+  min-height: 0;
+  padding: 0;
+}
+.settings-slider-row scale marks label {
+  font-size: 0.75em;
+  opacity: 0.45;
+}
+/* 6px radii everywhere else, so the switch is a rounded rectangle too. */
+.settings-switch,
+.settings-switch > slider {
+  border-radius: 6px;
+}
+.time-entry {
+  min-height: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.9em;
+}

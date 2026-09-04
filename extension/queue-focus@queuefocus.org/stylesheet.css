@@ -16,3 +16,33 @@
 .qf-chip-work { background-color: #3584e4; }
 .qf-chip-personal { background-color: #c64600; }
 .qf-open-btn { margin: 2px 4px; padding: 4px 8px; }
+
+/* The reminder's flash card. Its two accent colours are set per flash, since
+   they follow the task's tag; everything here is the same every time. */
+.qf-flash-card {
+  spacing: 8px;
+  min-width: 460px;
+  max-width: 860px;
+  padding: 26px 44px 24px 44px;
+  border-radius: 18px;
+  background-color: rgba(6, 6, 10, 0.85);
+  color: #ffffff;
+}
+.qf-flash-now {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.qf-flash-title {
+  font-size: 34px;
+  font-weight: 800;
+  max-height: 126px;
+  text-align: center;
+  color: #ffffff;
+}
+.qf-flash-timer {
+  font-family: monospace;
+  font-size: 24px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+}

@@ -1,4 +1,6 @@
-use crate::Store;
+use crate::{Settings, Store};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -52,34 +54,64 @@ impl std::error::Error for SaveError {
     }
 }
 
-/// `$XDG_DATA_HOME/queue-focus/tasks.json` (defaults to `~/.local/share`).
-pub fn data_path() -> PathBuf {
+/// `$XDG_DATA_HOME/queue-focus` (defaults to `~/.local/share/queue-focus`).
+pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("queue-focus").join("tasks.json")
+    base.join("queue-focus")
+}
+
+/// `$XDG_DATA_HOME/queue-focus/tasks.json`.
+pub fn data_path() -> PathBuf {
+    data_dir().join("tasks.json")
+}
+
+/// `$XDG_DATA_HOME/queue-focus/settings.json`.
+pub fn settings_path() -> PathBuf {
+    data_dir().join("settings.json")
 }
 
 /// Load the task store, repairing permissions left by pre-hardening builds.
 ///
-/// The app directory and store file contain potentially private task titles,
+/// An absent file or directory is an empty queue, not an error.
+pub fn load(path: &Path) -> io::Result<Store> {
+    Ok(read_json(path)?.unwrap_or_else(Store::new))
+}
+
+/// Load the settings. An absent file means the defaults; a malformed one is
+/// an error, so a caller can say so rather than quietly resetting the file.
+pub fn load_settings(path: &Path) -> io::Result<Settings> {
+    let mut settings: Settings = read_json(path)?.unwrap_or_default();
+    settings.sanitize();
+    Ok(settings)
+}
+
+/// Read one of our JSON files, or `None` when it does not exist yet.
+///
+/// The app directory and its files contain potentially private task titles,
 /// so they are restricted to the current user. `O_NOFOLLOW` prevents an
 /// accidental final-component symlink from having its target chmodded or read.
-pub fn load(path: &Path) -> io::Result<Store> {
+///
+/// Both our files are JSON objects. Serde would happily read a struct from an
+/// array instead, filling the fields in declaration order, so a file whose
+/// shape is wrong would come back as a plausible-looking value rather than as
+/// the error it is.
+fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
     let directory = store_dir(path);
     if directory != Path::new(".") {
         let metadata = match fs::metadata(directory) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Store::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
         if !metadata.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "task store parent is not a directory",
-            ));
+            return Err(bad_data(format!(
+                "{} is not a directory",
+                directory.display()
+            )));
         }
         fs::set_permissions(directory, fs::Permissions::from_mode(DIRECTORY_MODE))?;
     }
@@ -90,24 +122,48 @@ pub fn load(path: &Path) -> io::Result<Store> {
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Store::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
 
     if !file.metadata()?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "task store is not a regular file",
-        ));
+        return Err(bad_data(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
     }
     file.set_permissions(fs::Permissions::from_mode(FILE_MODE))?;
 
-    serde_json::from_reader(file).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    let json: serde_json::Value = serde_json::from_reader(file)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if !json.is_object() {
+        return Err(bad_data(format!(
+            "{} does not hold a JSON object",
+            path.display()
+        )));
+    }
+    serde_json::from_value(json)
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn bad_data(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
 /// Atomically save the store and sync both the file and its directory.
 pub fn save(path: &Path, store: &Store) -> Result<(), SaveError> {
-    let json = serde_json::to_vec_pretty(store).map_err(|error| {
+    save_json(path, store)
+}
+
+/// Save the settings the same way, so a half-written file never replaces a
+/// good one.
+pub fn save_settings(path: &Path, settings: &Settings) -> Result<(), SaveError> {
+    save_json(path, settings)
+}
+
+fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SaveError> {
+    let json = serde_json::to_vec_pretty(value).map_err(|error| {
         SaveError::BeforeCommit(io::Error::new(io::ErrorKind::InvalidData, error))
     })?;
     save_bytes_with_sync(path, &json, sync_directory)
@@ -121,7 +177,7 @@ fn save_bytes_with_sync(
     let file_name = path.file_name().ok_or_else(|| {
         SaveError::BeforeCommit(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "task store path has no file name",
+            format!("{} has no file name", path.display()),
         ))
     })?;
     let directory = prepare_store_dir(path).map_err(SaveError::BeforeCommit)?;
@@ -151,10 +207,10 @@ fn prepare_store_dir(path: &Path) -> io::Result<&Path> {
 
     fs::create_dir_all(directory)?;
     if !fs::metadata(directory)?.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "task store parent is not a directory",
-        ));
+        return Err(bad_data(format!(
+            "{} is not a directory",
+            directory.display()
+        )));
     }
     fs::set_permissions(directory, fs::Permissions::from_mode(DIRECTORY_MODE))?;
     Ok(directory)
@@ -237,6 +293,124 @@ mod tests {
         assert_eq!(loaded.next_id, store.next_id);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn settings_round_trip_and_start_from_the_defaults() {
+        let root = temp_dir("settings");
+        let path = root.join("queue-focus/settings.json");
+        assert_eq!(load_settings(&path).unwrap(), Settings::default());
+
+        let settings = Settings {
+            interval_min: 25,
+            theme: crate::Theme::Dark,
+            ..Settings::default()
+        };
+        save_settings(&path, &settings).unwrap();
+        // Asserted before the load, which would repair the modes itself and
+        // hide anything the save got wrong.
+        assert_eq!(mode(&path), FILE_MODE);
+        assert_eq!(mode(path.parent().unwrap()), DIRECTORY_MODE);
+
+        assert_eq!(load_settings(&path).unwrap(), settings);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_hand_edited_settings_file_is_pulled_back_into_range_on_load() {
+        let root = temp_dir("settings-clamp");
+        let directory = root.join("queue-focus");
+        let path = directory.join("settings.json");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&path, br#"{"interval_min": 4000}"#).unwrap();
+
+        assert_eq!(
+            load_settings(&path).unwrap().interval_min,
+            crate::INTERVAL_MAX
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Settings live beside the tasks, so a malformed one is reported rather
+    /// than silently replaced — the same rule the task file follows.
+    #[test]
+    fn malformed_settings_are_reported_and_left_alone() {
+        let root = temp_dir("settings-malformed");
+        let directory = root.join("queue-focus");
+        let path = directory.join("settings.json");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&path, b"{ not settings").unwrap();
+
+        assert_eq!(
+            load_settings(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"{ not settings");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Serde reads a struct from a JSON array too, taking the fields in
+    /// declaration order. A file truncated to `[]`, or a hand-edit that turned
+    /// the object into a list, must be reported rather than quietly accepted
+    /// as a plausible set of values.
+    #[test]
+    fn a_file_that_is_not_a_json_object_is_refused() {
+        let root = temp_dir("wrong-shape");
+        let directory = root.join("queue-focus");
+        fs::create_dir_all(&directory).unwrap();
+
+        for contents in [
+            &b"[]"[..],
+            b"[7, false]",
+            br#"[3,false,"strong","orange",true,true,"22:00","06:00","dark",false,"side"]"#,
+            b"\"settings\"",
+            b"null",
+            b"12",
+        ] {
+            let path = directory.join("settings.json");
+            fs::write(&path, contents).unwrap();
+            let error = load_settings(&path).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(
+                error.to_string().contains("does not hold a JSON object"),
+                "{}",
+                error
+            );
+        }
+
+        let path = directory.join("tasks.json");
+        fs::write(&path, b"[1, []]").unwrap();
+        assert!(load(&path).is_err(), "the task file is held to it too");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The read and save paths are shared by both files, so their complaints
+    /// have to name the file they were actually given.
+    #[test]
+    fn a_problem_with_a_file_names_that_file() {
+        let root = temp_dir("named-errors");
+        let directory = root.join("queue-focus");
+        let path = directory.join("settings.json");
+        // A directory where the file belongs.
+        fs::create_dir_all(&path).unwrap();
+
+        let error = load_settings(&path).unwrap_err().to_string();
+        assert!(error.contains("settings.json"), "{error}");
+        assert!(!error.contains("task store"), "{error}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_data_files_sit_together_in_one_directory() {
+        assert_eq!(data_path().parent(), Some(data_dir().as_path()));
+        assert_eq!(settings_path().parent(), Some(data_dir().as_path()));
+        assert_eq!(data_path().file_name().unwrap(), "tasks.json");
+        assert_eq!(settings_path().file_name().unwrap(), "settings.json");
     }
 
     #[test]

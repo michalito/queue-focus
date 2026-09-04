@@ -9,6 +9,7 @@ import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {FlashOverlay} from './flash.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -28,7 +29,10 @@ const IFACE_XML = `
     <method name="UndoComplete"><arg type="t" name="id" direction="in"/><arg type="b" name="undone" direction="out"/></method>
     <method name="Promote"><arg type="t" name="id" direction="in"/></method>
     <method name="Show"><arg type="s" name="view" direction="in"/></method>
+    <method name="GetSettings"><arg type="s" name="json" direction="out"/></method>
     <signal name="Changed"><arg type="s" name="json"/></signal>
+    <signal name="SettingsChanged"><arg type="s" name="json"/></signal>
+    <signal name="Flash"><arg type="s" name="json"/></signal>
     <signal name="DurabilityWarning"><arg type="s" name="message"/></signal>
     <signal name="Stopping"/>
   </interface>
@@ -63,6 +67,10 @@ class QueueFocusIndicator extends PanelMenu.Button {
     _init() {
         super._init(0.5, APP_NAME);
         this._state = null;
+        // What the user chose on the app's Settings page. Until the service
+        // answers, the top bar shows the clock, as it always has.
+        this._prefs = {show_timer: true};
+        this._flash = new FlashOverlay();
         this._quickAddPending = false;
         this._entry = null;
         // Focus key → actor, for the menu currently built (see _buildMenu).
@@ -98,6 +106,8 @@ class QueueFocusIndicator extends PanelMenu.Button {
         });
         this._signalIds = [
             this._proxy.connectSignal('Changed', (_p, _s, [json]) => this._apply(json)),
+            this._proxy.connectSignal('SettingsChanged', (_p, _s, [json]) => this._applySettings(json)),
+            this._proxy.connectSignal('Flash', (_p, _s, [json]) => this._onFlash(json)),
             this._proxy.connectSignal('DurabilityWarning',
                 (_p, _s, [message]) => Main.notifyError(APP_NAME, message)),
             this._proxy.connectSignal('Stopping', () => {
@@ -128,6 +138,10 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     /** Ask for state. Like any method call, this starts the service via D-Bus activation. */
     _refresh() {
+        this._proxy?.GetSettingsRemote((res, err) => {
+            if (!this._proxy || err) return;
+            this._applySettings(res[0]);
+        });
         this._proxy?.GetStateRemote((res, err) => {
             if (!this._proxy) return;
             if (!err) {
@@ -182,12 +196,39 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (this.menu.isOpen && !this._quickAddPending) this._buildMenu();
     }
 
+    _applySettings(json) {
+        try {
+            const settings = JSON.parse(json);
+            if (settings && typeof settings === 'object') this._prefs = settings;
+        } catch (e) {
+            console.warn(`queue-focus: unreadable settings: ${e.message}`);
+            return;
+        }
+        this._updateTimer();
+    }
+
+    /** The service says it is time to remind the user what they are doing. */
+    _onFlash(json) {
+        let event;
+        try {
+            event = JSON.parse(json);
+        } catch (e) {
+            console.warn(`queue-focus: unreadable flash: ${e.message}`);
+            return;
+        }
+        if (event?.title) this._flash.show(event);
+    }
+
     /** Show the clock, then wake up right after its next minute boundary. */
     _updateTimer() {
         this._cancelTick();
         const cur = this._state?.current;
-        this._timer.text = cur?.started_at ? elapsed(cur.started_at, cur.paused_at) : '';
-        if (!cur?.started_at || cur.paused_at) return;
+        const wanted = this._prefs.show_timer !== false;
+        const showing = wanted && !!cur?.started_at;
+        this._timer.text = showing ? elapsed(cur.started_at, cur.paused_at) : '';
+        // An empty label still carries its margin, so take it out of the box.
+        this._timer.visible = showing;
+        if (!showing || cur.paused_at) return;
         const secs = Math.max(0, Math.floor(Date.now() / 1000) - cur.started_at);
         this._tickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60 - (secs % 60), () => {
             this._tickId = 0;
@@ -359,7 +400,8 @@ class QueueFocusIndicator extends PanelMenu.Button {
             const text = entry.get_text().trim();
             if (!text) return;
             this._quickAddPending = true;
-            this._proxy?.AddRemote(text, 'next', (_res, err) => {
+            // An empty bucket means "wherever Settings says".
+            this._proxy?.AddRemote(text, '', (_res, err) => {
                 this._quickAddPending = false;
                 if (err) {
                     this._fail('Add', err);
@@ -426,6 +468,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
     }
 
     destroy() {
+        this._flash.destroy();
         this._cancelTick();
         this._cancelRetry();
         this._cancelFocus();

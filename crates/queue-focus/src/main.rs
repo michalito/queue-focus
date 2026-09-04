@@ -1,11 +1,12 @@
 mod app;
 mod dbus;
+mod flash;
+mod settings;
 mod state;
 mod ui;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use qf_core::Bucket;
 use std::rc::Rc;
 use ui::Page;
 
@@ -17,6 +18,7 @@ usage: queue-focus [COMMAND]
   toggle          show/hide the queue panel (default)
   queue | show    show the queue panel
   board           show the board
+  settings        show the settings page
   add [TEXT]      add a task (opens quick-add if TEXT omitted)
                   syntax: '!title' -> Now, '#w'/'#p' tag, '@later'/'@side'
   done            complete (delete) the current task
@@ -50,14 +52,28 @@ fn main() -> glib::ExitCode {
             return glib::ExitCode::from(1);
         }
     };
-    let app = app::QfApplication::new(APP_ID, state);
+    let (settings, warning) = settings::SettingsStore::load();
+    if let Some(warning) = warning.as_deref() {
+        eprintln!("queue-focus: {warning}");
+    }
+    let app = app::QfApplication::new(APP_ID, state, settings);
+    if let Some(warning) = warning {
+        app.ui()
+            .queue_settings_problem("Could not load your settings", &warning);
+    }
 
     app.connect_startup(|app| {
         ui::load_css();
+        ui::apply_theme(app.settings().get().theme);
+        settings::persist_on_main_loop(&app.settings());
         gtk::Window::set_default_icon_name(APP_ID);
         // Keep running with no windows so the top-bar extension always has a service.
         std::mem::forget(app.hold());
     });
+
+    // Settings changes are written a moment after they are made; the moment
+    // the process ends is the one time that wait cannot be afforded.
+    app.connect_shutdown(|app| app.settings().flush());
 
     app.connect_activate(|app| app.ui().show(Page::Queue));
 
@@ -195,6 +211,7 @@ fn run_command(
         None | Some("toggle") => ui.toggle(),
         Some("queue") | Some("show") => ui.show(Page::Queue),
         Some("board") => ui.show(Page::Board),
+        Some("settings") => ui.show(Page::Settings),
         Some("hide") => ui.hide(),
         Some("service") => {}
         // The remote that sends `restart` starts the service again itself.
@@ -224,7 +241,8 @@ fn run_command(
             if text.trim().is_empty() {
                 ui.quick_add_dialog();
             } else {
-                match command_update(cmd, state.update(|s| s.quick_add(&text, Bucket::Next))) {
+                let default = app.settings().get().default_bucket;
+                match command_update(cmd, state.update(|s| s.quick_add(&text, default))) {
                     Ok(Some(id)) => cmd.print_literal(&format!("added #{id}\n")),
                     Ok(None) => {
                         cmd.printerr_literal("nothing to add\n");

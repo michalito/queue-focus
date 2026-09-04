@@ -7,10 +7,15 @@
 //! of Now lives in the banner, so the rest of the Now bucket is listed under the
 //! Next header — everything queued behind what you are doing.
 
+use crate::flash::SharedFlash;
+use crate::settings::SharedSettings;
 use crate::state::{SharedState, UpdateOutcome};
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
-use qf_core::{Bucket, Store, Tag, Task};
+use qf_core::{
+    Bucket, FlashColor, Intensity, Settings, Store, Tag, Task, Theme, INTERVAL_MAX, INTERVAL_MIN,
+    MAX_TITLE_CHARS,
+};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -22,8 +27,11 @@ const BOARD_SIZE: (i32, i32) = (1040, 640);
 /// Bucket order on the board page.
 const ORDER: [Bucket; 4] = [Bucket::Now, Bucket::Side, Bucket::Next, Bucket::Later];
 
+/// Bucket order in the "⏎ adds to" control: the usual answer comes first.
+const BUCKET_ORDER: [Bucket; 4] = [Bucket::Next, Bucket::Now, Bucket::Side, Bucket::Later];
+
 /// The `?` popover, in order.
-const SHORTCUTS: [(&str, &str); 11] = [
+const SHORTCUTS: [(&str, &str); 12] = [
     ("j/k", "move"),
     ("J/K", "reorder"),
     ("⏎", "focus"),
@@ -35,6 +43,7 @@ const SHORTCUTS: [(&str, &str); 11] = [
     ("l", "later"),
     ("n", "add"),
     ("b/q", "view"),
+    ("Ctrl+,", "settings"),
 ];
 
 pub fn load_css() {
@@ -49,10 +58,23 @@ pub fn load_css() {
     }
 }
 
+/// Puts one stored setting into the control that shows it.
+type SettingsSync = Rc<dyn Fn(&Settings)>;
+
+/// Force the window's colour scheme, or hand it back to the desktop.
+pub fn apply_theme(theme: Theme) {
+    adw::StyleManager::default().set_color_scheme(match theme {
+        Theme::System => adw::ColorScheme::Default,
+        Theme::Light => adw::ColorScheme::ForceLight,
+        Theme::Dark => adw::ColorScheme::ForceDark,
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Queue,
     Board,
+    Settings,
 }
 
 impl Page {
@@ -60,14 +82,15 @@ impl Page {
         match self {
             Page::Queue => "queue",
             Page::Board => "board",
+            Page::Settings => "settings",
         }
     }
 
     pub fn parse(s: &str) -> Page {
-        if s == "board" {
-            Page::Board
-        } else {
-            Page::Queue
+        match s {
+            "board" => Page::Board,
+            "settings" => Page::Settings,
+            _ => Page::Queue,
         }
     }
 }
@@ -102,9 +125,26 @@ struct Section {
 pub struct Ui {
     app: adw::Application,
     state: SharedState,
+    settings: SharedSettings,
+    flash: SharedFlash,
     win: RefCell<Option<adw::ApplicationWindow>>,
     stack: RefCell<Option<adw::ViewStack>>,
     entry: RefCell<Option<gtk::Entry>>,
+    /// Header bar furniture that changes with the page.
+    header: RefCell<Option<(adw::HeaderBar, gtk::Widget, gtk::Label, gtk::Button)>>,
+    /// The quick-add band, hidden on the settings page.
+    entry_bar: RefCell<Option<gtk::Widget>>,
+    /// The page the gear was pressed from, so pressing it again goes back.
+    came_from: Cell<Page>,
+    /// Pushes the stored settings into the settings page's controls.
+    settings_sync: RefCell<Vec<SettingsSync>>,
+    /// Set while `sync_settings` writes into those controls, so the handlers
+    /// they fire do not write the same value straight back.
+    syncing: Cell<bool>,
+    /// The "next flash in …" line and the button beside it.
+    countdown: RefCell<Option<(gtk::Label, gtk::Button)>>,
+    /// A settings failure waiting for a window to be shown in: heading, body.
+    pending_problem: RefCell<Option<(String, String)>>,
     lists: RefCell<Vec<BucketList>>,
     sections: RefCell<Vec<Section>>,
     /// Queue page: the current task's band, rebuilt with everything else.
@@ -130,13 +170,27 @@ pub struct Ui {
 }
 
 impl Ui {
-    pub fn new(app: adw::Application, state: SharedState) -> Rc<Ui> {
+    pub fn new(
+        app: adw::Application,
+        state: SharedState,
+        settings: SharedSettings,
+        flash: SharedFlash,
+    ) -> Rc<Ui> {
         let ui = Rc::new(Ui {
             app,
             state: state.clone(),
+            settings: settings.clone(),
+            flash,
             win: RefCell::new(None),
             stack: RefCell::new(None),
             entry: RefCell::new(None),
+            header: RefCell::new(None),
+            entry_bar: RefCell::new(None),
+            came_from: Cell::new(Page::Queue),
+            settings_sync: RefCell::new(Vec::new()),
+            syncing: Cell::new(false),
+            countdown: RefCell::new(None),
+            pending_problem: RefCell::new(None),
             lists: RefCell::new(Vec::new()),
             sections: RefCell::new(Vec::new()),
             banner: RefCell::new(None),
@@ -157,6 +211,24 @@ impl Ui {
                 ui.rebuild();
             }
         });
+        // A setting changed here, or from another client over D-Bus: put the
+        // new values into the controls and act on the ones that show.
+        let weak = Rc::downgrade(&ui);
+        settings.on_change(move || {
+            if let Some(ui) = weak.upgrade() {
+                apply_theme(ui.settings.get().theme);
+                ui.sync_settings();
+            }
+        });
+        let weak = Rc::downgrade(&ui);
+        settings.on_problem(move |message| {
+            if let Some(ui) = weak.upgrade() {
+                // The service usually runs with no window at all, and the
+                // store only complains once per outage. Keep the message until
+                // there is somewhere to show it.
+                ui.queue_settings_problem("Could not save your settings", message);
+            }
+        });
         let weak = Rc::downgrade(&ui);
         glib::timeout_add_seconds_local(1, move || {
             if let Some(ui) = weak.upgrade() {
@@ -173,6 +245,26 @@ impl Ui {
         let win = self.window();
         self.set_page(page);
         win.present();
+        self.show_pending_problem();
+    }
+
+    /// Keep a settings failure until there is a visible window for its alert.
+    /// The caller has already written the same failure to stderr.
+    pub fn queue_settings_problem(&self, heading: &str, message: &str) {
+        *self.pending_problem.borrow_mut() = Some((heading.into(), message.into()));
+        self.show_pending_problem();
+    }
+
+    /// Show a settings failure that happened while nobody was looking. It is
+    /// reported once, so it has to wait rather than be dropped.
+    fn show_pending_problem(&self) {
+        if self.visible_window().is_none() {
+            return;
+        }
+        let Some((heading, message)) = self.pending_problem.borrow_mut().take() else {
+            return;
+        };
+        self.show_alert(&heading, &message);
     }
 
     /// Hide if focused, otherwise bring the queue to the front.
@@ -234,6 +326,12 @@ impl Ui {
 
     fn alert(&self, heading: &str, body: &str) {
         eprintln!("queue-focus: {heading}: {body}");
+        self.show_alert(heading, body);
+    }
+
+    /// The dialog on its own. Whoever has already logged the trouble uses this
+    /// so it is not written to the log twice.
+    fn show_alert(&self, heading: &str, body: &str) {
         let Some(win) = self.visible_window() else {
             return;
         };
@@ -264,10 +362,12 @@ impl Ui {
         if let Some((w, e)) = self.quick.borrow().as_ref() {
             w.present();
             e.grab_focus();
+            self.show_pending_problem();
             return;
         }
         let entry = gtk::Entry::builder()
             .placeholder_text("Add…  !now  #w #p  @later @side  (⏎)")
+            .max_length(MAX_TITLE_CHARS as i32)
             .hexpand(true)
             .width_chars(48)
             .css_classes(["quick-entry"])
@@ -281,7 +381,8 @@ impl Ui {
             .build();
         let this = self.clone();
         entry.connect_activate(move |e| {
-            if this.submit(e, Bucket::Next) {
+            let default = this.settings.get().default_bucket;
+            if this.submit(e, default) {
                 this.hide();
             }
         });
@@ -310,6 +411,7 @@ impl Ui {
         *self.quick.borrow_mut() = Some((win.clone(), entry.clone()));
         win.present();
         entry.grab_focus();
+        self.show_pending_problem();
     }
 
     // ---- window construction ----------------------------------------
@@ -338,15 +440,40 @@ impl Ui {
             .hhomogeneous(false)
             .vhomogeneous(false)
             .build();
+        let switcher = self.build_view_switcher(&stack);
         let header = adw::HeaderBar::builder()
-            .title_widget(&self.build_view_switcher(&stack))
+            .title_widget(&switcher)
             .decoration_layout(":close")
             .build();
+        // Packed end-first: the shortcuts button sits beside the close button
+        // and the gear goes to its left, as the design has them.
         header.pack_end(&self.build_shortcuts_button());
+        let gear = gtk::Button::builder()
+            .child(&gtk::Label::new(Some("⚙")))
+            .tooltip_text("Settings (Ctrl+,)")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat", "hint-btn", "gear-btn"])
+            .build();
+        clickable(&gear);
+        let this = self.clone();
+        gear.connect_clicked(move |_| this.toggle_settings());
+        header.pack_end(&gear);
+        // The switcher has no place on the settings page; a plain title does.
+        let title = gtk::Label::builder()
+            .label("Settings")
+            .css_classes(["settings-title"])
+            .build();
+        *self.header.borrow_mut() = Some((
+            header.clone(),
+            switcher.clone().upcast::<gtk::Widget>(),
+            title,
+            gear,
+        ));
 
         // Shared quick-add entry under the header.
         let entry = gtk::Entry::builder()
             .placeholder_text("Add…  !now  #w #p  @later @side  (⏎)")
+            .max_length(MAX_TITLE_CHARS as i32)
             .hexpand(true)
             .css_classes(["main-entry"])
             .build();
@@ -354,7 +481,8 @@ impl Ui {
         entry_bar.append(&entry);
         let this = self.clone();
         entry.connect_activate(move |e| {
-            this.submit(e, Bucket::Next);
+            let default = this.settings.get().default_bucket;
+            this.submit(e, default);
         });
         let this = self.clone();
         let keys = gtk::EventControllerKey::new();
@@ -376,21 +504,34 @@ impl Ui {
 
         stack.add_titled(&self.build_queue_page(), Some(Page::Queue.name()), "Queue");
         stack.add_titled(&self.build_board_page(), Some(Page::Board.name()), "Board");
+        stack.add_titled(
+            &self.build_settings_page(),
+            Some(Page::Settings.name()),
+            "Settings",
+        );
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&entry_bar);
         toolbar.set_content(Some(&stack));
         win.set_content(Some(&toolbar));
+        *self.entry_bar.borrow_mut() = Some(entry_bar.upcast::<gtk::Widget>());
 
-        // The board wants a wider window.
+        // The board wants a wider window; settings keeps the queue's.
         let w = win.clone();
+        let this = self.clone();
         stack.connect_visible_child_name_notify(move |s| {
-            let (dw, dh) = match s.visible_child_name().as_deref().map(Page::parse) {
-                Some(Page::Board) => BOARD_SIZE,
+            let page = s
+                .visible_child_name()
+                .as_deref()
+                .map(Page::parse)
+                .unwrap_or(Page::Queue);
+            let (dw, dh) = match page {
+                Page::Board => BOARD_SIZE,
                 _ => QUEUE_SIZE,
             };
             w.set_default_size(dw, dh);
+            this.dress_header(page);
         });
 
         let this = self.clone();
@@ -450,7 +591,11 @@ impl Ui {
         stack.connect_visible_child_name_notify(move |s| {
             match s.visible_child_name().as_deref().map(Page::parse) {
                 Some(Page::Board) => b.set_active(true),
-                _ => q.set_active(true),
+                Some(Page::Queue) => q.set_active(true),
+                // Settings hides the switcher. Activating a button here would
+                // toggle it, and its handler would pull the stack straight
+                // back off the page we have just moved to.
+                _ => {}
             }
         });
         group
@@ -666,6 +811,563 @@ impl Ui {
             });
         }
         row.upcast()
+    }
+
+    // ---- settings page ------------------------------------------------
+
+    /// Settings: the reminder first, then the rules that keep it quiet, then
+    /// the small things. One scrolling column of cards in the queue's clothes.
+    fn build_settings_page(self: &Rc<Self>) -> gtk::Widget {
+        let column = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(22)
+            .css_classes(["settings-page"])
+            .build();
+
+        let card = self.settings_card(
+            &column,
+            "Reminder",
+            Some(
+                "The screen flashes the current task and its time. Never while Now is empty. \
+                 The GNOME Shell extension draws the flash.",
+            ),
+        );
+        self.interval_row(&card);
+        self.switch_row(
+            &card,
+            true,
+            "Vary the flash",
+            Some("Picks one of six styles at random, so you do not learn to ignore the one."),
+            |s| s.vary,
+            |s, on| s.vary = on,
+        );
+        self.choice_row(
+            &card,
+            "Intensity",
+            None,
+            &Intensity::ALL.map(|i| (i, i.label())),
+            |s| s.intensity,
+            |s, v| s.intensity = v,
+        );
+        self.choice_row(
+            &card,
+            "Color",
+            None,
+            &FlashColor::ALL.map(|c| (c, c.label())),
+            |s| s.color,
+            |s, v| s.color = v,
+        );
+        self.try_it_row(&card);
+
+        let card = self.settings_card(&column, "Quiet", Some("When the reminder holds back."));
+        self.switch_row(
+            &card,
+            false,
+            "While the timer is paused",
+            Some("A paused task is a deliberate break."),
+            |s| s.quiet_paused,
+            |s, on| s.quiet_paused = on,
+        );
+        self.switch_row(
+            &card,
+            true,
+            "Outside hours",
+            None,
+            |s| s.quiet_hours,
+            |s, on| s.quiet_hours = on,
+        );
+        self.quiet_hours_row(&card);
+
+        let card = self.settings_card(&column, "Appearance", None);
+        self.choice_row(
+            &card,
+            "Theme",
+            None,
+            &Theme::ALL.map(|t| (t, t.label())),
+            |s| s.theme,
+            |s, v| s.theme = v,
+        );
+
+        let card = self.settings_card(&column, "Top bar", None);
+        self.switch_row(
+            &card,
+            false,
+            "Show elapsed time",
+            Some("Off keeps the title alone: <tt>● ship v0.1</tt>"),
+            |s| s.show_timer,
+            |s, on| s.show_timer = on,
+        );
+
+        let card = self.settings_card(&column, "Quick add", None);
+        self.choice_row(
+            &card,
+            "⏎ adds to",
+            Some("Ctrl+⏎ always goes to Now; @markers still win."),
+            &BUCKET_ORDER.map(|b| (b, b.label())),
+            |s| s.default_bucket,
+            |s, v| s.default_bucket = v,
+        );
+
+        gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&column)
+            .vexpand(true)
+            .build()
+            .upcast()
+    }
+
+    /// A heading, an optional line of explanation, and the card the rows go in.
+    fn settings_card(
+        self: &Rc<Self>,
+        column: &gtk::Box,
+        title: &str,
+        description: Option<&str>,
+    ) -> gtk::Box {
+        let section = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(8)
+            .build();
+        let heading = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .css_classes(["settings-heading"])
+            .build();
+        heading.append(
+            &gtk::Label::builder()
+                .label(title)
+                .xalign(0.0)
+                .css_classes(["settings-group-title"])
+                .build(),
+        );
+        if let Some(description) = description {
+            heading.append(
+                &gtk::Label::builder()
+                    .label(description)
+                    .xalign(0.0)
+                    .wrap(true)
+                    .css_classes(["settings-description"])
+                    .build(),
+            );
+        }
+        section.append(&heading);
+
+        let card = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .css_classes(["settings-card"])
+            .build();
+        section.append(&card);
+        column.append(&section);
+        card
+    }
+
+    /// One row of a settings card: a label on the left, a control on the right.
+    fn settings_row(card: &gtk::Box, divided: bool) -> gtk::Box {
+        let classes: Vec<&str> = if divided {
+            vec!["settings-row", "divided"]
+        } else {
+            vec!["settings-row"]
+        };
+        let row = gtk::Box::builder().spacing(12).css_classes(classes).build();
+        card.append(&row);
+        row
+    }
+
+    /// The label and its explanation. Subtitles may carry Pango markup so a
+    /// setting can quote what it changes.
+    fn row_label(title: &str, subtitle: Option<&str>) -> gtk::Box {
+        let text = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(1)
+            .hexpand(true)
+            .valign(gtk::Align::Center)
+            .build();
+        text.append(
+            &gtk::Label::builder()
+                .label(title)
+                .xalign(0.0)
+                .ellipsize(pango::EllipsizeMode::End)
+                .build(),
+        );
+        if let Some(subtitle) = subtitle {
+            text.append(
+                &gtk::Label::builder()
+                    .label(subtitle)
+                    .use_markup(true)
+                    .xalign(0.0)
+                    .wrap(true)
+                    .wrap_mode(pango::WrapMode::WordChar)
+                    .css_classes(["settings-subtitle"])
+                    .build(),
+            );
+        }
+        text
+    }
+
+    /// "Flash every": the value, the slider, and the marks along it.
+    fn interval_row(self: &Rc<Self>, card: &gtk::Box) {
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(8)
+            .css_classes(["settings-row", "settings-slider-row"])
+            .build();
+
+        let top = gtk::Box::builder().spacing(8).build();
+        top.append(
+            &gtk::Label::builder()
+                .label("Flash every")
+                .xalign(0.0)
+                .hexpand(true)
+                .build(),
+        );
+        let value = gtk::Label::builder()
+            .css_classes(["settings-value", "monospace", "numeric"])
+            .build();
+        top.append(&value);
+        row.append(&top);
+
+        let scale = gtk::Scale::with_range(
+            gtk::Orientation::Horizontal,
+            INTERVAL_MIN as f64,
+            INTERVAL_MAX as f64,
+            1.0,
+        );
+        scale.set_draw_value(false);
+        scale.set_round_digits(0);
+        scale.set_hexpand(true);
+        for (at, label) in [
+            (INTERVAL_MIN as f64, "1m"),
+            (15.0, "15"),
+            (30.0, "30"),
+            (60.0, "60"),
+            (INTERVAL_MAX as f64, "90"),
+        ] {
+            scale.add_mark(at, gtk::PositionType::Bottom, Some(label));
+        }
+        scale.update_property(&[gtk::accessible::Property::Label("Flash every, in minutes")]);
+        clickable(&scale);
+        row.append(&scale);
+        card.append(&row);
+
+        let this = self.clone();
+        scale.connect_value_changed(move |s| {
+            if this.syncing.get() {
+                return;
+            }
+            let minutes = s.value().round().max(0.0) as u32;
+            this.settings.update(|s| s.interval_min = minutes);
+        });
+
+        let (scale, value) = (scale.clone(), value.clone());
+        self.on_settings(move |s| {
+            scale.set_value(s.interval_min as f64);
+            value.set_label(&format!("{} min", s.interval_min));
+        });
+    }
+
+    /// A row whose control is a switch.
+    fn switch_row(
+        self: &Rc<Self>,
+        card: &gtk::Box,
+        divided: bool,
+        title: &str,
+        subtitle: Option<&str>,
+        get: impl Fn(&Settings) -> bool + 'static,
+        set: impl Fn(&mut Settings, bool) + 'static,
+    ) {
+        let row = Self::settings_row(card, divided);
+        row.append(&Self::row_label(title, subtitle));
+        let switch = gtk::Switch::builder()
+            .valign(gtk::Align::Center)
+            .css_classes(["settings-switch"])
+            .build();
+        clickable(&switch);
+        // Named for a screen reader: the switch itself carries no text.
+        switch.update_property(&[gtk::accessible::Property::Label(title)]);
+        row.append(&switch);
+
+        let this = self.clone();
+        switch.connect_active_notify(move |s| {
+            if this.syncing.get() {
+                return;
+            }
+            let on = s.is_active();
+            this.settings.update(|settings| set(settings, on));
+        });
+
+        let switch = switch.clone();
+        self.on_settings(move |s| switch.set_active(get(s)));
+    }
+
+    /// A row whose control is a segmented button group.
+    fn choice_row<T: Copy + PartialEq + 'static>(
+        self: &Rc<Self>,
+        card: &gtk::Box,
+        title: &str,
+        subtitle: Option<&str>,
+        options: &[(T, &str)],
+        get: impl Fn(&Settings) -> T + 'static,
+        set: impl Fn(&mut Settings, T) + 'static,
+    ) {
+        let row = Self::settings_row(card, card.first_child().is_some());
+        row.append(&Self::row_label(title, subtitle));
+
+        // Four choices only fit across a 400px window at a tighter padding.
+        let classes: Vec<&str> = if options.len() > 3 {
+            vec!["view-switch", "narrow"]
+        } else {
+            vec!["view-switch"]
+        };
+        let group = gtk::Box::builder()
+            .valign(gtk::Align::Center)
+            .css_classes(classes)
+            .build();
+        let set = Rc::new(set);
+        let mut buttons: Vec<(T, gtk::ToggleButton)> = Vec::new();
+        for (value, label) in options {
+            let button = gtk::ToggleButton::builder().label(*label).build();
+            if let Some((_, first)) = buttons.first() {
+                button.set_group(Some(first));
+            }
+            clickable(&button);
+            group.append(&button);
+
+            let this = self.clone();
+            let set = set.clone();
+            let value = *value;
+            button.connect_toggled(move |b| {
+                if !b.is_active() || this.syncing.get() {
+                    return;
+                }
+                this.settings.update(|settings| set(settings, value));
+            });
+            buttons.push((value, button));
+        }
+        row.append(&group);
+
+        self.on_settings(move |s| {
+            let active = get(s);
+            for (value, button) in &buttons {
+                if *value == active {
+                    button.set_active(true);
+                }
+            }
+        });
+    }
+
+    /// "Try it": how long until the next flash, and a button for one now.
+    fn try_it_row(self: &Rc<Self>, card: &gtk::Box) {
+        let row = Self::settings_row(card, true);
+        let text = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(1)
+            .hexpand(true)
+            .valign(gtk::Align::Center)
+            .build();
+        text.append(&gtk::Label::builder().label("Try it").xalign(0.0).build());
+        let countdown = gtk::Label::builder()
+            .xalign(0.0)
+            .css_classes(["settings-subtitle"])
+            .build();
+        text.append(&countdown);
+        row.append(&text);
+
+        let button = gtk::Button::builder()
+            .label("Flash now")
+            .valign(gtk::Align::Center)
+            .build();
+        clickable(&button);
+        let this = self.clone();
+        button.connect_clicked(move |_| {
+            if !this.flash.flash_now() {
+                this.alert(
+                    "Nothing to flash",
+                    "The reminder shows the current task, and Now is empty.",
+                );
+            }
+        });
+        row.append(&button);
+
+        *self.countdown.borrow_mut() = Some((countdown, button));
+        self.refresh_countdown();
+    }
+
+    /// The hours the reminder is allowed to flash in, shown only while the
+    /// switch above it is on.
+    fn quiet_hours_row(self: &Rc<Self>, card: &gtk::Box) {
+        let row = Self::settings_row(card, true);
+        row.append(
+            &gtk::Label::builder()
+                .label("Flash only between")
+                .xalign(0.0)
+                .hexpand(true)
+                .css_classes(["settings-dim"])
+                .build(),
+        );
+        row.append(&self.time_entry("Flash from", |s| s.quiet_from, |s, t| s.quiet_from = t));
+        row.append(
+            &gtk::Label::builder()
+                .label("–")
+                .css_classes(["settings-dim"])
+                .build(),
+        );
+        row.append(&self.time_entry("Flash until", |s| s.quiet_to, |s, t| s.quiet_to = t));
+
+        // The row is built into the card and then revealed, so turning the
+        // switch on does not have to rebuild anything.
+        card.remove(&row);
+        let revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .transition_duration(150)
+            .child(&row)
+            .build();
+        card.append(&revealer);
+
+        let revealer = revealer.clone();
+        self.on_settings(move |s| revealer.set_reveal_child(s.quiet_hours));
+    }
+
+    /// A five-character clock face. Anything that is not a time is refused and
+    /// the entry goes back to the value it is showing for.
+    fn time_entry(
+        self: &Rc<Self>,
+        name: &str,
+        get: impl Fn(&Settings) -> qf_core::TimeOfDay + 'static,
+        set: impl Fn(&mut Settings, qf_core::TimeOfDay) + 'static,
+    ) -> gtk::Entry {
+        let entry = gtk::Entry::builder()
+            .width_chars(5)
+            .max_width_chars(5)
+            .max_length(5)
+            .xalign(0.5)
+            .valign(gtk::Align::Center)
+            .css_classes(["time-entry", "monospace", "numeric"])
+            .build();
+        entry.update_property(&[gtk::accessible::Property::Label(name)]);
+
+        let get = Rc::new(get);
+        let set = Rc::new(set);
+        // Commit on Enter and when the entry is left; a value that will not
+        // parse is dropped rather than half-applied.
+        let commit = {
+            let this = self.clone();
+            let (get, set) = (get.clone(), set.clone());
+            move |e: &gtk::Entry| {
+                if this.syncing.get() {
+                    return;
+                }
+                match qf_core::TimeOfDay::parse(&e.text()) {
+                    Some(time) => this.settings.update(|s| set(s, time)),
+                    None => e.set_text(&get(&this.settings.get()).to_string()),
+                }
+                // A time the store rounded or refused must not stay on screen.
+                e.set_text(&get(&this.settings.get()).to_string());
+            }
+        };
+        let activate = commit.clone();
+        entry.connect_activate(move |e| activate(e));
+        let focus = gtk::EventControllerFocus::new();
+        let leave = commit.clone();
+        let weak = entry.downgrade();
+        focus.connect_leave(move |_| {
+            if let Some(entry) = weak.upgrade() {
+                leave(&entry);
+            }
+        });
+        entry.add_controller(focus);
+        let this = self.clone();
+        let restore = get.clone();
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(move |c, key, _, _| {
+            let Some(entry) = c.widget().and_downcast::<gtk::Entry>() else {
+                return glib::Propagation::Proceed;
+            };
+            if key == gdk::Key::Escape {
+                let stored = restore(&this.settings.get()).to_string();
+                if entry.text() == stored {
+                    this.hide();
+                } else {
+                    entry.set_text(&stored);
+                }
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        entry.add_controller(keys);
+
+        let field = entry.clone();
+        self.on_settings(move |s| field.set_text(&get(s).to_string()));
+        entry
+    }
+
+    /// Register something that has to follow the stored settings.
+    fn on_settings(&self, f: impl Fn(&Settings) + 'static) {
+        // Copied out of the store, and behind the same guard `sync_settings`
+        // uses: putting a value into a control makes the control tell us about
+        // it, and that handler would otherwise write to a store this call is
+        // still reading.
+        let settings = self.settings.get().clone();
+        let was_syncing = self.syncing.replace(true);
+        f(&settings);
+        self.syncing.set(was_syncing);
+        self.settings_sync.borrow_mut().push(Rc::new(f));
+    }
+
+    /// Put the stored settings back into every control on the page. The guard
+    /// stops each control's own handler writing the value straight back.
+    fn sync_settings(&self) {
+        if self.syncing.replace(true) {
+            return;
+        }
+        let settings = self.settings.get().clone();
+        // Cloned out of the borrow: a control may be built while syncing.
+        let sync: Vec<SettingsSync> = self.settings_sync.borrow().clone();
+        for f in sync {
+            f(&settings);
+        }
+        self.syncing.set(false);
+        self.refresh_countdown();
+    }
+
+    /// The line under "Try it", once a second and after every change.
+    fn refresh_countdown(&self) {
+        let Some((label, button)) = self.countdown.borrow().clone() else {
+            return;
+        };
+        let hold = self.flash.hold();
+        match self.flash.remaining() {
+            Some(secs) => label.set_label(&format!("Next flash in {}", fmt_elapsed(secs))),
+            None => label.set_label(&format!("No flash: {}", hold.reason())),
+        }
+        // Nothing in Now is the one hold a flash cannot be asked for either.
+        button.set_sensitive(hold != qf_core::Hold::NoCurrentTask);
+    }
+
+    /// Show the settings page, or leave it for wherever the gear was pressed.
+    fn toggle_settings(self: &Rc<Self>) {
+        if self.current_page() == Page::Settings {
+            self.set_page(self.came_from.get());
+        } else {
+            self.set_page(Page::Settings);
+        }
+    }
+
+    /// The header bar wears the switcher on the task pages and a plain title
+    /// on the settings page, where the gear it came from stays lit.
+    fn dress_header(&self, page: Page) {
+        let Some((header, switcher, title, gear)) = self.header.borrow().clone() else {
+            return;
+        };
+        let settings = page == Page::Settings;
+        if settings {
+            header.set_title_widget(Some(&title));
+            gear.add_css_class("active");
+        } else {
+            header.set_title_widget(Some(&switcher));
+            gear.remove_css_class("active");
+        }
+        if let Some(bar) = self.entry_bar.borrow().as_ref() {
+            bar.set_visible(!settings);
+        }
     }
 
     fn make_list(
@@ -1185,6 +1887,7 @@ impl Ui {
     fn rename_entry(self: &Rc<Self>, id: u64) -> gtk::Entry {
         let entry = gtk::Entry::builder()
             .text(self.rename_text.borrow().as_str())
+            .max_length(MAX_TITLE_CHARS as i32)
             .hexpand(true)
             .css_classes(["rename-entry"])
             .build();
@@ -1248,6 +1951,7 @@ impl Ui {
     // ---- timer --------------------------------------------------------
 
     fn tick(&self) {
+        self.refresh_countdown();
         let timers = self.timers.borrow();
         if timers.is_empty() {
             return;
@@ -1272,6 +1976,7 @@ impl Ui {
             match key {
                 gdk::Key::_1 => self.set_page(Page::Queue),
                 gdk::Key::_2 => self.set_page(Page::Board),
+                gdk::Key::comma => self.toggle_settings(),
                 gdk::Key::w | gdk::Key::q => self.hide(),
                 _ => return glib::Propagation::Proceed,
             }
@@ -1279,6 +1984,19 @@ impl Ui {
         }
         if self.editable_focused() {
             return glib::Propagation::Proceed;
+        }
+        // Settings holds controls, not tasks. Letting the row keys through
+        // here would complete or retag the current task from a page that
+        // never mentions it.
+        if self.current_page() == Page::Settings {
+            match key {
+                gdk::Key::Escape => self.hide(),
+                gdk::Key::q => self.set_page(Page::Queue),
+                gdk::Key::b => self.set_page(Page::Board),
+                gdk::Key::question => self.toggle_shortcuts(),
+                _ => return glib::Propagation::Proceed,
+            }
+            return glib::Propagation::Stop;
         }
         // With nothing focused the row keys act on the current task — the one
         // the page is built around.
@@ -1328,6 +2046,12 @@ impl Ui {
     fn set_page(self: &Rc<Self>, page: Page) {
         // The editor belongs to the page it was opened on.
         self.cancel_rename();
+        // Wherever the settings page was reached from is where the gear goes
+        // back to, whether that was the gear itself or a request over D-Bus.
+        let from = self.current_page();
+        if page == Page::Settings && from != Page::Settings {
+            self.came_from.set(from);
+        }
         if let Some(stack) = self.stack.borrow().as_ref() {
             stack.set_visible_child_name(page.name());
         }
@@ -1652,6 +2376,19 @@ mod tests {
 
     fn ids(store: &Store, bucket: Bucket) -> Vec<u64> {
         store.in_bucket(bucket).map(|task| task.id).collect()
+    }
+
+    /// The page names are the words `Show(view)` and the command line accept,
+    /// and the names the stack stores its children under. They have to survive
+    /// the round trip, and an unknown view has to land somewhere sensible.
+    #[test]
+    fn page_names_round_trip_and_anything_else_opens_the_queue() {
+        for page in [Page::Queue, Page::Board, Page::Settings] {
+            assert_eq!(Page::parse(page.name()), page, "{}", page.name());
+        }
+        for unknown in ["", "Board", "queue ", "nonsense", "add", "toggle"] {
+            assert_eq!(Page::parse(unknown), Page::Queue, "{unknown}");
+        }
     }
 
     #[test]

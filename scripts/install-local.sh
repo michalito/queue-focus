@@ -251,7 +251,11 @@ cp -a -- "$ROOT/extension/$UUID/." "$STAGED_EXTENSION/"
 glib-compile-schemas --strict "$STAGED_EXTENSION/schemas"
 python3 -m json.tool "$STAGED_EXTENSION/metadata.json" >/dev/null
 if command -v node >/dev/null 2>&1; then
-  node --check "$STAGED_EXTENSION/extension.js"
+  # Every module, not just the entry point: extension.js imports the others,
+  # so a syntax error in any of them stops the extension from loading at all.
+  for staged_js in "$STAGED_EXTENSION"/*.js; do
+    node --check "$staged_js"
+  done
 fi
 bash -n "$ROOT/scripts/queue-focus-setup"
 

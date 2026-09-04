@@ -8,7 +8,7 @@ REQUESTED_VERSION           := $(if $(filter command line,$(origin VERSION)),$(V
 REQUESTED_EXTENSION_VERSION := $(if $(filter command line,$(origin EXTENSION_VERSION)),$(EXTENSION_VERSION),)
 export REQUESTED_VERSION REQUESTED_EXTENSION_VERSION
 
-.PHONY: help build test test-install test-version check version set-version maybe-version install uninstall update deb clean run
+.PHONY: help build test test-install test-version test-extension check version set-version maybe-version install uninstall update deb clean run
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -21,6 +21,7 @@ $(SCHEMAS)/gschemas.compiled: $(SCHEMAS)/*.gschema.xml
 
 test:            ## unit + isolated integration tests
 	$(CARGO) test --workspace
+	node extension/test/flash.test.mjs
 	scripts/test-install-local.sh
 	scripts/test-set-version.sh
 
@@ -30,10 +31,13 @@ test-install:    ## isolated local installer integration tests
 test-version:    ## isolated versioning integration tests
 	scripts/test-set-version.sh
 
+test-extension:  ## shell-extension tests, against a stubbed GNOME Shell
+	node extension/test/flash.test.mjs
+
 check:           ## fmt + clippy + JS/Python/shell syntax
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
-	node --check extension/$(UUID)/extension.js
+	for js in extension/$(UUID)/*.js; do node --check "$$js"; done
 	bash -n scripts/*.sh
 	python3 -c 'from pathlib import Path; compile(Path("scripts/set-version").read_text(), "scripts/set-version", "exec")'
 
