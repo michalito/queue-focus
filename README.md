@@ -326,7 +326,7 @@ In the main window, Enter adds to Next and `Ctrl+Enter` adds to Now. `Escape` cl
 
 Task keys work when an entry is not being edited.
 
-The task keys act on the focused task. In the Queue view the current task's banner is the first focus stop, so with nothing else focused these keys act on the current task.
+The task keys act on the focused task. In the Queue view the current task's banner is the first focus stop; on the Board the Now panel is first, so with nothing else focused these keys act on the current task.
 
 1. `j` and `k` move focus down and up across visible sections.
 

@@ -930,7 +930,14 @@ impl Ui {
         }
         self.header_drop(&head_box, bucket, &lists);
         self.empty_drop(&placeholder, bucket);
-        self.append_drop(&body, bucket, end_of(&lists));
+        // A sibling target covers spare space without seeing motion events
+        // that bubble from the list or placeholder and replacing their marks.
+        let drop_space = gtk::Box::builder()
+            .vexpand(true)
+            .css_classes(["board-drop-space"])
+            .build();
+        body.append(&drop_space);
+        self.append_drop(&drop_space, bucket, end_of(&lists));
 
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -2701,7 +2708,6 @@ impl Highlight {
                     .iter()
                     .rev()
                     .find(|list| list.first_child().is_some())
-                    .or(shown.last())
                     .cloned()
             }
         }

@@ -481,7 +481,19 @@ fn drag_feedback() {
     // end, and dropping there appends. Two lists share this body, so the mark
     // has to be cleared wherever it was last put, not only on the target.
     let body = next.parent().unwrap();
-    emit_motion(&body, 0.0);
+    let space = find_class(&body, "board-drop-space").unwrap();
+    // GTK bubbles drag motion: no ancestor of a row target may also append,
+    // or its feedback would replace the insertion line after the row draws it.
+    let mut ancestor = next.parent();
+    while let Some(widget) = ancestor {
+        let controllers = widget.observe_controllers();
+        assert!(!(0..controllers.n_items()).any(|i| controllers
+            .item(i)
+            .is_some_and(|c| c.is::<gtk::DropTarget>())));
+        ancestor = widget.parent();
+    }
+    assert_eq!(space.parent(), next.parent());
+    emit_motion(&space, 0.0);
     assert!(next.has_css_class("drop-end"));
     emit_motion(&next, first_top);
     assert!(
@@ -502,7 +514,7 @@ fn drag_feedback() {
             .collect::<Vec<_>>()
     };
     let queued = order();
-    emit_drop(&body, later_second, 0.0);
+    emit_drop(&space, later_second, 0.0);
     assert_eq!(
         order(),
         [queued.as_slice(), &[later_second]].concat(),
@@ -596,13 +608,33 @@ fn drag_feedback() {
         list(Bucket::Next).row_at_index(0).is_none(),
         "Next is empty"
     );
-    emit_motion(&body, 0.0);
+    emit_motion(&space, 0.0);
     assert!(
         tail_list.has_css_class("drop-end"),
         "the line goes after the last row the section shows"
     );
     assert!(!list(Bucket::Next).has_css_class("drop-end"));
-    emit_leave(&body);
+    emit_leave(&space);
+    ui.update(|s| s.move_to(tail, Bucket::Later, None)).unwrap();
+    settle();
+    emit_motion(&space, 0.0);
+    assert!(
+        space.has_css_class("drop-into"),
+        "an empty target still gives feedback"
+    );
+    emit_leave(&space);
+    let section = ui
+        .sections
+        .borrow()
+        .iter()
+        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Next)
+        .unwrap()
+        .count
+        .parent()
+        .unwrap();
+    emit_motion(&section, 0.0);
+    assert!(section.has_css_class("drop-into"));
+    emit_leave(&section);
 
     ui.win.borrow().as_ref().unwrap().destroy();
     std::fs::remove_dir_all(dir).unwrap();
