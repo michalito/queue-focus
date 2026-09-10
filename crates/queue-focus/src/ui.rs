@@ -19,13 +19,15 @@ use qf_core::{
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+#[cfg(test)]
+mod gtk_tests;
+mod placement;
+use placement::{Destination, Focus, Placement, ORDER};
+
 const CSS: &str = include_str!("style.css");
 
 const QUEUE_SIZE: (i32, i32) = (400, 640);
 const BOARD_SIZE: (i32, i32) = (1040, 640);
-
-/// Bucket order on the board page.
-const ORDER: [Bucket; 4] = [Bucket::Now, Bucket::Side, Bucket::Next, Bucket::Later];
 
 /// Bucket order in the "⏎ adds to" control: the usual answer comes first.
 const BUCKET_ORDER: [Bucket; 4] = [Bucket::Next, Bucket::Now, Bucket::Side, Bucket::Later];
@@ -106,11 +108,8 @@ enum RowStyle {
 
 /// One ListBox showing (part of) one bucket on one page.
 struct BucketList {
-    bucket: Bucket,
-    page: Page,
+    placement: placement::List,
     style: RowStyle,
-    /// Queue page: the head of Now is the banner, so this list starts after it.
-    skip_current: bool,
     list: gtk::ListBox,
 }
 
@@ -119,7 +118,7 @@ struct BucketList {
 struct Section {
     count: gtk::Label,
     placeholder: gtk::Label,
-    lists: Vec<gtk::ListBox>,
+    placement: placement::Section,
 }
 
 pub struct Ui {
@@ -147,6 +146,7 @@ pub struct Ui {
     pending_problem: RefCell<Option<(String, String)>>,
     lists: RefCell<Vec<BucketList>>,
     sections: RefCell<Vec<Section>>,
+    rendered: RefCell<Placement>,
     /// Queue page: the current task's band, rebuilt with everything else.
     banner: RefCell<Option<gtk::Box>>,
     /// Every label showing the current task's elapsed time.
@@ -191,6 +191,7 @@ impl Ui {
             syncing: Cell::new(false),
             countdown: RefCell::new(None),
             pending_problem: RefCell::new(None),
+            rendered: RefCell::new(Placement::default()),
             lists: RefCell::new(Vec::new()),
             sections: RefCell::new(Vec::new()),
             banner: RefCell::new(None),
@@ -653,7 +654,8 @@ impl Ui {
         // only way to drag a task to the front of the queue.
         let this = self.clone();
         banner.add_controller(drop_target(move |id, _, _| {
-            this.update(|s| s.promote(id)).unwrap_or(false)
+            this.update(|s| Destination::Banner.apply(s, id))
+                .unwrap_or(false)
         }));
         page.append(&banner);
         *self.banner.borrow_mut() = Some(banner);
@@ -694,21 +696,17 @@ impl Ui {
         self.header_drop(&placeholder, bucket);
         card.append(&placeholder);
 
-        let mut lists = Vec::new();
-        // Next also shows the tail of Now: what is queued behind the banner.
-        if bucket == Bucket::Next {
-            let tail = self.make_list(Bucket::Now, Page::Queue, RowStyle::Queue, true);
-            card.append(&tail);
-            lists.push(tail);
+        let placement = placement::Section {
+            page: Page::Queue,
+            bucket,
+        };
+        for region in placement.lists() {
+            card.append(&self.make_list(region));
         }
-        let list = self.make_list(bucket, Page::Queue, RowStyle::Queue, false);
-        card.append(&list);
-        lists.push(list);
-
         self.sections.borrow_mut().push(Section {
             count,
             placeholder,
-            lists,
+            placement,
         });
     }
 
@@ -746,7 +744,10 @@ impl Ui {
 
         let placeholder = placeholder_label();
         self.header_drop(&placeholder, Bucket::Later);
-        let list = self.make_list(Bucket::Later, Page::Queue, RowStyle::Later, false);
+        let list = self.make_list(placement::List {
+            page: Page::Queue,
+            bucket: Bucket::Later,
+        });
         let body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .css_classes(["later-list"])
@@ -771,7 +772,10 @@ impl Ui {
         self.sections.borrow_mut().push(Section {
             count,
             placeholder,
-            lists: vec![list],
+            placement: placement::Section {
+                page: Page::Queue,
+                bucket: Bucket::Later,
+            },
         });
         shelf.upcast()
     }
@@ -788,7 +792,10 @@ impl Ui {
             self.header_drop(&head_box, b);
             let placeholder = placeholder_label();
             self.header_drop(&placeholder, b);
-            let list = self.make_list(b, Page::Board, RowStyle::Board, false);
+            let list = self.make_list(placement::List {
+                page: Page::Board,
+                bucket: b,
+            });
 
             let col = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
@@ -807,7 +814,10 @@ impl Ui {
             self.sections.borrow_mut().push(Section {
                 count,
                 placeholder,
-                lists: vec![list],
+                placement: placement::Section {
+                    page: Page::Board,
+                    bucket: b,
+                },
             });
         }
         row.upcast()
@@ -1333,13 +1343,13 @@ impl Ui {
         let Some((label, button)) = self.countdown.borrow().clone() else {
             return;
         };
-        let hold = self.flash.hold();
-        match self.flash.remaining() {
+        let status = self.flash.status();
+        match status.remaining {
             Some(secs) => label.set_label(&format!("Next flash in {}", fmt_elapsed(secs))),
-            None => label.set_label(&format!("No flash: {}", hold.reason())),
+            None => label.set_label(&format!("No flash: {}", status.hold.reason())),
         }
         // Nothing in Now is the one hold a flash cannot be asked for either.
-        button.set_sensitive(hold != qf_core::Hold::NoCurrentTask);
+        button.set_sensitive(status.hold != qf_core::Hold::NoCurrentTask);
     }
 
     /// Show the settings page, or leave it for wherever the gear was pressed.
@@ -1370,13 +1380,12 @@ impl Ui {
         }
     }
 
-    fn make_list(
-        self: &Rc<Self>,
-        bucket: Bucket,
-        page: Page,
-        style: RowStyle,
-        skip_current: bool,
-    ) -> gtk::ListBox {
+    fn make_list(self: &Rc<Self>, placement: placement::List) -> gtk::ListBox {
+        let style = match (placement.page, placement.bucket) {
+            (Page::Board, _) => RowStyle::Board,
+            (_, Bucket::Later) => RowStyle::Later,
+            _ => RowStyle::Queue,
+        };
         let classes: Vec<&str> = match style {
             RowStyle::Board => vec!["boxed-list", "bucket-list"],
             _ => vec!["bucket-list"],
@@ -1397,24 +1406,24 @@ impl Ui {
 
         // Drop on the list → before the row under the pointer (or at the end).
         let this = self.clone();
-        let head_offset = usize::from(skip_current);
         list.add_controller(drop_target(move |id, target, y| {
-            let index = target
+            let before = target
                 .downcast_ref::<gtk::ListBox>()
                 .and_then(|l| l.row_at_y(y as i32))
-                .map(|r| r.index() as usize + head_offset);
+                .and_then(|r| row_id(&r));
             this.update(|s| {
-                let index = adjusted_drop_index(s, id, bucket, index);
-                s.move_to(id, bucket, index)
+                Destination::List {
+                    list: placement,
+                    before,
+                }
+                .apply(s, id)
             })
             .unwrap_or(false)
         }));
 
         self.lists.borrow_mut().push(BucketList {
-            bucket,
-            page,
+            placement,
             style,
-            skip_current,
             list: list.clone(),
         });
         list
@@ -1425,7 +1434,7 @@ impl Ui {
     fn header_drop(self: &Rc<Self>, header: &impl IsA<gtk::Widget>, bucket: Bucket) {
         let this = self.clone();
         header.add_controller(drop_target(move |id, _, _| {
-            this.update(|s| s.move_to(id, bucket, None))
+            this.update(|s| Destination::Append(bucket).apply(s, id))
                 .unwrap_or(false)
         }));
     }
@@ -1446,7 +1455,8 @@ impl Ui {
 
         let focused = self
             .focused_row()
-            .map(|r| (row_id(&r), self.visual_index(&r)));
+            .and_then(|r| row_id(&r))
+            .and_then(|id| Focus::capture(&self.visible_ids(), id));
 
         let store = self.state.store();
         // A rename outlives neither its task nor a mutation that removes it.
@@ -1462,40 +1472,29 @@ impl Ui {
         self.timers.borrow_mut().clear();
         *self.rename_entry.borrow_mut() = None;
 
+        let placement = Placement::new(&store);
         self.build_banner(current);
 
         for bl in self.lists.borrow().iter() {
             bl.list.remove_all();
-            let tasks = store
-                .in_bucket(bl.bucket)
-                .skip(usize::from(bl.skip_current))
-                .collect::<Vec<&Task>>();
-            for t in tasks {
-                let row = self.build_row(t, Some(t.id) == current_id, bl.bucket, bl.style, bl.page);
+            for id in placement.rows(bl.placement) {
+                let t = store.get(*id).expect("placement comes from this store");
+                let row = self.build_row(
+                    t,
+                    Some(t.id) == current_id,
+                    bl.placement.bucket,
+                    bl.style,
+                    bl.placement.page,
+                );
                 bl.list.append(&row);
             }
         }
         for section in self.sections.borrow().iter() {
-            // Composite sections (currently Queue's Next) contain more than
-            // one bucket list, so count the rows the section actually shows.
-            let n = section
-                .lists
-                .iter()
-                .map(|list| {
-                    let mut n = 0;
-                    let mut child = list.first_child();
-                    while let Some(row) = child {
-                        n += 1;
-                        child = row.next_sibling();
-                    }
-                    n
-                })
-                .sum::<usize>();
+            let n = placement.count(section.placement);
             section.count.set_label(&n.to_string());
-            section
-                .placeholder
-                .set_visible(section.lists.iter().all(|l| l.first_child().is_none()));
+            section.placeholder.set_visible(n == 0);
         }
+        *self.rendered.borrow_mut() = placement;
 
         // Window tint follows the current task's tag.
         for tag in [Tag::Work, Tag::Personal] {
@@ -1527,13 +1526,9 @@ impl Ui {
         }
 
         // Keep keyboard focus on the same task, or the same position.
-        if let Some((id, idx)) = focused {
-            let row = id.and_then(|id| self.row_for(id)).or_else(|| {
-                let rows = self.visible_rows();
-                rows.get(idx.min(rows.len().saturating_sub(1))).cloned()
-            });
-            if let Some(r) = row {
-                r.grab_focus();
+        if let Some(id) = focused.and_then(|focus| focus.restore(&self.visible_ids())) {
+            if let Some(row) = self.row_for(id) {
+                row.grab_focus();
             }
         }
     }
@@ -2135,38 +2130,45 @@ impl Ui {
 
     /// Tasks the user can see on the visible page, in visual order. On the
     /// queue page the banner leads: it is the current task's "row".
-    fn visible_rows(&self) -> Vec<gtk::Widget> {
-        let page = self.current_page();
+    fn visible_ids(&self) -> Vec<u64> {
         let later_open = self
             .later
             .borrow()
             .as_ref()
             .is_some_and(|(r, _)| r.reveals_child());
-        let mut out = Vec::new();
-        if page == Page::Queue {
-            let banner = self.banner.borrow().clone();
-            out.extend(banner.filter(|b| row_id(b).is_some()).map(|b| b.upcast()));
-        }
-        for bl in self.lists.borrow().iter().filter(|b| b.page == page) {
-            if bl.style == RowStyle::Later && !later_open {
-                continue;
-            }
-            let mut child = bl.list.first_child();
-            while let Some(c) = child {
-                if c.is::<gtk::ListBoxRow>() {
-                    out.push(c.clone());
-                }
-                child = c.next_sibling();
-            }
-        }
-        out
+        self.rendered
+            .borrow()
+            .visible(self.current_page(), later_open)
     }
 
-    fn visual_index(&self, row: &gtk::Widget) -> usize {
-        self.visible_rows()
+    fn visible_rows(&self) -> Vec<gtk::Widget> {
+        let page = self.current_page();
+        let mut widgets = std::collections::HashMap::new();
+        if page == Page::Queue {
+            if let Some(banner) = self.banner.borrow().as_ref() {
+                if let Some(id) = row_id(banner) {
+                    widgets.insert(id, banner.clone().upcast());
+                }
+            }
+        }
+        for bl in self
+            .lists
+            .borrow()
             .iter()
-            .position(|r| r == row)
-            .unwrap_or(0)
+            .filter(|bl| bl.placement.page == page)
+        {
+            let mut child = bl.list.first_child();
+            while let Some(row) = child {
+                if let Some(id) = row_id(&row) {
+                    widgets.insert(id, row.clone());
+                }
+                child = row.next_sibling();
+            }
+        }
+        self.visible_ids()
+            .iter()
+            .filter_map(|id| widgets.remove(id))
+            .collect()
     }
 
     fn row_for(&self, id: u64) -> Option<gtk::Widget> {
@@ -2319,26 +2321,6 @@ fn menu_separator() -> gtk::Separator {
     separator
 }
 
-/// ListBox reports the destination before the dragged row has been removed.
-/// Account for that row when moving downward within the same bucket.
-fn adjusted_drop_index(
-    store: &Store,
-    id: u64,
-    bucket: Bucket,
-    index: Option<usize>,
-) -> Option<usize> {
-    let index = index?;
-    let source_index = store
-        .get(id)
-        .filter(|task| task.bucket == bucket)
-        .and_then(|_| store.in_bucket(bucket).position(|task| task.id == id));
-    Some(if source_index.is_some_and(|source| source < index) {
-        index - 1
-    } else {
-        index
-    })
-}
-
 /// Task rows carry their id in the widget name ("task-<id>").
 fn row_id(row: &impl IsA<gtk::Widget>) -> Option<u64> {
     row.widget_name().strip_prefix("task-")?.parse().ok()
@@ -2374,10 +2356,6 @@ fn fmt_elapsed(secs: u64) -> String {
 mod tests {
     use super::*;
 
-    fn ids(store: &Store, bucket: Bucket) -> Vec<u64> {
-        store.in_bucket(bucket).map(|task| task.id).collect()
-    }
-
     /// The page names are the words `Show(view)` and the command line accept,
     /// and the names the stack stores its children under. They have to survive
     /// the round trip, and an unknown view has to land somewhere sensible.
@@ -2398,36 +2376,5 @@ mod tests {
         assert_eq!(fmt_elapsed(762), "12:42");
         assert_eq!(fmt_elapsed(3600), "1:00:00");
         assert_eq!(fmt_elapsed(3725), "1:02:05");
-    }
-
-    #[test]
-    fn downward_drop_uses_post_removal_index() {
-        let mut store = Store::new();
-        let a = store.add("a", Bucket::Next, None, false);
-        let b = store.add("b", Bucket::Next, None, false);
-        let c = store.add("c", Bucket::Next, None, false);
-
-        let index = adjusted_drop_index(&store, a, Bucket::Next, Some(2));
-        assert!(store.move_to(a, Bucket::Next, index));
-
-        assert_eq!(ids(&store, Bucket::Next), vec![b, a, c]);
-    }
-
-    /// The queue page lists the tail of Now under Next, so a drop there is
-    /// offset past the banner's task and can never displace it.
-    #[test]
-    fn dropping_into_the_now_tail_never_displaces_the_current_task() {
-        let mut store = Store::new();
-        let current = store.add("current", Bucket::Now, None, false);
-        let queued = store.add("queued", Bucket::Now, None, false);
-        let other = store.add("other", Bucket::Next, None, false);
-
-        // Row 0 of the tail list is store index 1: one past the current task.
-        let head_offset = 1;
-        let index = adjusted_drop_index(&store, other, Bucket::Now, Some(head_offset));
-        assert!(store.move_to(other, Bucket::Now, index));
-
-        assert_eq!(ids(&store, Bucket::Now), vec![current, other, queued]);
-        assert_eq!(store.current().map(|t| t.id), Some(current));
     }
 }

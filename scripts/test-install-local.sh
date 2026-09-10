@@ -162,6 +162,8 @@ assert_file "$INSTALLED_SETUP"
 assert_line "$SERVICE" "Exec=\"$SERVICE_EXEC_PATH\" service"
 assert_line "$DESKTOP" "Exec=\"$DESKTOP_EXEC_PATH\" toggle"
 assert_file "$INSTALLED_EXTENSION/schemas/gschemas.compiled"
+assert_file "$INSTALLED_EXTENSION/connection.js"
+assert_file "$INSTALLED_EXTENSION/dbus.js"
 grep -Fq "installed queue-focus 0.1.0-test" <<<"$install_output" || \
   fail "installer did not report the installed version"
 if grep -Fq "$FIXTURE" "$SERVICE" "$DESKTOP"; then

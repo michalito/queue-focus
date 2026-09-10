@@ -92,7 +92,7 @@ impl State {
         Self::load_from(qf_core::data_path())
     }
 
-    fn load_from(path: PathBuf) -> io::Result<SharedState> {
+    pub(crate) fn load_from(path: PathBuf) -> io::Result<SharedState> {
         let store = qf_core::load(&path).map_err(|e| {
             io::Error::new(e.kind(), format!("could not read {}: {e}", path.display()))
         })?;

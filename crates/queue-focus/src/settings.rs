@@ -11,7 +11,7 @@
 //! with ordinary tests.
 
 use gtk::glib;
-use qf_core::{Settings, TimeOfDay};
+use qf_core::Settings;
 use std::cell::{Cell, Ref, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -60,7 +60,7 @@ impl SettingsStore {
         Self::load_from(qf_core::settings_path())
     }
 
-    fn load_from(path: PathBuf) -> (SharedSettings, Option<String>) {
+    pub(crate) fn load_from(path: PathBuf) -> (SharedSettings, Option<String>) {
         let (settings, warning) = match qf_core::load_settings(&path) {
             Ok(settings) => (settings, None),
             Err(e) => (
@@ -177,17 +177,6 @@ impl SettingsStore {
 
     pub fn on_problem(&self, f: impl Fn(&str) + 'static) {
         self.problems.borrow_mut().push(Rc::new(f));
-    }
-}
-
-/// The local time of day, for the quiet-hours rule. A clock the system cannot
-/// read is treated as midday: the rule holds flashes back, and guessing a time
-/// inside the usual working day is the least surprising failure.
-pub fn local_time_of_day() -> TimeOfDay {
-    match glib::DateTime::now_local() {
-        Ok(now) => TimeOfDay::new(now.hour() as u32, now.minute() as u32)
-            .unwrap_or_else(|| TimeOfDay::new(12, 0).expect("12:00")),
-        Err(_) => TimeOfDay::new(12, 0).expect("12:00"),
     }
 }
 

@@ -32,7 +32,7 @@ Open the top bar menu to add a task, complete the current task, or promote a tas
 
 Completing the current task from the menu or with the shortcut shows a GNOME notification with an Undo button. Undo makes the task current again with its timer intact and returns any task that was pulled from Next. Only the most recent completion can be undone, and only while nothing else in the queue has changed.
 
-The extension starts the app service when needed and restarts it if it crashes. After `queue-focus quit` the top bar reads `queue-focus` until the next request starts the service again. Save warnings and failed requests appear as GNOME notifications.
+The extension starts the app service when needed and restarts it if it crashes. After `queue-focus quit` the top bar reads `queue-focus` until the next request starts the service again. Save warnings and failed requests appear as GNOME notifications. If a connection is lost during a task change, the extension refreshes the queue without automatically repeating the change. An interrupted quick-add keeps its draft; check the queue before submitting it again.
 
 ### Queue view
 
@@ -499,6 +499,9 @@ make test
 make test-install
 make test-version
 make test-extension
+make test-extension-dbus
+make test-extension-shell
+make test-ui
 make deb
 make clean
 ```
@@ -518,9 +521,15 @@ make run
 
 `make test` runs the Rust workspace tests, the extension tests, the local installer integration tests, and the version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
 
+`make test-ui` exercises Queue/Board rendering, drop controllers and focus recovery in a real GTK window on an isolated X display, using temporary task and settings files. It needs `Xvfb`, `xvfb-run` and `dbus-run-session`. The regular Rust tests cover placement and anchored movement across all bucket pairs.
+
 `make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
 
-The extension tests need Node.js. The flash overlay draws through GNOME Shell, which cannot run under a test, so `extension/test` stubs the toolkit and loads the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
+The extension tests need Node.js. Connection tests drive owner changes, delayed replies, retries, and interrupted requests with a deterministic D-Bus and timer stand-in. Retry delays increase from 1.5 seconds to a 60-second cap and reset only once both task state and settings recover. The fast flash-overlay tests stub the GNOME toolkit and load the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
+
+`make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
+
+`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
@@ -545,9 +554,11 @@ Makefile
 
 `crates/qf-core` contains the task model, add parser, settings model, JSON store, and unit tests. It has no GTK dependency, and no clock or randomness of its own: the reminder's decisions are ordinary functions that the caller supplies the time and a random number to.
 
-`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, the reminder's schedule, and app styles.
+`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, the reminder's schedule, and app styles. The reminder clock owns quiet rules, deadlines, preview behavior, and event creation. Its private runtime adapter provides a single task/settings/time snapshot per decision, randomness, and timer callbacks; tests exercise complete reminder sequences through those callbacks. The settings view reads the hold reason and countdown together.
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
+
+`extension/queue-focus@queuefocus.org/connection.js` owns connection recovery and request lifetimes; `dbus.js` supplies its GNOME D-Bus and timer adapter. The indicator handles drawing and notifications.
 
 `extension/test` contains the extension tests and the stubbed GNOME Shell they run against. It is not installed.
 

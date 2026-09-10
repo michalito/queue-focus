@@ -1,6 +1,5 @@
 // Queue Focus — top-bar indicator talking to the queue-focus service over D-Bus.
 import GObject from 'gi://GObject';
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
@@ -10,6 +9,7 @@ import Shell from 'gi://Shell';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {FlashOverlay} from './flash.js';
+import {connectQueue} from './dbus.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -17,33 +17,6 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const APP_NAME = 'Queue Focus';
 const APP_ICON = 'org.queuefocus.QueueFocus-symbolic';
-const BUS_NAME = 'org.queuefocus.QueueFocus';
-const OBJ_PATH = '/org/queuefocus/QueueFocus';
-// The part of org.queuefocus.QueueFocus1 this indicator uses.
-const IFACE_XML = `
-<node>
-  <interface name="org.queuefocus.QueueFocus1">
-    <method name="GetState"><arg type="s" name="json" direction="out"/></method>
-    <method name="Add"><arg type="s" name="text" direction="in"/><arg type="s" name="bucket" direction="in"/><arg type="t" name="id" direction="out"/></method>
-    <method name="CompleteCurrent"><arg type="t" name="id" direction="out"/><arg type="s" name="title" direction="out"/></method>
-    <method name="UndoComplete"><arg type="t" name="id" direction="in"/><arg type="b" name="undone" direction="out"/></method>
-    <method name="Promote"><arg type="t" name="id" direction="in"/></method>
-    <method name="Show"><arg type="s" name="view" direction="in"/></method>
-    <method name="GetSettings"><arg type="s" name="json" direction="out"/></method>
-    <signal name="Changed"><arg type="s" name="json"/></signal>
-    <signal name="SettingsChanged"><arg type="s" name="json"/></signal>
-    <signal name="Flash"><arg type="s" name="json"/></signal>
-    <signal name="DurabilityWarning"><arg type="s" name="message"/></signal>
-    <signal name="Stopping"/>
-  </interface>
-</node>`;
-const QueueFocusProxy = Gio.DBusProxy.makeProxyWrapper(IFACE_XML);
-
-// Delay before asking the service for state again after it went away without
-// notice or a call failed. Doubles per attempt up to the max so a binary that
-// crashes at startup is not respawned in a tight loop; reset once state flows.
-const RETRY_MS = 1500;
-const RETRY_MAX_MS = 60000;
 // How many Next tasks the menu lists before summarising the rest.
 const NEXT_PREVIEW = 8;
 // gschema key → what to do when pressed.
@@ -78,10 +51,6 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._focusKey = null;
         this._focusId = 0;
         this._tickId = 0;
-        this._retryId = 0;
-        this._retryMs = RETRY_MS;
-        // Set when the service says it is exiting on request, cleared when it is back.
-        this._stopping = false;
         this._source = null;
         // The notification offering to undo the latest completion, if still shown.
         this._doneNotification = null;
@@ -96,98 +65,25 @@ class QueueFocusIndicator extends PanelMenu.Button {
         box.add_child(this._timer);
         this.add_child(box);
 
-        this._proxy = new QueueFocusProxy(Gio.DBus.session, BUS_NAME, OBJ_PATH, (_proxy, error) => {
-            if (error) {
-                console.warn(`queue-focus: proxy error: ${error.message}`);
-                this._apply(null);
-                return;
-            }
-            this._refresh();
+        this._connection = connectQueue({
+            state: state => this._apply(state),
+            settings: settings => this._applySettings(settings),
+            flash: event => this._flash.show(event),
+            warning: message => Main.notifyError(APP_NAME, message),
         });
-        this._signalIds = [
-            this._proxy.connectSignal('Changed', (_p, _s, [json]) => this._apply(json)),
-            this._proxy.connectSignal('SettingsChanged', (_p, _s, [json]) => this._applySettings(json)),
-            this._proxy.connectSignal('Flash', (_p, _s, [json]) => this._onFlash(json)),
-            this._proxy.connectSignal('DurabilityWarning',
-                (_p, _s, [message]) => Main.notifyError(APP_NAME, message)),
-            this._proxy.connectSignal('Stopping', () => {
-                this._stopping = true;
-            }),
-        ];
-        this._ownerId = this._proxy.connect('notify::g-name-owner', () => this._onOwnerChanged());
 
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open && !this._quickAddPending) this._buildMenu(true);
         });
-    }
-
-    // ---- service lifecycle ------------------------------------------------
-
-    _onOwnerChanged() {
-        if (this._proxy.g_name_owner) {
-            this._stopping = false;
-            this._cancelRetry();
-            this._refresh();
-            return;
-        }
-        this._apply(null);
-        // Gone without notice (crashed or killed): bring it back. A service
-        // that announced it was stopping stays down until the next request.
-        if (!this._stopping) this._scheduleRetry();
-    }
-
-    /** Ask for state. Like any method call, this starts the service via D-Bus activation. */
-    _refresh() {
-        this._proxy?.GetSettingsRemote((res, err) => {
-            if (!this._proxy || err) return;
-            this._applySettings(res[0]);
-        });
-        this._proxy?.GetStateRemote((res, err) => {
-            if (!this._proxy) return;
-            if (!err) {
-                this._apply(res[0]);
-                return;
-            }
-            this._apply(null);
-            if (err.matches(Gio.DBusError, Gio.DBusError.SERVICE_UNKNOWN)) {
-                // Nothing to activate (not installed, or uninstalled under us):
-                // stay idle until the user asks again.
-                console.warn(`queue-focus: service unavailable: ${err.message}`);
-                return;
-            }
-            console.warn(`queue-focus: GetState failed: ${err.message}`);
-            this._scheduleRetry();
-        });
-    }
-
-    _scheduleRetry() {
-        if (!this._proxy || this._retryId) return;
-        this._retryId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._retryMs, () => {
-            this._retryId = 0;
-            this._refresh();
-            return GLib.SOURCE_REMOVE;
-        });
-        this._retryMs = Math.min(this._retryMs * 2, RETRY_MAX_MS);
-    }
-
-    _cancelRetry() {
-        if (!this._retryId) return;
-        GLib.source_remove(this._retryId);
-        this._retryId = 0;
+        // PopupMenu refuses to open while empty, so populate it before the
+        // first open-state-changed signal can ever arrive.
+        this._buildMenu();
     }
 
     // ---- state → panel ----------------------------------------------------
 
-    _apply(json) {
-        try {
-            this._state = json ? JSON.parse(json) : null;
-        } catch (_e) {
-            this._state = null;
-        }
-        if (this._state) {
-            this._retryMs = RETRY_MS;
-            this._cancelRetry();
-        }
+    _apply(state) {
+        this._state = state;
         const cur = this._state?.current ?? null;
         for (const c of ['qf-dot-work', 'qf-dot-personal', 'qf-dot-none']) this._dot.remove_style_class_name(c);
         this._dot.add_style_class_name(cur?.tag ? `qf-dot-${cur.tag}` : 'qf-dot-none');
@@ -196,27 +92,9 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (this.menu.isOpen && !this._quickAddPending) this._buildMenu();
     }
 
-    _applySettings(json) {
-        try {
-            const settings = JSON.parse(json);
-            if (settings && typeof settings === 'object') this._prefs = settings;
-        } catch (e) {
-            console.warn(`queue-focus: unreadable settings: ${e.message}`);
-            return;
-        }
+    _applySettings(settings) {
+        this._prefs = settings;
         this._updateTimer();
-    }
-
-    /** The service says it is time to remind the user what they are doing. */
-    _onFlash(json) {
-        let event;
-        try {
-            event = JSON.parse(json);
-        } catch (e) {
-            console.warn(`queue-focus: unreadable flash: ${e.message}`);
-            return;
-        }
-        if (event?.title) this._flash.show(event);
     }
 
     /** Show the clock, then wake up right after its next minute boundary. */
@@ -247,20 +125,19 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     /** Fire-and-forget method call; a failure is shown to the user, not just logged. */
     call(name, ...args) {
-        this._proxy?.[`${name}Remote`](...args, (_res, err) => {
+        this._connection.request(name, args, (_res, err) => {
             if (err) this._fail(name, err);
         });
     }
 
     _fail(name, err) {
-        Gio.DBusError.strip_remote_error(err);
         console.warn(`queue-focus: ${name} failed: ${err.message}`);
         Main.notifyError(APP_NAME, err.message);
     }
 
     /** Complete the current task; the notification offers to undo that completion. */
     completeCurrent() {
-        this._proxy?.CompleteCurrentRemote((res, err) => {
+        this._connection.request('CompleteCurrent', [], (res, err) => {
             if (err) {
                 this._fail('CompleteCurrent', err);
                 return;
@@ -281,7 +158,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
     }
 
     _undoComplete(id) {
-        this._proxy?.UndoCompleteRemote(id, (res, err) => {
+        this._connection.request('UndoComplete', [id], (res, err) => {
             if (err) {
                 this._fail('UndoComplete', err);
                 return;
@@ -401,7 +278,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
             if (!text) return;
             this._quickAddPending = true;
             // An empty bucket means "wherever Settings says".
-            this._proxy?.AddRemote(text, '', (_res, err) => {
+            this._connection.request('Add', [text, ''], (_res, err) => {
                 this._quickAddPending = false;
                 if (err) {
                     this._fail('Add', err);
@@ -417,7 +294,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
         if (!st) {
             const start = new PopupMenu.PopupMenuItem('service not running — click to start');
-            start.connect('activate', () => this._refresh());
+            start.connect('activate', () => this._connection.refresh());
             this.menu.addMenuItem(this._focusable('start', start));
             this.menu.addMenuItem(this._openItems());
             this._restoreFocus(focusKey);
@@ -470,13 +347,8 @@ class QueueFocusIndicator extends PanelMenu.Button {
     destroy() {
         this._flash.destroy();
         this._cancelTick();
-        this._cancelRetry();
+        this._connection.destroy();
         this._cancelFocus();
-        if (this._proxy) {
-            for (const id of this._signalIds) this._proxy.disconnectSignal(id);
-            this._proxy.disconnect(this._ownerId);
-            this._proxy = null;
-        }
         this._source?.destroy();
         this._entry = null;
         this._focusTargets.clear();

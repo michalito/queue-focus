@@ -8,7 +8,7 @@ REQUESTED_VERSION           := $(if $(filter command line,$(origin VERSION)),$(V
 REQUESTED_EXTENSION_VERSION := $(if $(filter command line,$(origin EXTENSION_VERSION)),$(EXTENSION_VERSION),)
 export REQUESTED_VERSION REQUESTED_EXTENSION_VERSION
 
-.PHONY: help build test test-install test-version test-extension check version set-version maybe-version install uninstall update deb clean run
+.PHONY: help build test test-ui test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -22,8 +22,12 @@ $(SCHEMAS)/gschemas.compiled: $(SCHEMAS)/*.gschema.xml
 test:            ## unit + isolated integration tests
 	$(CARGO) test --workspace
 	node extension/test/flash.test.mjs
+	node extension/test/connection.test.mjs
 	scripts/test-install-local.sh
 	scripts/test-set-version.sh
+
+test-ui:         ## real GTK placement/drop/focus test (needs Xvfb)
+	scripts/test-ui.sh
 
 test-install:    ## isolated local installer integration tests
 	scripts/test-install-local.sh
@@ -33,6 +37,13 @@ test-version:    ## isolated versioning integration tests
 
 test-extension:  ## shell-extension tests, against a stubbed GNOME Shell
 	node extension/test/flash.test.mjs
+	node extension/test/connection.test.mjs
+
+test-extension-dbus: ## real GJS adapter test on a private D-Bus (needs gjs)
+	GIO_USE_VFS=local dbus-run-session -- gjs -m extension/test/dbus.test.js
+
+test-extension-shell: ## real quick-add test in a disposable headless GNOME Shell
+	scripts/test-extension-shell.sh
 
 check:           ## fmt + clippy + JS/Python/shell syntax
 	$(CARGO) fmt --all -- --check
