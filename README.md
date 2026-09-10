@@ -46,7 +46,17 @@ The Queue view is a narrow window in three fixed bands.
 
 ### Board view
 
-The Board view shows the same tasks in four columns. Use it when you need to move several tasks.
+The Board view shows the same tasks in four quadrants. Use it when you need to move several tasks.
+
+1. Now takes the wide top left as a panel: the tag, the timer, the title in full (scrollable when long), a done button, and a menu. It shows the one task you are doing. Dropping a task on it makes that task current. When Now is empty it reads `empty — drop a task here`.
+
+2. Side takes the narrow top right, one card per task, and grows to a point before it scrolls.
+
+3. Next takes the wide bottom left and fills the rest of the window. Anything else in Now — what is queued behind the current task — is listed at the top of it, exactly as on the Queue view.
+
+4. Later takes the narrow bottom right, one dim line per task. It is never collapsed here.
+
+While you drag, a line shows where the task would land and the row it came from fades. Dropping on the Now panel rings it first.
 
 ### Settings view
 
@@ -316,7 +326,7 @@ In the main window, Enter adds to Next and `Ctrl+Enter` adds to Now. `Escape` cl
 
 Task keys work when an entry is not being edited.
 
-The task keys act on the focused task. In the Queue view the current task's banner is the first focus stop, so with nothing else focused these keys act on the current task.
+The task keys act on the focused task. In the Queue view the current task's banner is the first focus stop; on the Board the Now panel is first, so with nothing else focused these keys act on the current task.
 
 1. `j` and `k` move focus down and up across visible sections.
 
@@ -352,11 +362,11 @@ The Settings view has no tasks on it, so the task keys do nothing there. `q` and
 
 ### Mouse
 
-Double click a task to make it current. Drag a task to a new position or bucket. Drop it on a bucket heading to place it at the end of that bucket. This also works with an empty bucket or the collapsed Later shelf. Drop a task on the current task's banner to make it current.
+Double click a task to make it current. Drag a task to a new position or bucket. Drop it on a bucket heading to place it at the end of that bucket. This also works with an empty bucket or the collapsed Later shelf. On the Board the space under a bucket's last row does the same. Drop a task on the current task's banner, or on the Board's Now panel, to make it current.
 
-Queue rows carry a button that makes the task current and a menu button. Later rows add a `→ next` button. Board rows have the menu alone because the columns are narrower. Every row's menu can make the task current, cycle its tag, mark it done, move it to another bucket, rename it, or delete it.
+Queue rows carry a button that makes the task current and a menu button. Later rows add a `→ next` button. Board rows have the menu alone because the quadrants are narrower. Every row's menu can make the task current, cycle its tag, mark it done, move it to another bucket, rename it, or delete it.
 
-The current task's banner has its own done button and menu. Click its tag to cycle it, and click the timer to pause or resume.
+The current task's banner and the Board's Now panel have their own done button and menu. Click the tag to cycle it, and click the timer to pause or resume. On the Board the tag is a button even when there is no tag yet, and reads `–` until there is.
 
 Closing an app window hides it. The service continues running so the top bar and global shortcuts keep working.
 
@@ -521,7 +531,7 @@ make run
 
 `make test` runs the Rust workspace tests, the extension tests, the local installer integration tests, and the version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
 
-`make test-ui` exercises Queue/Board rendering, drop controllers and focus recovery in a real GTK window on an isolated X display, using temporary task and settings files. It needs `Xvfb`, `xvfb-run` and `dbus-run-session`. The regular Rust tests cover placement and anchored movement across all bucket pairs.
+`make test-ui` exercises Queue/Board rendering, drop controllers, focus recovery and the drag feedback in a real GTK window on an isolated X display, using temporary task and settings files. It needs `Xvfb`, `xvfb-run` and `dbus-run-session`. The regular Rust tests cover placement and anchored movement across all bucket pairs.
 
 `make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
 

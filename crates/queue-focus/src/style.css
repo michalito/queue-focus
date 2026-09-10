@@ -8,11 +8,19 @@
 
 window.tag-work {
   --accent-bg-color: #3584e4;
-  --accent-color: #3584e4;
 }
 window.tag-personal {
   --accent-bg-color: #e66100;
-  --accent-color: #c64600;
+}
+/* The accent is two tones, not one: a wash for the tints (--accent-bg-color)
+   and an ink for what is drawn on top of them — the Now label, the clock, and
+   the lines a drag leaves behind. libadwaita calls the ink the standalone
+   accent and lightens it for dark themes so it reads against the window; GTK
+   CSS cannot ask which theme is on, but mixing towards the window's own
+   foreground lightens in the dark and darkens in the light by itself. */
+window.tag-work,
+window.tag-personal {
+  --accent-color: color-mix(in srgb, var(--accent-bg-color) 66%, var(--window-fg-color));
 }
 
 /* AdwToolbarView leaves a few pixels below the last top bar, so the container
@@ -124,16 +132,16 @@ popover.shortcuts-pop > contents {
   font-size: 1.3em;
   font-weight: 800;
 }
-.banner-btn {
+.hero-btn {
   min-width: 28px;
   min-height: 28px;
   padding: 0;
   border-radius: 6px;
   opacity: 0.55;
 }
-.banner-btn:hover,
-.banner-btn:focus,
-.banner-btn:checked {
+.hero-btn:hover,
+.hero-btn:focus,
+.hero-btn:checked {
   opacity: 1;
 }
 .timer-btn {
@@ -218,7 +226,7 @@ popover.shortcuts-pop > contents {
 /* A GtkMenuButton paints through an inner `button` node, which otherwise keeps
    Adwaita's 24px minimum, 5px padding and 9px radius. */
 .row-btn > button,
-.banner-btn > button,
+.hero-btn > button,
 .hint-btn > button {
   min-width: 0;
   min-height: 0;
@@ -255,23 +263,18 @@ popover.shortcuts-pop > contents {
 .chip.personal {
   background: #c64600;
 }
+/* No tag yet: an outlined dash, so the chip is always in the same place. */
+.chip.untagged {
+  color: color-mix(in srgb, currentColor 60%, transparent);
+  /* Named rather than `currentColor`, which this rule has just faded to 60% —
+     the outline would compound to 0.15 and the chip would barely read. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--window-fg-color) 25%, transparent);
+}
 .chip-btn {
   min-width: 0;
   min-height: 0;
   padding: 0;
   border-radius: 6px;
-}
-
-/* Tint only — the current task needs no border to be the loudest thing here. */
-.task-row.current {
-  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
-}
-.task-row.current .row-title {
-  font-size: 1.15em;
-  font-weight: 700;
-}
-.task-row.current .timer {
-  font-size: 1em;
 }
 
 /* ---- Later, pinned to the bottom ----------------------------------- */
@@ -290,13 +293,13 @@ popover.shortcuts-pop > contents {
 .later-list {
   padding: 0 16px 12px 16px;
 }
-.later-list .row-box {
+.later-rows .row-box {
   padding: 6px 0;
 }
-.later-list .row-title {
+.later-rows .row-title {
   opacity: 0.55;
 }
-.later-list .chip {
+.later-rows .chip {
   opacity: 0.8;
 }
 .to-next-btn {
@@ -338,11 +341,188 @@ popover.task-menu > contents {
 
 /* ---- board --------------------------------------------------------- */
 
+/* Four quadrants: Now over Next on the wide side, Side over Later on the
+   narrow one. Each is shaped for what it holds — the one task you are doing
+   is a panel, the queue behind it a card of rows, and Later a bare list. */
 .board {
-  padding: 0 6px 8px 6px;
+  padding: 8px 20px 14px 20px;
 }
-.board-column {
-  padding: 0 6px;
+.board .section-header {
+  padding: 8px 4px 6px 4px;
+}
+/* Aligned with the text of the rows under each: Next's card insets them, and
+   Later's column only just. */
+.board .section-header.next {
+  padding: 10px 12px 4px 12px;
+}
+.board .section-header.later {
+  padding: 10px 4px 4px 4px;
+}
+/* Now is the one header that gets the accent: it names what you are doing. */
+.board .section-header.now .bucket-header {
+  color: var(--accent-color);
+  opacity: 1;
+}
+
+.now-hero {
+  min-height: 112px;
+  padding: 14px 18px 12px 18px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
+  box-shadow: 0 0 0 1px var(--card-shade-color);
+  transition:
+    background 150ms ease,
+    box-shadow 120ms ease;
+}
+.now-hero:focus-visible {
+  outline-color: var(--accent-color);
+  outline-style: solid;
+  outline-width: 2px;
+  outline-offset: -3px;
+}
+/* The title is the loudest thing on the page, and has the room to prove it. */
+.now-hero .current-title {
+  font-size: 1.5em;
+}
+/* Wide enough to say the word, so the one destructive-ish action is unmissable. */
+.hero-done {
+  min-height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  box-shadow: none;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: 0.85em;
+  font-weight: 700;
+}
+.hero-done:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+/* Side: free-standing cards, tinted a touch by the current task's tag. The 1px
+   keeps their rings off the scroller's edge, and the extra at the top leaves
+   room for an insertion line above the first card. */
+.side-cards {
+  padding: 5px 1px 1px 1px;
+}
+.side-cards > row {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-bg-color) 5%, var(--card-bg-color));
+  box-shadow: 0 0 0 1px var(--card-shade-color);
+  margin-bottom: 8px;
+  transition: background 150ms ease;
+}
+.side-cards > row:last-child {
+  margin-bottom: 0;
+}
+.side-cards > row:hover {
+  background: color-mix(in srgb, currentColor 12%, var(--card-bg-color));
+}
+.side-cards .row-box {
+  padding: 10px 12px 10px 14px;
+}
+.side-cards .row-title {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.side-empty {
+  min-height: 70px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* Next: one card of hairline-separated rows, holding the Now tail in front of
+   Next's own. Whatever leads it sits against the card's edge, so it draws no
+   line of its own. */
+.board-card {
+  border: 1px solid var(--card-shade-color);
+  border-radius: 12px;
+  background: var(--card-bg-color);
+}
+.board-rows > row {
+  border-top: 1px solid var(--card-shade-color);
+}
+.board-rows > row.leads {
+  border-top: none;
+}
+.board-rows > row:hover {
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.board-rows .row-box {
+  padding: 8px 8px 8px 12px;
+}
+.next-empty {
+  padding: 10px 12px;
+}
+
+/* Later: cold storage, so no card and no weight — one dim line each. */
+.board-later-rows {
+  padding: 0 4px;
+}
+.board-later-rows > row {
+  border-top: 1px solid color-mix(in srgb, currentColor 6%, transparent);
+}
+/* Nothing to react to down here: Adwaita's own row hover is turned off. */
+.board-later-rows > row:hover {
+  background: none;
+}
+.board-later-rows .row-box {
+  padding: 6px 0;
+}
+.board-later-rows .row-title {
+  opacity: 0.55;
+}
+.board-later-rows .chip {
+  opacity: 0.8;
+}
+.later-empty {
+  padding: 8px 0;
+}
+
+/* ---- drag feedback -------------------------------------------------- */
+
+/* GTK draws none of this itself: where the task came from, and where it would
+   land if you let go now. */
+.task-row.dragging,
+.now-hero.dragging {
+  opacity: 0.35;
+}
+.task-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent-color);
+}
+.bucket-list.drop-end {
+  box-shadow: inset 0 -2px 0 var(--accent-color);
+}
+/* Next's rows sit in a card, so their line is inset from its edges rather than
+   run into them. A background image, because box-shadow cannot be inset
+   sideways and the hairline above the row has to stay. */
+.board-rows > row.drop-before,
+.board-rows.drop-end {
+  box-shadow: none;
+  background-image: linear-gradient(var(--accent-color), var(--accent-color));
+  background-repeat: no-repeat;
+  background-size: calc(100% - 16px) 2px;
+  background-position: 8px 0;
+}
+.board-rows.drop-end {
+  background-position: 8px 100%;
+}
+/* Side's cards stand apart, so the line goes in the gap above the one the task
+   would land in front of — a bar inside the card's rounded top would read as
+   picking the card out rather than pointing between two of them. An outer
+   shadow shrunk by 3px and lifted 5px leaves exactly that 2px band showing,
+   and the card keeps the ring that makes it a card. */
+.side-cards > row.drop-before {
+  box-shadow:
+    0 -5px 0 -3px var(--accent-color),
+    0 0 0 1px var(--card-shade-color);
+}
+.drop-into {
+  box-shadow: inset 0 0 0 2px var(--accent-color);
+}
+/* The hero is a card with room around it, so its ring can sit outside. */
+.now-hero.drop-into {
+  box-shadow: 0 0 0 2px var(--accent-color);
 }
 
 /* ---- settings ------------------------------------------------------ */

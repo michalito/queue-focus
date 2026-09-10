@@ -97,13 +97,88 @@ impl Page {
     }
 }
 
-/// How much furniture a row carries. The board's columns are too narrow for
-/// inline buttons, and Later — cold storage — gets a "→ next" shortcut.
+/// How much furniture a row carries, and how it is dressed. The board's
+/// quadrants are each shaped differently, so each gets its own style: Side is a
+/// stack of free-standing cards, Next a card of hairline-separated rows, and
+/// Later a bare column of dim single lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RowStyle {
+    /// Queue page: title, a "make current" button, and the menu.
     Queue,
+    /// Queue page's Later shelf: dim, with a "→ next" shortcut.
     Later,
-    Board,
+    /// Board's Side quadrant: a card of its own, tag chip leading.
+    SideCard,
+    /// Board's Next quadrant: a row in a card, under a hairline.
+    BoardRow,
+    /// Board's Later quadrant: one dim line, ellipsised.
+    BoardLater,
+}
+
+impl RowStyle {
+    fn of(list: placement::List) -> RowStyle {
+        match (list.page, list.bucket) {
+            (Page::Board, Bucket::Side) => RowStyle::SideCard,
+            (Page::Board, Bucket::Later) => RowStyle::BoardLater,
+            // The Now tail is listed under Next, so it wears Next's clothes.
+            (Page::Board, _) => RowStyle::BoardRow,
+            (_, Bucket::Later) => RowStyle::Later,
+            _ => RowStyle::Queue,
+        }
+    }
+
+    /// How many lines a title may take. Nothing wraps on the queue, whose rows
+    /// are one line cut short; the board's quadrants are narrow enough to need
+    /// the room. Later is cold storage either way: one line.
+    fn wrap_lines(self) -> Option<i32> {
+        match self {
+            RowStyle::SideCard => Some(2),
+            RowStyle::BoardRow => Some(3),
+            _ => None,
+        }
+    }
+
+    /// The space between a row's parts. Side's cards are the roomier ones.
+    fn gap(self) -> i32 {
+        match self {
+            RowStyle::SideCard => 10,
+            _ => 8,
+        }
+    }
+
+    /// Whether rows in this style carry buttons beside the menu. The board's
+    /// quadrants are too narrow for them, so there the menu carries everything.
+    fn inline_buttons(self) -> bool {
+        matches!(self, RowStyle::Queue | RowStyle::Later)
+    }
+
+    /// The class its list carries. Rows are dressed through it — `row` is
+    /// GTK's own node name for a GtkListBoxRow — so they need none of their own.
+    fn css(self) -> &'static str {
+        match self {
+            RowStyle::Queue => "queue-rows",
+            RowStyle::Later => "later-rows",
+            RowStyle::SideCard => "side-cards",
+            RowStyle::BoardRow => "board-rows",
+            RowStyle::BoardLater => "board-later-rows",
+        }
+    }
+}
+
+/// The current task's panel. The queue wears it as a full-width band under the
+/// header bar; the board as a card in its own quadrant, with the word "Done"
+/// spelt out and a tag chip standing by even when there is no tag to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeroStyle {
+    Banner,
+    Card,
+}
+
+/// One page's current-task panel, rebuilt with everything else.
+struct Hero {
+    page: Page,
+    style: HeroStyle,
+    root: gtk::Box,
 }
 
 /// One ListBox showing (part of) one bucket on one page.
@@ -114,10 +189,11 @@ struct BucketList {
 }
 
 /// A titled section: the count beside its header, and the "empty" placeholder
-/// shown while every list under that header is empty.
+/// shown while every list under that header is empty. The board's Now header
+/// has no placeholder — the hero carries its own empty state.
 struct Section {
     count: gtk::Label,
-    placeholder: gtk::Label,
+    placeholder: Option<gtk::Label>,
     placement: placement::Section,
 }
 
@@ -147,8 +223,8 @@ pub struct Ui {
     lists: RefCell<Vec<BucketList>>,
     sections: RefCell<Vec<Section>>,
     rendered: RefCell<Placement>,
-    /// Queue page: the current task's band, rebuilt with everything else.
-    banner: RefCell<Option<gtk::Box>>,
+    /// The current task's panel, one per page that shows one.
+    heroes: RefCell<Vec<Hero>>,
     /// Every label showing the current task's elapsed time.
     timers: RefCell<Vec<gtk::Label>>,
     /// Later shelf: collapsed by default.
@@ -194,7 +270,7 @@ impl Ui {
             rendered: RefCell::new(Placement::default()),
             lists: RefCell::new(Vec::new()),
             sections: RefCell::new(Vec::new()),
-            banner: RefCell::new(None),
+            heroes: RefCell::new(Vec::new()),
             timers: RefCell::new(Vec::new()),
             later: RefCell::new(None),
             shortcuts: RefCell::new(None),
@@ -645,20 +721,7 @@ impl Ui {
             .orientation(gtk::Orientation::Vertical)
             .build();
 
-        let banner = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(6)
-            .css_classes(["current-banner"])
-            .build();
-        // The head of Now is not in any list, so dropping on the banner is the
-        // only way to drag a task to the front of the queue.
-        let this = self.clone();
-        banner.add_controller(drop_target(move |id, _, _| {
-            this.update(|s| Destination::Banner.apply(s, id))
-                .unwrap_or(false)
-        }));
-        page.append(&banner);
-        *self.banner.borrow_mut() = Some(banner);
+        page.append(&self.make_hero(Page::Queue, HeroStyle::Banner, &["current-banner"]));
 
         let card = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -687,27 +750,36 @@ impl Ui {
 
     fn add_queue_section(self: &Rc<Self>, card: &gtk::Box, bucket: Bucket, divided: bool) {
         let (head_box, count) = section_header(bucket, divided);
-        self.header_drop(&head_box, bucket);
-        card.append(&head_box);
-
         let placeholder = placeholder_label();
-        // The list is zero-height while empty, so the placeholder has to accept
-        // the drop that would otherwise have landed on the list.
-        self.header_drop(&placeholder, bucket);
-        card.append(&placeholder);
-
         let placement = placement::Section {
             page: Page::Queue,
             bucket,
         };
-        for region in placement.lists() {
-            card.append(&self.make_list(region));
+        let lists = self.make_lists(placement);
+
+        // A header appends to the bucket it names, which is the last list under
+        // it: Next's own rows, not the Now tail queued in front of them.
+        self.header_drop(&head_box, bucket, &lists);
+        self.empty_drop(&placeholder, bucket);
+        card.append(&head_box);
+        card.append(&placeholder);
+        for list in &lists {
+            card.append(list);
         }
         self.sections.borrow_mut().push(Section {
             count,
-            placeholder,
+            placeholder: Some(placeholder),
             placement,
         });
+    }
+
+    /// Every list under one header, in the order they are shown.
+    fn make_lists(self: &Rc<Self>, section: placement::Section) -> Vec<gtk::ListBox> {
+        section
+            .lists()
+            .into_iter()
+            .map(|region| self.make_list(region))
+            .collect()
     }
 
     /// Later hangs below the scroll area so it never pushes the queue around.
@@ -739,15 +811,15 @@ impl Ui {
         clickable(&toggle);
         let this = self.clone();
         toggle.connect_clicked(move |_| this.toggle_later());
-        self.header_drop(&toggle, Bucket::Later);
         shelf.append(&toggle);
 
         let placeholder = placeholder_label();
-        self.header_drop(&placeholder, Bucket::Later);
         let list = self.make_list(placement::List {
             page: Page::Queue,
             bucket: Bucket::Later,
         });
+        self.header_drop(&toggle, Bucket::Later, std::slice::from_ref(&list));
+        self.empty_drop(&placeholder, Bucket::Later);
         let body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .css_classes(["later-list"])
@@ -771,7 +843,7 @@ impl Ui {
         *self.later.borrow_mut() = Some((revealer, caret));
         self.sections.borrow_mut().push(Section {
             count,
-            placeholder,
+            placeholder: Some(placeholder),
             placement: placement::Section {
                 page: Page::Queue,
                 bucket: Bucket::Later,
@@ -780,47 +852,153 @@ impl Ui {
         shelf.upcast()
     }
 
-    /// Board page: four columns side by side.
+    /// Board page: four quadrants. Now and Next take the wide left half, Side
+    /// and Later the narrow right one, and the bottom row grows.
     fn build_board_page(self: &Rc<Self>) -> gtk::Widget {
-        let row = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .homogeneous(true)
+        let grid = gtk::Grid::builder()
+            .column_homogeneous(true)
+            .column_spacing(14)
+            .row_spacing(6)
             .css_classes(["board"])
             .build();
-        for b in ORDER {
-            let (head_box, count) = section_header(b, false);
-            self.header_drop(&head_box, b);
-            let placeholder = placeholder_label();
-            self.header_drop(&placeholder, b);
-            let list = self.make_list(placement::List {
-                page: Page::Board,
-                bucket: b,
-            });
+        // GTK has no proportional columns, so the design's 1.5fr : 1fr is five
+        // equal ones, spanned three and two.
+        for (bucket, x, width, y) in [
+            (Bucket::Now, 0, 3, 0),
+            (Bucket::Side, 3, 2, 0),
+            (Bucket::Next, 0, 3, 1),
+            (Bucket::Later, 3, 2, 1),
+        ] {
+            let quadrant = self.build_board_quadrant(bucket);
+            // The top row is as tall as it needs to be; the bottom takes what
+            // is left, so Next and Later are the two that scroll.
+            quadrant.set_vexpand(y == 1);
+            grid.attach(&quadrant, x, y, width, 1);
+        }
+        // The Now heading appends into the tail shown under Next. Wire its
+        // feedback after every quadrant exists, so both boundary lists exist.
+        let header = self
+            .sections
+            .borrow()
+            .iter()
+            .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Now)
+            .unwrap()
+            .count
+            .parent()
+            .unwrap();
+        let lists = self.lists.borrow();
+        let find_list = |bucket| {
+            lists
+                .iter()
+                .find(|l| l.placement.page == Page::Board && l.placement.bucket == bucket)
+                .unwrap()
+                .list
+                .downgrade()
+        };
+        self.append_drop(
+            &header,
+            Bucket::Now,
+            Highlight::NowTail {
+                hero: self
+                    .heroes
+                    .borrow()
+                    .iter()
+                    .find(|h| h.page == Page::Board)
+                    .unwrap()
+                    .root
+                    .downgrade(),
+                leading: find_list(Bucket::Now),
+                trailing: find_list(Bucket::Next),
+            },
+        );
+        grid.upcast()
+    }
 
-            let col = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .css_classes(["board-column"])
-                .build();
-            col.append(&head_box);
-            col.append(&placeholder);
-            col.append(
-                &gtk::ScrolledWindow::builder()
-                    .hscrollbar_policy(gtk::PolicyType::Never)
-                    .child(&list)
-                    .vexpand(true)
-                    .build(),
-            );
-            row.append(&col);
+    /// One quadrant: the bucket's header over a body shaped to suit it.
+    fn build_board_quadrant(self: &Rc<Self>, bucket: Bucket) -> gtk::Box {
+        let (head_box, count) = section_header(bucket, false);
+        let quadrant = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .css_classes(["board-column"])
+            .build();
+        head_box.add_css_class(bucket.as_str());
+        quadrant.append(&head_box);
+        let placement = placement::Section {
+            page: Page::Board,
+            bucket,
+        };
+
+        if bucket == Bucket::Now {
+            // The hero shows the one task on show and nothing else — whatever
+            // is queued behind it is listed under Next — so this quadrant has
+            // no list, and no "empty" line of its own either.
+            let hero = self.make_hero(Page::Board, HeroStyle::Card, &["now-hero"]);
+            hero.set_vexpand(true);
+            quadrant.append(&hero);
             self.sections.borrow_mut().push(Section {
                 count,
-                placeholder,
-                placement: placement::Section {
-                    page: Page::Board,
-                    bucket: b,
-                },
+                placeholder: None,
+                placement,
             });
+            return quadrant;
         }
-        row.upcast()
+
+        let placeholder = placeholder_label();
+        placeholder.add_css_class(&format!("{}-empty", bucket.as_str()));
+        if bucket == Bucket::Side {
+            // Side's is a box of its own rather than a line of text.
+            placeholder.set_xalign(0.5);
+            placeholder.set_valign(gtk::Align::Center);
+        }
+        let lists = self.make_lists(placement);
+
+        let body = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            // Fill the viewport rather than only the rows, so the space under
+            // the last one still belongs to the bucket.
+            .vexpand(true)
+            .build();
+        body.append(&placeholder);
+        for list in &lists {
+            body.append(list);
+        }
+        self.header_drop(&head_box, bucket, &lists);
+        self.empty_drop(&placeholder, bucket);
+        // A sibling target covers spare space without seeing motion events
+        // that bubble from the list or placeholder and replacing their marks.
+        let drop_space = gtk::Box::builder()
+            .vexpand(true)
+            .css_classes(["board-drop-space"])
+            .build();
+        body.append(&drop_space);
+        self.append_drop(&drop_space, bucket, end_of(&lists));
+
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&body)
+            .build();
+        match bucket {
+            // Side sits in the top row: it takes the room it needs, between a
+            // card's worth and a screenful.
+            Bucket::Side => {
+                scroll.set_propagate_natural_height(true);
+                scroll.set_min_content_height(72);
+                scroll.set_max_content_height(196);
+            }
+            // Next is a card of its own; Later is a bare column.
+            Bucket::Next => {
+                scroll.add_css_class("board-card");
+                scroll.set_vexpand(true);
+            }
+            _ => scroll.set_vexpand(true),
+        }
+        quadrant.append(&scroll);
+        self.sections.borrow_mut().push(Section {
+            count,
+            placeholder: Some(placeholder),
+            placement,
+        });
+        quadrant
     }
 
     // ---- settings page ------------------------------------------------
@@ -1381,15 +1559,8 @@ impl Ui {
     }
 
     fn make_list(self: &Rc<Self>, placement: placement::List) -> gtk::ListBox {
-        let style = match (placement.page, placement.bucket) {
-            (Page::Board, _) => RowStyle::Board,
-            (_, Bucket::Later) => RowStyle::Later,
-            _ => RowStyle::Queue,
-        };
-        let classes: Vec<&str> = match style {
-            RowStyle::Board => vec!["boxed-list", "bucket-list"],
-            _ => vec!["bucket-list"],
-        };
+        let style = RowStyle::of(placement);
+        let classes = vec!["bucket-list", style.css()];
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
             .activate_on_single_click(false) // double-click / Enter = make current
@@ -1404,12 +1575,12 @@ impl Ui {
             }
         });
 
-        // Drop on the list → before the row under the pointer (or at the end).
+        // Drop on the list → wherever the insertion line was promising.
         let this = self.clone();
-        list.add_controller(drop_target(move |id, target, y| {
+        list.add_controller(drop_target(Highlight::Before, move |id, target, y| {
             let before = target
                 .downcast_ref::<gtk::ListBox>()
-                .and_then(|l| l.row_at_y(y as i32))
+                .and_then(|l| anchor_at(l, y))
                 .and_then(|r| row_id(&r));
             this.update(|s| {
                 Destination::List {
@@ -1430,10 +1601,30 @@ impl Ui {
     }
 
     /// Dropping on a bucket's header appends to it — this is the only way into
-    /// a collapsed or empty bucket.
-    fn header_drop(self: &Rc<Self>, header: &impl IsA<gtk::Widget>, bucket: Bucket) {
+    /// a collapsed or empty bucket. The line shows after the last row it holds.
+    fn header_drop(
+        self: &Rc<Self>,
+        header: &impl IsA<gtk::Widget>,
+        bucket: Bucket,
+        lists: &[gtk::ListBox],
+    ) {
+        self.append_drop(header, bucket, end_of(lists));
+    }
+
+    /// A list is zero-height while empty, so its placeholder has to accept the
+    /// drop that would otherwise have landed on the list.
+    fn empty_drop(self: &Rc<Self>, placeholder: &impl IsA<gtk::Widget>, bucket: Bucket) {
+        self.append_drop(placeholder, bucket, Highlight::Ring);
+    }
+
+    fn append_drop(
+        self: &Rc<Self>,
+        widget: &impl IsA<gtk::Widget>,
+        bucket: Bucket,
+        highlight: Highlight,
+    ) {
         let this = self.clone();
-        header.add_controller(drop_target(move |id, _, _| {
+        widget.add_controller(drop_target(highlight, move |id, _, _| {
             this.update(|s| Destination::Append(bucket).apply(s, id))
                 .unwrap_or(false)
         }));
@@ -1468,31 +1659,27 @@ impl Ui {
             self.renaming.set(None);
         }
         let current = store.current();
-        let current_id = current.map(|t| t.id);
         self.timers.borrow_mut().clear();
         *self.rename_entry.borrow_mut() = None;
 
         let placement = Placement::new(&store);
-        self.build_banner(current);
+        self.build_heroes(current);
 
         for bl in self.lists.borrow().iter() {
             bl.list.remove_all();
-            for id in placement.rows(bl.placement) {
+            let leads = placement.leads(bl.placement);
+            for (i, id) in placement.rows(bl.placement).iter().enumerate() {
                 let t = store.get(*id).expect("placement comes from this store");
-                let row = self.build_row(
-                    t,
-                    Some(t.id) == current_id,
-                    bl.placement.bucket,
-                    bl.style,
-                    bl.placement.page,
-                );
+                let row = self.build_row(t, bl.placement, bl.style, leads && i == 0);
                 bl.list.append(&row);
             }
         }
         for section in self.sections.borrow().iter() {
             let n = placement.count(section.placement);
             section.count.set_label(&n.to_string());
-            section.placeholder.set_visible(n == 0);
+            if let Some(placeholder) = &section.placeholder {
+                placeholder.set_visible(n == 0);
+            }
         }
         *self.rendered.borrow_mut() = placement;
 
@@ -1533,65 +1720,194 @@ impl Ui {
         }
     }
 
+    /// The current task's panel. Dropping on it promotes, which on the queue
+    /// page is the only way to move a task right to the front.
+    fn make_hero(self: &Rc<Self>, page: Page, style: HeroStyle, classes: &[&str]) -> gtk::Box {
+        let root = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(if style == HeroStyle::Card { 8 } else { 6 })
+            .css_classes(classes.to_vec())
+            .build();
+        let this = self.clone();
+        root.add_controller(drop_target(Highlight::Ring, move |id, _, _| {
+            this.update(|s| Destination::Banner.apply(s, id))
+                .unwrap_or(false)
+        }));
+        if page == Page::Board {
+            root.add_controller(task_drag_source());
+        }
+        self.heroes.borrow_mut().push(Hero {
+            page,
+            style,
+            root: root.clone(),
+        });
+        root
+    }
+
+    fn build_heroes(self: &Rc<Self>, current: Option<&Task>) {
+        let heroes: Vec<(Page, HeroStyle, gtk::Box)> = self
+            .heroes
+            .borrow()
+            .iter()
+            .map(|h| (h.page, h.style, h.root.clone()))
+            .collect();
+        for (page, style, root) in heroes {
+            self.build_hero(page, style, &root, current);
+        }
+    }
+
     /// The one task you're doing right now: the loudest thing on the page.
-    fn build_banner(self: &Rc<Self>, current: Option<&Task>) {
-        let Some(banner) = self.banner.borrow().clone() else {
-            return;
-        };
-        while let Some(child) = banner.first_child() {
-            banner.remove(&child);
+    fn build_hero(
+        self: &Rc<Self>,
+        page: Page,
+        style: HeroStyle,
+        root: &gtk::Box,
+        current: Option<&Task>,
+    ) {
+        while let Some(child) = root.first_child() {
+            root.remove(&child);
         }
 
         let Some(task) = current else {
-            banner.add_css_class("empty");
+            root.add_css_class("empty");
             // Not a task, so not a stop for the keyboard either.
-            banner.set_widget_name("banner");
-            banner.set_focusable(false);
-            banner.append(
-                &gtk::Label::builder()
-                    .label(Bucket::Now.label())
-                    .xalign(0.0)
-                    .css_classes(["bucket-header"])
-                    .build(),
-            );
+            root.set_widget_name("hero");
+            root.set_cursor_from_name(None);
+            root.set_focusable(false);
+            // The board's header names the quadrant already.
+            if style == HeroStyle::Banner {
+                root.append(
+                    &gtk::Label::builder()
+                        .label(Bucket::Now.label())
+                        .xalign(0.0)
+                        .css_classes(["bucket-header"])
+                        .build(),
+                );
+            }
             let empty = placeholder_label();
-            empty.set_label("empty — promote one ↑");
-            banner.append(&empty);
+            let text = match style {
+                HeroStyle::Banner => "empty — promote one ↑",
+                HeroStyle::Card => "empty — drop a task here",
+            };
+            empty.set_label(text);
+            // The last task's title was written here; it has to go with it.
+            root.update_property(&[gtk::accessible::Property::Label(text)]);
+            if style == HeroStyle::Card {
+                empty.set_vexpand(true);
+                empty.set_valign(gtk::Align::Center);
+                empty.set_halign(gtk::Align::Center);
+            }
+            root.append(&empty);
             return;
         };
-        banner.remove_css_class("empty");
+        root.remove_css_class("empty");
         let id = task.id;
-        let paused = task.is_paused();
-        // The banner stands in for the current task's row: j/k reach it, and
+        // The hero stands in for the current task's row: j/k reach it, and
         // `row_id` finds it, so d/t/r act on it like any other task.
-        banner.set_widget_name(&format!("task-{id}"));
-        banner.set_focusable(true);
-        banner.update_property(&[gtk::accessible::Property::Label(&task.title)]);
+        root.set_widget_name(&format!("task-{id}"));
+        if page == Page::Board {
+            root.set_cursor_from_name(Some("grab"));
+        }
+        root.set_focusable(true);
+        root.update_property(&[gtk::accessible::Property::Label(&task.title)]);
 
         let top = gtk::Box::builder().spacing(8).build();
-        top.append(
-            &gtk::Label::builder()
-                .label(Bucket::Now.label())
-                .css_classes(["now-label"])
-                .build(),
-        );
-        if let Some(tag) = task.tag {
-            let this = self.clone();
-            let button = gtk::Button::builder()
-                .child(&chip_label(tag))
-                .tooltip_text("Cycle tag (t)")
-                .valign(gtk::Align::Center)
-                .focusable(false)
-                .css_classes(["flat", "chip-btn"])
-                .build();
-            clickable(&button);
-            button.connect_clicked(move |_| {
-                let _ = this.update(|s| s.cycle_tag(id));
-            });
-            top.append(&button);
+        if style == HeroStyle::Banner {
+            top.append(
+                &gtk::Label::builder()
+                    .label(Bucket::Now.label())
+                    .css_classes(["now-label"])
+                    .build(),
+            );
         }
+        // The board keeps a chip standing even when there is no tag, so the
+        // click that gives a task one is always in the same place.
+        if task.tag.is_some() || style == HeroStyle::Card {
+            top.append(&self.chip_button(id, task.tag));
+        }
+        top.append(&self.hero_timer(task.is_paused()));
+        root.append(&top);
 
-        // Timer. The pause glyph keeps its space so the clock never shifts.
+        let title = if self.renaming.get() == Some(id) && page == self.current_page() {
+            let entry = self.rename_entry(id);
+            // Keep the title's weight while editing so the hero does not jump.
+            entry.add_css_class("rename-title");
+            entry.upcast::<gtk::Widget>()
+        } else {
+            gtk::Label::builder()
+                .label(&task.title)
+                .xalign(0.0)
+                .hexpand(true)
+                .wrap(true)
+                // Break inside words: a bare URL must not widen the window.
+                .wrap_mode(pango::WrapMode::WordChar)
+                .lines(if style == HeroStyle::Banner { 3 } else { -1 })
+                .ellipsize(if style == HeroStyle::Banner {
+                    pango::EllipsizeMode::End
+                } else {
+                    pango::EllipsizeMode::None
+                })
+                .css_classes(["current-title"])
+                .build()
+                .upcast()
+        };
+        let done = self.done_button(id, style);
+        let menu = self.task_menu(id, true, Bucket::Now, &["flat", "hero-btn"]);
+
+        match style {
+            // The queue's band is one line of title with its buttons beside it.
+            HeroStyle::Banner => {
+                let row = gtk::Box::builder().spacing(8).build();
+                row.append(&title);
+                row.append(&done);
+                row.append(&menu);
+                root.append(&row);
+            }
+            // The board spells the title out large, over a line of actions.
+            HeroStyle::Card => {
+                // Keep all of a long title reachable without making the top
+                // quadrant taller than the window and hiding Next/Later.
+                let title_scroll = gtk::ScrolledWindow::builder()
+                    .hscrollbar_policy(gtk::PolicyType::Never)
+                    .min_content_height(60)
+                    .max_content_height(196)
+                    .propagate_natural_height(true)
+                    .vexpand(true)
+                    .child(&title)
+                    .build();
+                root.append(&title_scroll);
+                menu.set_hexpand(true);
+                menu.set_halign(gtk::Align::End);
+                // 4px on top of the panel's 8px gap: the actions sit a little
+                // further from the title than the title does from the clock.
+                let row = gtk::Box::builder().spacing(6).margin_top(4).build();
+                row.append(&done);
+                row.append(&menu);
+                root.append(&row);
+            }
+        }
+    }
+
+    /// The tag chip as a button: one click cycles the tag.
+    fn chip_button(self: &Rc<Self>, id: u64, tag: Option<Tag>) -> gtk::Button {
+        let button = gtk::Button::builder()
+            .child(&chip_label(tag))
+            .tooltip_text("Cycle tag (t)")
+            .valign(gtk::Align::Center)
+            .focusable(false)
+            .css_classes(["flat", "chip-btn"])
+            .build();
+        button.update_property(&[gtk::accessible::Property::Label("Cycle tag")]);
+        clickable(&button);
+        let this = self.clone();
+        button.connect_clicked(move |_| {
+            let _ = this.update(|s| s.cycle_tag(id));
+        });
+        button
+    }
+
+    /// The clock. The pause glyph keeps its space so the time never shifts.
+    fn hero_timer(self: &Rc<Self>, paused: bool) -> gtk::Button {
         let timer = gtk::Label::builder()
             .css_classes(["timer", "monospace", "numeric"])
             .build();
@@ -1608,7 +1924,7 @@ impl Ui {
         if paused {
             classes.push("paused");
         }
-        let timer_button = gtk::Button::builder()
+        let button = gtk::Button::builder()
             .child(&clock)
             .tooltip_text(if paused { "Resume (p)" } else { "Pause (p)" })
             .halign(gtk::Align::End)
@@ -1616,117 +1932,116 @@ impl Ui {
             .focusable(false)
             .css_classes(classes)
             .build();
-        clickable(&timer_button);
+        button.update_property(&[gtk::accessible::Property::Label(if paused {
+            "Resume"
+        } else {
+            "Pause"
+        })]);
+        clickable(&button);
         let this = self.clone();
-        timer_button.connect_clicked(move |_| {
+        button.connect_clicked(move |_| {
             let _ = this.update(|s| s.toggle_pause());
         });
-        top.append(&timer_button);
         self.timers.borrow_mut().push(timer);
-        banner.append(&top);
+        button
+    }
 
-        let title_row = gtk::Box::builder().spacing(8).build();
-        if self.renaming.get() == Some(id) && self.current_page() == Page::Queue {
-            let entry = self.rename_entry(id);
-            // Keep the title's weight while editing so the banner does not jump.
-            entry.add_css_class("rename-title");
-            title_row.append(&entry);
-        } else {
-            title_row.append(
-                &gtk::Label::builder()
-                    .label(&task.title)
-                    .xalign(0.0)
-                    .hexpand(true)
-                    .wrap(true)
-                    // Break inside words: a bare URL must not widen the window.
-                    .wrap_mode(pango::WrapMode::WordChar)
-                    .lines(3)
-                    .ellipsize(pango::EllipsizeMode::End)
-                    .css_classes(["current-title"])
-                    .build(),
+    /// Done: delete the current task and pull the next one up. The board has
+    /// the room to say so in words.
+    fn done_button(self: &Rc<Self>, id: u64, style: HeroStyle) -> gtk::Button {
+        const TIP: &str = "Done — delete and pull the next task (d)";
+        let this = self.clone();
+        if style == HeroStyle::Banner {
+            return icon_button(
+                "object-select-symbolic",
+                TIP,
+                &["flat", "hero-btn"],
+                move || {
+                    this.complete(id);
+                },
             );
         }
-        let this = self.clone();
-        title_row.append(&icon_button(
-            "object-select-symbolic",
-            "Done — delete and pull the next task (d)",
-            &["flat", "banner-btn"],
-            move || {
-                this.complete(id);
-            },
-        ));
-        title_row.append(&self.task_menu(id, true, Bucket::Now, &["flat", "banner-btn"]));
-        banner.append(&title_row);
+        let content = gtk::Box::builder().spacing(8).build();
+        content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+        content.append(&gtk::Label::new(Some("Done")));
+        let button = gtk::Button::builder()
+            .child(&content)
+            .tooltip_text(TIP)
+            .valign(gtk::Align::Center)
+            .focusable(false)
+            .css_classes(["hero-done"])
+            .build();
+        clickable(&button);
+        button.connect_clicked(move |_| {
+            this.complete(id);
+        });
+        button
     }
 
     fn build_row(
         self: &Rc<Self>,
         task: &Task,
-        is_current: bool,
-        bucket: Bucket,
+        list: placement::List,
         style: RowStyle,
-        page: Page,
+        leads: bool,
     ) -> gtk::ListBoxRow {
         let id = task.id;
         // Both pages hold a row per task, but only the visible one may host the
         // editor — otherwise rebuild() focuses a widget nobody can see.
-        let renaming = self.renaming.get() == Some(id) && page == self.current_page();
+        let renaming = self.renaming.get() == Some(id) && list.page == self.current_page();
+        let mut classes = vec!["task-row"];
+        if leads {
+            // Whatever leads a section draws no hairline above it.
+            classes.push("leads");
+        }
         let row = gtk::ListBoxRow::builder()
             // Double-clicking inside the rename entry must not promote the row.
             .activatable(!renaming)
             .name(format!("task-{id}"))
-            .css_classes(["task-row"])
+            .css_classes(classes)
             .build();
         row.update_property(&[gtk::accessible::Property::Label(&task.title)]);
-        if is_current {
-            row.add_css_class("current");
-        }
+        // Every row can be picked up and dragged, and says so. GTK CSS has no
+        // `cursor` property, so it is a per-widget call.
+        row.set_cursor_from_name(Some("grab"));
         let content = gtk::Box::builder()
-            .spacing(8)
+            .spacing(style.gap())
             .css_classes(["row-box"])
             .build();
         row.set_child(Some(&content));
 
-        let text = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .hexpand(true)
-            .valign(gtk::Align::Center)
-            .build();
+        // Side's cards lead with the tag: they are the ones read out of order.
+        if style == RowStyle::SideCard {
+            if let Some(tag) = task.tag {
+                content.append(&chip_label(Some(tag)));
+            }
+        }
         if renaming {
-            text.append(&self.rename_entry(id));
+            content.append(&self.rename_entry(id));
         } else {
             let title = gtk::Label::builder()
                 .label(&task.title)
                 .xalign(0.0)
                 .hexpand(true)
+                .valign(gtk::Align::Center)
                 .ellipsize(pango::EllipsizeMode::End)
                 .css_classes(["row-title"])
                 .build();
-            if style == RowStyle::Board {
+            if let Some(lines) = style.wrap_lines() {
                 // Break inside words too, so one long URL cannot set the
-                // column's minimum width.
+                // quadrant's minimum width.
                 title.set_wrap(true);
                 title.set_wrap_mode(pango::WrapMode::WordChar);
-                title.set_lines(3);
+                title.set_lines(lines);
             }
-            text.append(&title);
+            content.append(&title);
         }
-        // Only the board still shows the current task as a row, so it carries
-        // the clock there.
-        if is_current {
-            let timer = gtk::Label::builder()
-                .xalign(0.0)
-                .css_classes(["timer", "monospace", "numeric"])
-                .build();
-            text.append(&timer);
-            self.timers.borrow_mut().push(timer);
+        if style != RowStyle::SideCard {
+            if let Some(tag) = task.tag {
+                content.append(&chip_label(Some(tag)));
+            }
         }
-        content.append(&text);
-
-        if let Some(tag) = task.tag {
-            content.append(&chip_label(tag));
-        }
-        if style != RowStyle::Board && !is_current {
+        if style.inline_buttons() {
             let this = self.clone();
             content.append(&icon_button(
                 "go-top-symbolic",
@@ -1752,20 +2067,9 @@ impl Ui {
             });
             content.append(&to_next);
         }
-        content.append(&self.task_menu(id, is_current, bucket, &["flat", "row-btn"]));
+        content.append(&self.task_menu(id, false, list.bucket, &["flat", "row-btn"]));
 
-        let drag = gtk::DragSource::builder()
-            .actions(gdk::DragAction::MOVE)
-            .build();
-        drag.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&id.to_value())));
-        // Ask the controller for its widget rather than capturing the row: a
-        // captured row would own the closure that owns the row.
-        drag.connect_drag_begin(|s, _| {
-            if let Some(w) = s.widget() {
-                s.set_icon(Some(&gtk::WidgetPaintable::new(Some(&w))), 0, 0);
-            }
-        });
-        row.add_controller(drag);
+        row.add_controller(task_drag_source());
         row
     }
 
@@ -2144,11 +2448,9 @@ impl Ui {
     fn visible_rows(&self) -> Vec<gtk::Widget> {
         let page = self.current_page();
         let mut widgets = std::collections::HashMap::new();
-        if page == Page::Queue {
-            if let Some(banner) = self.banner.borrow().as_ref() {
-                if let Some(id) = row_id(banner) {
-                    widgets.insert(id, banner.clone().upcast());
-                }
+        if let Some(hero) = self.heroes.borrow().iter().find(|h| h.page == page) {
+            if let Some(id) = row_id(&hero.root) {
+                widgets.insert(id, hero.root.clone().upcast());
             }
         }
         for bl in self
@@ -2233,14 +2535,20 @@ fn placeholder_label() -> gtk::Label {
         .build()
 }
 
-fn chip_label(tag: Tag) -> gtk::Label {
+/// A task's tag, in one letter. An untagged one shows an outlined dash rather
+/// than nothing, so the chip can be a control that is always there.
+fn chip_label(tag: Option<Tag>) -> gtk::Label {
     gtk::Label::builder()
         .label(match tag {
-            Tag::Work => "W",
-            Tag::Personal => "P",
+            Some(Tag::Work) => "W",
+            Some(Tag::Personal) => "P",
+            None => "–",
         })
         .valign(gtk::Align::Center)
-        .css_classes(["chip", tag.as_str()])
+        .css_classes(match tag {
+            Some(tag) => ["chip", tag.as_str()],
+            None => ["chip", "untagged"],
+        })
         .build()
 }
 
@@ -2321,6 +2629,65 @@ fn menu_separator() -> gtk::Separator {
     separator
 }
 
+/// Read the task at pickup time: a hero survives rebuilds and may now show a
+/// different task, or be empty. Asking the controller avoids a widget cycle.
+fn task_drag_source() -> gtk::DragSource {
+    let drag = gtk::DragSource::builder()
+        .actions(gdk::DragAction::MOVE)
+        .build();
+    drag.connect_prepare(|source, _, _| {
+        let id = row_id(&source.widget()?)?;
+        Some(gdk::ContentProvider::for_value(&id.to_value()))
+    });
+    drag.connect_drag_begin(|source, _| {
+        if let Some(widget) = source.widget() {
+            source.set_icon(Some(&pick_up(&widget)), 0, 0);
+        }
+    });
+    drag.connect_drag_end(|source, _, _| {
+        if let Some(widget) = source.widget() {
+            put_down(&widget);
+        }
+    });
+    drag
+}
+
+/// Pick a row up: the icon the drag carries away, and the fade left on the row
+/// it came from so the copy under the pointer is plainly the one being moved.
+/// The order is the point — a live paintable would take the fade with it and
+/// dim the card under the pointer too — so both happen here, together.
+fn pick_up(widget: &gtk::Widget) -> gdk::Paintable {
+    match still_picture(widget) {
+        Some(picture) => {
+            widget.add_css_class("dragging");
+            picture.upcast()
+        }
+        // Nothing drawn yet to picture, so nothing to spoil by fading either.
+        None => gtk::WidgetPaintable::new(Some(widget)).upcast(),
+    }
+}
+
+/// Put a row back down, however the drag ended. A drop and a pointer leaving
+/// clear the mark themselves, but a drag cancelled in place — Escape — emits
+/// neither, and a line left pointing nowhere would outlive the drag.
+fn put_down(widget: &gtk::Widget) {
+    widget.remove_css_class("dragging");
+    unmark();
+}
+
+/// A still picture of a widget, for a drag icon that has to keep looking like
+/// the row did when it was picked up. None before the widget has been drawn.
+fn still_picture(widget: &gtk::Widget) -> Option<gdk::Texture> {
+    let renderer = widget.native()?.renderer()?;
+    let snapshot = gtk::Snapshot::new();
+    gtk::WidgetPaintable::new(Some(widget)).snapshot(
+        &snapshot,
+        widget.width() as f64,
+        widget.height() as f64,
+    );
+    Some(renderer.render_texture(&snapshot.to_node()?, None))
+}
+
 /// Task rows carry their id in the widget name ("task-<id>").
 fn row_id(row: &impl IsA<gtk::Widget>) -> Option<u64> {
     row.widget_name().strip_prefix("task-")?.parse().ok()
@@ -2330,13 +2697,154 @@ fn is_ctrl(mods: gdk::ModifierType) -> bool {
     mods.contains(gdk::ModifierType::CONTROL_MASK)
 }
 
+/// What a drop target draws while a drag is over it. GTK offers no feedback of
+/// its own, so where the task would land has to be spelt out.
+enum Highlight {
+    /// Ring the target itself: the hero, or an empty bucket's placeholder.
+    Ring,
+    /// The target is a list: mark the row the task would land in front of.
+    Before,
+    /// The line after the last row the section shows — for the targets that
+    /// append. A section can hold more than one list (Next holds the Now tail
+    /// in front of its own rows), and which of them ends it depends on what is
+    /// in them, so the choice is made while the drag is over it.
+    End(Vec<glib::WeakRef<gtk::ListBox>>),
+    /// Append to Now: fill an empty hero, otherwise mark its queued tail.
+    NowTail {
+        hero: glib::WeakRef<gtk::Box>,
+        leading: glib::WeakRef<gtk::ListBox>,
+        trailing: glib::WeakRef<gtk::ListBox>,
+    },
+}
+
+/// `Highlight::End` over every list under one header, in the order shown.
+fn end_of(lists: &[gtk::ListBox]) -> Highlight {
+    Highlight::End(lists.iter().map(|list| list.downgrade()).collect())
+}
+
+thread_local! {
+    /// Where the drag is pointing right now. One drag means one mark, and
+    /// clearing it has to reach whatever was marked last — which is not always
+    /// something the target under the pointer can see. The Next quadrant holds
+    /// two lists in one body, so its end line and a row's line belong to
+    /// different widgets, and either can be the one left over.
+    static MARKED: RefCell<Vec<(gtk::Widget, &'static str)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn mark(widget: &impl IsA<gtk::Widget>, class: &'static str) {
+    widget.add_css_class(class);
+    MARKED.with(|marked| marked.borrow_mut().push((widget.clone().upcast(), class)));
+}
+
+fn unmark() {
+    MARKED.with(|marked| {
+        for (widget, class) in marked.borrow_mut().drain(..) {
+            widget.remove_css_class(class);
+        }
+    });
+}
+
+impl Highlight {
+    /// The list this highlight draws in, if it draws in one. `Before` never
+    /// holds its list: the list owns the controller that owns this, and holding
+    /// it back would be a cycle nothing could break.
+    fn list(&self, target: &gtk::Widget) -> Option<gtk::ListBox> {
+        match self {
+            Highlight::Ring | Highlight::NowTail { .. } => None,
+            Highlight::Before => target.downcast_ref::<gtk::ListBox>().cloned(),
+            Highlight::End(lists) => {
+                let shown: Vec<gtk::ListBox> =
+                    lists.iter().filter_map(glib::WeakRef::upgrade).collect();
+                // An empty list is zero pixels tall, so a line drawn on it
+                // would not show at all.
+                shown
+                    .iter()
+                    .rev()
+                    .find(|list| list.first_child().is_some())
+                    .cloned()
+            }
+        }
+    }
+
+    fn show(&self, target: &gtk::Widget, y: f64, dragged: Option<u64>) {
+        unmark();
+        if let Highlight::NowTail {
+            hero,
+            leading,
+            trailing,
+        } = self
+        {
+            if let Some(hero) = hero.upgrade().filter(|h| row_id(h).is_none()) {
+                mark(&hero, "drop-into");
+                return;
+            }
+            if let Some(list) = leading.upgrade().filter(|l| l.first_child().is_some()) {
+                mark(&list, "drop-end");
+            } else if let Some(row) = trailing.upgrade().and_then(|l| l.first_child()) {
+                mark(&row, "drop-before");
+            } else {
+                mark(target, "drop-into");
+            }
+            return;
+        }
+        let Some(list) = self.list(target) else {
+            mark(target, "drop-into");
+            return;
+        };
+        if matches!(self, Highlight::Before) {
+            if let Some(row) = anchor_at(&list, y) {
+                // Over the row it came from there is nothing to promise: the
+                // drop is a no-op, so it gets the fade and no line.
+                if row_id(&row) != dragged {
+                    mark(&row, "drop-before");
+                }
+                return;
+            }
+        }
+        // Anywhere else on a bucket: the task lands at the end.
+        mark(&list, "drop-end");
+    }
+}
+
+/// The row a drop at `y` would land in front of: the one under the pointer
+/// while the pointer is in its top half, the one after it below that, and none
+/// at all past the last row's middle — which means the end of the list.
+fn anchor_at(list: &gtk::ListBox, y: f64) -> Option<gtk::ListBoxRow> {
+    let row = list.row_at_y(y as i32)?;
+    let Some(bounds) = row.compute_bounds(list) else {
+        return Some(row);
+    };
+    if y < f64::from(bounds.y() + bounds.height() / 2.0) {
+        return Some(row);
+    }
+    row.next_sibling().and_downcast::<gtk::ListBoxRow>()
+}
+
 /// A drop target accepting a dragged task id; `f(id, target_widget, y)` returns
 /// whether the drop was handled.
-fn drop_target(f: impl Fn(u64, gtk::Widget, f64) -> bool + 'static) -> gtk::DropTarget {
+fn drop_target(
+    highlight: Highlight,
+    f: impl Fn(u64, gtk::Widget, f64) -> bool + 'static,
+) -> gtk::DropTarget {
     let target = gtk::DropTarget::new(u64::static_type(), gdk::DragAction::MOVE);
+    // Read the id while the pointer is still moving, so the feedback can tell
+    // which row the drag came from.
+    target.set_preload(true);
+    target.connect_motion(move |t, _x, y| {
+        if let Some(w) = t.widget() {
+            let dragged = t.value().and_then(|v| v.get::<u64>().ok());
+            highlight.show(&w, y, dragged);
+        }
+        gdk::DragAction::MOVE
+    });
+    target.connect_leave(|_| unmark());
     target.connect_drop(
         move |t, value, _x, y| match (value.get::<u64>(), t.widget()) {
-            (Ok(id), Some(w)) => f(id, w, y),
+            (Ok(id), Some(w)) => {
+                // A drop emits no leave of its own.
+                unmark();
+                f(id, w, y)
+            }
             _ => false,
         },
     );
@@ -2366,6 +2874,54 @@ mod tests {
         }
         for unknown in ["", "Board", "queue ", "nonsense", "add", "toggle"] {
             assert_eq!(Page::parse(unknown), Page::Queue, "{unknown}");
+        }
+    }
+
+    /// Which list a row is in decides how it is dressed, and two of the
+    /// board's four quadrants look nothing like each other. Nothing else
+    /// checks the mapping, so a swap here would silently reshape the page.
+    #[test]
+    fn row_style_dresses_each_bucket_for_the_page_it_is_on() {
+        let of = |page, bucket| RowStyle::of(placement::List { page, bucket });
+        // The queue is one card of one-line rows, whatever the bucket — except
+        // the Later shelf, which is dim and offers a way back out.
+        for bucket in [Bucket::Now, Bucket::Next, Bucket::Side] {
+            assert_eq!(of(Page::Queue, bucket), RowStyle::Queue);
+        }
+        assert_eq!(of(Page::Queue, Bucket::Later), RowStyle::Later);
+        // The board dresses every quadrant differently, and the Now tail wears
+        // Next's clothes because Next is the header it is listed under.
+        assert_eq!(of(Page::Board, Bucket::Side), RowStyle::SideCard);
+        assert_eq!(of(Page::Board, Bucket::Next), RowStyle::BoardRow);
+        assert_eq!(of(Page::Board, Bucket::Now), RowStyle::BoardRow);
+        assert_eq!(of(Page::Board, Bucket::Later), RowStyle::BoardLater);
+
+        for (style, lines, buttons, gap, class) in [
+            (RowStyle::Queue, None, true, 8, "queue-rows"),
+            (RowStyle::Later, None, true, 8, "later-rows"),
+            (RowStyle::SideCard, Some(2), false, 10, "side-cards"),
+            (RowStyle::BoardRow, Some(3), false, 8, "board-rows"),
+            (RowStyle::BoardLater, None, false, 8, "board-later-rows"),
+        ] {
+            assert_eq!(style.wrap_lines(), lines, "{style:?} title lines");
+            assert_eq!(style.inline_buttons(), buttons, "{style:?} inline buttons");
+            assert_eq!(style.gap(), gap, "{style:?} gap");
+            assert_eq!(style.css(), class, "{style:?} class");
+            // Every style's class is its own, or the stylesheet crosses wires.
+            assert_eq!(
+                [
+                    RowStyle::Queue,
+                    RowStyle::Later,
+                    RowStyle::SideCard,
+                    RowStyle::BoardRow,
+                    RowStyle::BoardLater,
+                ]
+                .into_iter()
+                .filter(|other| other.css() == class)
+                .count(),
+                1,
+                "{class} is shared"
+            );
         }
     }
 
