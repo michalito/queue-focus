@@ -875,6 +875,34 @@ impl Ui {
             quadrant.set_vexpand(y == 1);
             grid.attach(&quadrant, x, y, width, 1);
         }
+        // The Now heading appends into the tail shown under Next. Wire its
+        // feedback after every quadrant exists, so both boundary lists exist.
+        let header = self
+            .sections
+            .borrow()
+            .iter()
+            .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Now)
+            .unwrap()
+            .count
+            .parent()
+            .unwrap();
+        let lists = self.lists.borrow();
+        let find_list = |bucket| {
+            lists
+                .iter()
+                .find(|l| l.placement.page == Page::Board && l.placement.bucket == bucket)
+                .unwrap()
+                .list
+                .downgrade()
+        };
+        self.append_drop(
+            &header,
+            Bucket::Now,
+            Highlight::Between {
+                leading: find_list(Bucket::Now),
+                trailing: find_list(Bucket::Next),
+            },
+        );
         grid.upcast()
     }
 
@@ -899,8 +927,6 @@ impl Ui {
             let hero = self.make_hero(Page::Board, HeroStyle::Card, &["now-hero"]);
             hero.set_vexpand(true);
             quadrant.append(&hero);
-            // The heading appends behind the current task; the hero promotes.
-            self.append_drop(&head_box, bucket, Highlight::Ring);
             self.sections.borrow_mut().push(Section {
                 count,
                 placeholder: None,
@@ -2675,6 +2701,11 @@ enum Highlight {
     /// in front of its own rows), and which of them ends it depends on what is
     /// in them, so the choice is made while the drag is over it.
     End(Vec<glib::WeakRef<gtk::ListBox>>),
+    /// Append to the first of two lists sharing a section, before the second.
+    Between {
+        leading: glib::WeakRef<gtk::ListBox>,
+        trailing: glib::WeakRef<gtk::ListBox>,
+    },
 }
 
 /// `Highlight::End` over every list under one header, in the order shown.
@@ -2710,7 +2741,7 @@ impl Highlight {
     /// it back would be a cycle nothing could break.
     fn list(&self, target: &gtk::Widget) -> Option<gtk::ListBox> {
         match self {
-            Highlight::Ring => None,
+            Highlight::Ring | Highlight::Between { .. } => None,
             Highlight::Before => target.downcast_ref::<gtk::ListBox>().cloned(),
             Highlight::End(lists) => {
                 let shown: Vec<gtk::ListBox> =
@@ -2728,6 +2759,16 @@ impl Highlight {
 
     fn show(&self, target: &gtk::Widget, y: f64, dragged: Option<u64>) {
         unmark();
+        if let Highlight::Between { leading, trailing } = self {
+            if let Some(list) = leading.upgrade().filter(|l| l.first_child().is_some()) {
+                mark(&list, "drop-end");
+            } else if let Some(row) = trailing.upgrade().and_then(|l| l.first_child()) {
+                mark(&row, "drop-before");
+            } else {
+                mark(target, "drop-into");
+            }
+            return;
+        }
         let Some(list) = self.list(target) else {
             mark(target, "drop-into");
             return;

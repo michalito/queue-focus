@@ -465,6 +465,20 @@ fn drag_feedback() {
     };
     let (first_top, first_bottom) = band(&first);
     let (_, second_bottom) = band(&second);
+    let now_header = ui
+        .sections
+        .borrow()
+        .iter()
+        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Now)
+        .unwrap()
+        .count
+        .parent()
+        .unwrap();
+    // With no Now tail, appending to Now lands before the first Next row.
+    emit_motion(&now_header, 0.0);
+    assert!(first.has_css_class("drop-before"));
+    assert!(!now_header.has_css_class("drop-into"));
+    emit_leave(&now_header);
 
     // A row's top half means "in front of this one"; its bottom half means the
     // one after it. The line follows the pointer rather than piling up behind.
@@ -636,6 +650,10 @@ fn drag_feedback() {
     );
     assert!(!list(Bucket::Next).has_css_class("drop-end"));
     emit_leave(&space);
+    emit_motion(&now_header, 0.0);
+    assert!(tail_list.has_css_class("drop-end"));
+    assert!(!now_header.has_css_class("drop-into"));
+    emit_leave(&now_header);
     ui.update(|s| s.move_to(tail, Bucket::Later, None)).unwrap();
     settle();
     emit_motion(&space, 0.0);
@@ -656,6 +674,9 @@ fn drag_feedback() {
     emit_motion(&section, 0.0);
     assert!(section.has_css_class("drop-into"));
     emit_leave(&section);
+    emit_motion(&now_header, 0.0);
+    assert!(now_header.has_css_class("drop-into"));
+    emit_leave(&now_header);
 
     ui.win.borrow().as_ref().unwrap().destroy();
     std::fs::remove_dir_all(dir).unwrap();
