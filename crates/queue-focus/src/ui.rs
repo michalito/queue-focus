@@ -898,7 +898,15 @@ impl Ui {
         self.append_drop(
             &header,
             Bucket::Now,
-            Highlight::Between {
+            Highlight::NowTail {
+                hero: self
+                    .heroes
+                    .borrow()
+                    .iter()
+                    .find(|h| h.page == Page::Board)
+                    .unwrap()
+                    .root
+                    .downgrade(),
                 leading: find_list(Bucket::Now),
                 trailing: find_list(Bucket::Next),
             },
@@ -2701,8 +2709,9 @@ enum Highlight {
     /// in front of its own rows), and which of them ends it depends on what is
     /// in them, so the choice is made while the drag is over it.
     End(Vec<glib::WeakRef<gtk::ListBox>>),
-    /// Append to the first of two lists sharing a section, before the second.
-    Between {
+    /// Append to Now: fill an empty hero, otherwise mark its queued tail.
+    NowTail {
+        hero: glib::WeakRef<gtk::Box>,
         leading: glib::WeakRef<gtk::ListBox>,
         trailing: glib::WeakRef<gtk::ListBox>,
     },
@@ -2741,7 +2750,7 @@ impl Highlight {
     /// it back would be a cycle nothing could break.
     fn list(&self, target: &gtk::Widget) -> Option<gtk::ListBox> {
         match self {
-            Highlight::Ring | Highlight::Between { .. } => None,
+            Highlight::Ring | Highlight::NowTail { .. } => None,
             Highlight::Before => target.downcast_ref::<gtk::ListBox>().cloned(),
             Highlight::End(lists) => {
                 let shown: Vec<gtk::ListBox> =
@@ -2759,7 +2768,16 @@ impl Highlight {
 
     fn show(&self, target: &gtk::Widget, y: f64, dragged: Option<u64>) {
         unmark();
-        if let Highlight::Between { leading, trailing } = self {
+        if let Highlight::NowTail {
+            hero,
+            leading,
+            trailing,
+        } = self
+        {
+            if let Some(hero) = hero.upgrade().filter(|h| row_id(h).is_none()) {
+                mark(&hero, "drop-into");
+                return;
+            }
             if let Some(list) = leading.upgrade().filter(|l| l.first_child().is_some()) {
                 mark(&list, "drop-end");
             } else if let Some(row) = trailing.upgrade().and_then(|l| l.first_child()) {

@@ -678,6 +678,23 @@ fn drag_feedback() {
     assert!(now_header.has_css_class("drop-into"));
     emit_leave(&now_header);
 
+    // With no current task, an append to Now fills the hero, not the tail.
+    ui.update(|s| {
+        let current = s.current().unwrap().id;
+        s.remove(current);
+        s.add("waiting in Next", Bucket::Next, None, false);
+    })
+    .unwrap();
+    settle();
+    let first_next = list(Bucket::Next).row_at_index(0).unwrap();
+    emit_motion(&now_header, 0.0);
+    assert!(hero.has_css_class("drop-into"));
+    assert!(!first_next.has_css_class("drop-before"));
+    let to_now = state.store().in_bucket(Bucket::Later).next().unwrap().id;
+    emit_drop(&now_header, to_now, 0.0);
+    assert_eq!(state.store().current().unwrap().id, to_now);
+    assert!(!hero.has_css_class("drop-into"));
+
     ui.win.borrow().as_ref().unwrap().destroy();
     std::fs::remove_dir_all(dir).unwrap();
 }
