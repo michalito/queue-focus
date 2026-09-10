@@ -289,6 +289,15 @@ fn placement_drops_and_focus() {
     emit_drop(&hero(Page::Board), tail, 0.0);
     assert_eq!(state.store().current().unwrap().id, tail);
     assert_eq!(rendered_ids(), [tail, side, next, current, later]);
+    // The Now heading queues behind the current task, unlike the hero.
+    let now_header = board_section(Bucket::Now).parent().unwrap();
+    emit_drop(&now_header, side, 0.0);
+    assert_eq!(state.store().current().unwrap().id, tail);
+    assert_eq!(rendered_ids(), [tail, next, current, side, later]);
+    assert_eq!(board_section(Bucket::Now).text(), "1");
+    assert_eq!(board_section(Bucket::Next).text(), "3");
+    ui.update(|s| s.move_to(side, Bucket::Side, None)).unwrap();
+    settle();
     ui.row_for(side).unwrap().grab_focus();
     ui.update(|s| s.remove(side)).unwrap();
     assert_eq!(rendered_ids(), [tail, next, current, later]);

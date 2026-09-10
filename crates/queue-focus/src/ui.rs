@@ -899,6 +899,8 @@ impl Ui {
             let hero = self.make_hero(Page::Board, HeroStyle::Card, &["now-hero"]);
             hero.set_vexpand(true);
             quadrant.append(&hero);
+            // The heading appends behind the current task; the hero promotes.
+            self.append_drop(&head_box, bucket, Highlight::Ring);
             self.sections.borrow_mut().push(Section {
                 count,
                 placeholder: None,
