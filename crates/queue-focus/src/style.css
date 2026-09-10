@@ -483,7 +483,8 @@ popover.task-menu > contents {
 
 /* GTK draws none of this itself: where the task came from, and where it would
    land if you let go now. */
-.task-row.dragging {
+.task-row.dragging,
+.now-hero.dragging {
   opacity: 0.35;
 }
 .task-row.drop-before {

@@ -25,6 +25,22 @@ fn emit_drop(widget: &impl IsA<gtk::Widget>, id: u64, y: f64) {
     settle();
 }
 
+fn drag_payload(widget: &impl IsA<gtk::Widget>) -> Option<u64> {
+    let controllers = widget.observe_controllers();
+    let source = (0..controllers.n_items())
+        .find_map(|i| controllers.item(i)?.downcast::<gtk::DragSource>().ok())
+        .expect("task widget has a drag source");
+    source
+        .emit_by_name::<Option<gdk::ContentProvider>>("prepare", &[&0.0f64, &0.0f64])
+        .map(|provider| {
+            provider
+                .value(u64::static_type())
+                .unwrap()
+                .get::<u64>()
+                .unwrap()
+        })
+}
+
 /// Drive the pointer over a drop target the way a real drag would.
 fn emit_motion(widget: &impl IsA<gtk::Widget>, y: f64) {
     drop_target_of(widget).emit_by_name::<gdk::DragAction>("motion", &[&0.0f64, &y]);
@@ -329,11 +345,31 @@ fn hero_dressing() {
         assert!(has_class(hero, "timer-btn"));
     }
 
-    // Emptied, each says how to fill itself — and stops naming what was there.
+    // A Board hero supplies the current task, including after a promotion.
     let current = state.store().current().unwrap().id;
+    assert_eq!(drag_payload(&card), Some(current));
+    let queued = state.store().in_bucket(Bucket::Next).next().unwrap().id;
+    ui.update(|s| s.promote(queued)).unwrap();
+    settle();
+    assert_eq!(drag_payload(&card), Some(queued));
+    let side_header = ui
+        .sections
+        .borrow()
+        .iter()
+        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Side)
+        .unwrap()
+        .count
+        .parent()
+        .unwrap();
+    emit_drop(&side_header, drag_payload(&card).unwrap(), 0.0);
+    assert_eq!(state.store().get(queued).unwrap().bucket, Bucket::Side);
+    assert_eq!(drag_payload(&card), Some(current));
+
+    // Emptied, each says how to fill itself and refuses to start a drag.
     ui.update(|s| s.remove(current)).unwrap();
     settle();
     assert!(row_id(&card).is_none());
+    assert_eq!(drag_payload(&card), None);
     for hero in [&band, &card] {
         assert!(hero.has_css_class("empty"));
         assert!(!hero.is_focusable());

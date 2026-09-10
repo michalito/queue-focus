@@ -1690,6 +1690,9 @@ impl Ui {
             this.update(|s| Destination::Banner.apply(s, id))
                 .unwrap_or(false)
         }));
+        if page == Page::Board {
+            root.add_controller(task_drag_source());
+        }
         self.heroes.borrow_mut().push(Hero {
             page,
             style,
@@ -1726,6 +1729,7 @@ impl Ui {
             root.add_css_class("empty");
             // Not a task, so not a stop for the keyboard either.
             root.set_widget_name("hero");
+            root.set_cursor_from_name(None);
             root.set_focusable(false);
             // The board's header names the quadrant already.
             if style == HeroStyle::Banner {
@@ -1758,6 +1762,9 @@ impl Ui {
         // The hero stands in for the current task's row: j/k reach it, and
         // `row_id` finds it, so d/t/r act on it like any other task.
         root.set_widget_name(&format!("task-{id}"));
+        if page == Page::Board {
+            root.set_cursor_from_name(Some("grab"));
+        }
         root.set_focusable(true);
         root.update_property(&[gtk::accessible::Property::Label(&task.title)]);
 
@@ -2006,23 +2013,7 @@ impl Ui {
         }
         content.append(&self.task_menu(id, false, list.bucket, &["flat", "row-btn"]));
 
-        let drag = gtk::DragSource::builder()
-            .actions(gdk::DragAction::MOVE)
-            .build();
-        drag.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&id.to_value())));
-        // Ask the controller for its widget rather than capturing the row: a
-        // captured row would own the closure that owns the row.
-        drag.connect_drag_begin(|s, _| {
-            if let Some(w) = s.widget() {
-                s.set_icon(Some(&pick_up(&w)), 0, 0);
-            }
-        });
-        drag.connect_drag_end(|s, _, _| {
-            if let Some(w) = s.widget() {
-                put_down(&w);
-            }
-        });
-        row.add_controller(drag);
+        row.add_controller(task_drag_source());
         row
     }
 
@@ -2580,6 +2571,29 @@ fn menu_separator() -> gtk::Separator {
     let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
     separator.add_css_class("menu-sep");
     separator
+}
+
+/// Read the task at pickup time: a hero survives rebuilds and may now show a
+/// different task, or be empty. Asking the controller avoids a widget cycle.
+fn task_drag_source() -> gtk::DragSource {
+    let drag = gtk::DragSource::builder()
+        .actions(gdk::DragAction::MOVE)
+        .build();
+    drag.connect_prepare(|source, _, _| {
+        let id = row_id(&source.widget()?)?;
+        Some(gdk::ContentProvider::for_value(&id.to_value()))
+    });
+    drag.connect_drag_begin(|source, _| {
+        if let Some(widget) = source.widget() {
+            source.set_icon(Some(&pick_up(&widget)), 0, 0);
+        }
+    });
+    drag.connect_drag_end(|source, _, _| {
+        if let Some(widget) = source.widget() {
+            put_down(&widget);
+        }
+    });
+    drag
 }
 
 /// Pick a row up: the icon the drag carries away, and the fade left on the row
