@@ -48,7 +48,7 @@ The Queue view is a narrow window in three fixed bands.
 
 The Board view shows the same tasks in four quadrants. Use it when you need to move several tasks.
 
-1. Now takes the wide top left as a panel: the tag, the timer, the title in full, a done button, and a menu. It shows the one task you are doing. Dropping a task on it makes that task current. When Now is empty it reads `empty — drop a task here`.
+1. Now takes the wide top left as a panel: the tag, the timer, the title in full (scrollable when long), a done button, and a menu. It shows the one task you are doing. Dropping a task on it makes that task current. When Now is empty it reads `empty — drop a task here`.
 
 2. Side takes the narrow top right, one card per task, and grows to a point before it scrolls.
 

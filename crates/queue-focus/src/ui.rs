@@ -1807,8 +1807,12 @@ impl Ui {
                 .wrap(true)
                 // Break inside words: a bare URL must not widen the window.
                 .wrap_mode(pango::WrapMode::WordChar)
-                .lines(3)
-                .ellipsize(pango::EllipsizeMode::End)
+                .lines(if style == HeroStyle::Banner { 3 } else { -1 })
+                .ellipsize(if style == HeroStyle::Banner {
+                    pango::EllipsizeMode::End
+                } else {
+                    pango::EllipsizeMode::None
+                })
                 .css_classes(["current-title"])
                 .build()
                 .upcast()
@@ -1827,8 +1831,17 @@ impl Ui {
             }
             // The board spells the title out large, over a line of actions.
             HeroStyle::Card => {
-                title.set_vexpand(true);
-                root.append(&title);
+                // Keep all of a long title reachable without making the top
+                // quadrant taller than the window and hiding Next/Later.
+                let title_scroll = gtk::ScrolledWindow::builder()
+                    .hscrollbar_policy(gtk::PolicyType::Never)
+                    .min_content_height(60)
+                    .max_content_height(196)
+                    .propagate_natural_height(true)
+                    .vexpand(true)
+                    .child(&title)
+                    .build();
+                root.append(&title_scroll);
                 menu.set_hexpand(true);
                 menu.set_halign(gtk::Align::End);
                 // 4px on top of the panel's 8px gap: the actions sit a little

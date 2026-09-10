@@ -354,6 +354,27 @@ fn hero_dressing() {
         assert!(has_class(hero, "timer-btn"));
     }
 
+    // Board titles remain complete even when the Queue banner truncates them.
+    let long_title = "W".repeat(256);
+    let current_id = state.store().current().unwrap().id;
+    ui.update(|s| s.rename(current_id, &long_title)).unwrap();
+    settle();
+    let title = find_class(&card, "current-title")
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert_eq!(title.text(), long_title);
+    assert_eq!(title.ellipsize(), pango::EllipsizeMode::None);
+    assert!(!title.layout().is_ellipsized());
+    assert!(title.layout().line_count() > 3);
+    assert!(card.height() < ui.win.borrow().as_ref().unwrap().height());
+    let scroll = title
+        .ancestor(gtk::ScrolledWindow::static_type())
+        .unwrap()
+        .downcast::<gtk::ScrolledWindow>()
+        .unwrap();
+    assert!(scroll.vadjustment().upper() > scroll.vadjustment().page_size());
+
     // A Board hero supplies the current task, including after a promotion.
     let current = state.store().current().unwrap().id;
     assert_eq!(drag_payload(&card), Some(current));
