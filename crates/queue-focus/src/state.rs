@@ -165,26 +165,25 @@ impl State {
     /// Complete the current task and remember it for `undo_complete`.
     pub fn complete_current(&self) -> io::Result<UpdateOutcome<Option<Task>>> {
         let outcome = self.update(|s| s.complete_current())?;
-        Ok(outcome.map(|completed| {
-            if let Some(completed) = &completed {
-                *self.undo.borrow_mut() = Some(LastCompletion {
-                    completed: completed.clone(),
-                    revision: self.revision.get(),
-                });
-            }
-            completed.map(|c| c.task)
-        }))
+        Ok(outcome.map(|completed| self.remember(completed)))
     }
 
-    /// Mark a task done: the current task is completed (pulling from Next,
-    /// reversible), any other task is simply deleted.
+    /// Mark a task done and remember it for `undo_complete`: the current task
+    /// is completed (pulling from Next), any other task is simply deleted.
     pub fn complete(&self, id: u64) -> io::Result<UpdateOutcome<bool>> {
-        let is_current = self.store().current().is_some_and(|t| t.id == id);
-        if is_current {
-            self.complete_current().map(|o| o.map(|t| t.is_some()))
-        } else {
-            self.update(|s| s.remove(id))
-        }
+        let outcome = self.update(|s| s.complete(id))?;
+        Ok(outcome.map(|completed| self.remember(completed).is_some()))
+    }
+
+    /// Keep a completion for `undo_complete`; the task it removed is returned.
+    fn remember(&self, completed: Option<Completed>) -> Option<Task> {
+        let completed = completed?;
+        let task = completed.task.clone();
+        *self.undo.borrow_mut() = Some(LastCompletion {
+            completed,
+            revision: self.revision.get(),
+        });
+        Some(task)
     }
 
     /// Reverse the completion of task `id`. `false` when that is not the last
@@ -376,6 +375,34 @@ mod tests {
             "undo is persisted like any other change"
         );
         assert!(!state.undo_complete(a).unwrap().into_value());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn undo_puts_a_deleted_side_task_back_in_place() {
+        let (dir, state) = writable_state("undo-side");
+        let now = state
+            .update(|s| s.add("now", Bucket::Now, None, false))
+            .unwrap()
+            .into_value();
+        let first = state
+            .update(|s| s.add("first", Bucket::Side, None, false))
+            .unwrap()
+            .into_value();
+        let second = state
+            .update(|s| s.add("second", Bucket::Side, None, false))
+            .unwrap()
+            .into_value();
+
+        assert!(state.complete(first).unwrap().into_value());
+        assert_eq!(ids(&state, Bucket::Side), vec![second]);
+        assert_eq!(state.store().current().map(|t| t.id), Some(now));
+
+        assert!(state.undo_complete(first).unwrap().into_value());
+        assert_eq!(ids(&state, Bucket::Side), vec![first, second]);
+        assert_eq!(state.store().current().map(|t| t.id), Some(now));
+        assert!(!state.undo_complete(first).unwrap().into_value());
 
         fs::remove_dir_all(dir).unwrap();
     }

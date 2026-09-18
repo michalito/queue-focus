@@ -1,4 +1,10 @@
 // Queue Focus — top-bar indicator talking to the queue-focus service over D-Bus.
+//
+// The panel shows the current task: a tag dot, the title, and its clock as a
+// pill that pauses the clock when clicked. The menu is a focus card for that
+// task on the left and the queue it competes with on the right: the rest of
+// Now, then Side. Next and Later are left to the Queue and Board views.
+import Atk from 'gi://Atk';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
@@ -17,8 +23,9 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const APP_NAME = 'Queue Focus';
 const APP_ICON = 'org.queuefocus.QueueFocus-symbolic';
-// How many Next tasks the menu lists before summarising the rest.
-const NEXT_PREVIEW = 8;
+// How long the menu offers to undo a completion made from it.
+const UNDO_MS = 8000;
+const PAUSE_GLYPH = '❚❚';
 // gschema key → what to do when pressed.
 const KEYBINDINGS = {
     'toggle-queue': ind => ind.call('Show', 'toggle'),
@@ -26,13 +33,53 @@ const KEYBINDINGS = {
     'show-board': ind => ind.call('Show', 'board'),
     'complete-current': ind => ind.completeCurrent(),
 };
+const {CENTER, END} = Clutter.ActorAlign;
 
-/** "12m" or "1h02"; a paused task keeps the time it had and shows ⏸. */
+/** "12m" or "1h02" on the clock; a paused task keeps the time it had. */
 function elapsed(startedAt, pausedAt) {
     const s = Math.max(0, (pausedAt || Math.floor(Date.now() / 1000)) - startedAt);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-    const t = h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}m`;
-    return pausedAt ? `${t} ⏸` : t;
+    return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}m`;
+}
+
+/** The clock as the top bar shows it: the pause glyph leads. */
+function panelClock(task) {
+    const t = elapsed(task.started_at, task.paused_at);
+    return task.paused_at ? `${PAUSE_GLYPH} ${t}` : t;
+}
+
+/** The clock as the menu's card shows it: the pause glyph trails. */
+function cardClock(task) {
+    const t = elapsed(task.started_at, task.paused_at);
+    return task.paused_at ? `${t} ${PAUSE_GLYPH}` : t;
+}
+
+function label(text, styleClass, props = {}) {
+    return new St.Label({text, style_class: styleClass, y_align: CENTER, ...props});
+}
+
+/** A label that shortens with an ellipsis rather than widening its row. */
+function ellipsized(actor) {
+    actor.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+    return actor;
+}
+
+function button(text, styleClass, onClick, props = {}) {
+    const b = new St.Button({label: text, style_class: styleClass, can_focus: true, ...props});
+    b.connect('clicked', onClick);
+    return b;
+}
+
+function chip(tag) {
+    return label(tag === 'work' ? 'W' : 'P', `qf-chip qf-chip-${tag}`);
+}
+
+/** Shell 48 still spells the orientation as a boolean. */
+function column(styleClass, props = {}) {
+    const box = new St.BoxLayout({style_class: styleClass, ...props});
+    if ('orientation' in box) box.orientation = Clutter.Orientation.VERTICAL;
+    else box.vertical = true;
+    return box;
 }
 
 const Indicator = GObject.registerClass(
@@ -52,17 +99,45 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._focusId = 0;
         this._tickId = 0;
         this._source = null;
-        // The notification offering to undo the latest completion, if still shown.
+        // The latest completion, while it can still be undone from here:
+        // `{id, title}` for UNDO_MS, and the notification offering it when
+        // the menu was closed at the time.
+        this._undo = null;
+        this._undoId = 0;
         this._doneNotification = null;
+        // The card's clock in the menu currently built, if the card has one.
+        this._cardClock = null;
 
         const box = new St.BoxLayout({style_class: 'qf-box'});
-        this._dot = new St.Label({text: '●', style_class: 'qf-dot', y_align: Clutter.ActorAlign.CENTER});
-        this._label = new St.Label({text: '…', style_class: 'qf-label', y_align: Clutter.ActorAlign.CENTER});
-        this._label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        this._timer = new St.Label({text: '', style_class: 'qf-timer', y_align: Clutter.ActorAlign.CENTER});
+        this._dot = label('●', 'qf-dot qf-dot-none');
+        this._label = ellipsized(label('…', 'qf-label'));
+        this._clock = label('', 'qf-clock');
+        // The clock is a pause button living inside the panel button. It takes
+        // the press itself so the panel button never turns it into a menu
+        // toggle. A plain reactive bin rather than an St.Button, whose own
+        // click handling differs between Shell 48 and 50.
+        this._pill = new St.Bin({
+            style_class: 'qf-pill',
+            child: this._clock,
+            reactive: true,
+            track_hover: true,
+            y_align: CENTER,
+            accessible_role: Atk.Role.PUSH_BUTTON,
+            accessible_name: 'Pause',
+        });
+        this._pill.connect('button-press-event', (_actor, event) => {
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY) return Clutter.EVENT_PROPAGATE;
+            this.togglePause();
+            return Clutter.EVENT_STOP;
+        });
+        this._pill.connect('touch-event', (_actor, event) => {
+            if (event.type() !== Clutter.EventType.TOUCH_BEGIN) return Clutter.EVENT_PROPAGATE;
+            this.togglePause();
+            return Clutter.EVENT_STOP;
+        });
         box.add_child(this._dot);
         box.add_child(this._label);
-        box.add_child(this._timer);
+        box.add_child(this._pill);
         this.add_child(box);
 
         this._connection = connectQueue({
@@ -73,7 +148,13 @@ class QueueFocusIndicator extends PanelMenu.Button {
         });
 
         this.menu.connect('open-state-changed', (_m, open) => {
-            if (open && !this._quickAddPending) this._buildMenu(true);
+            if (open) {
+                if (!this._quickAddPending) this._buildMenu(true);
+                return;
+            }
+            // A closed menu's clock is nobody's business until it reopens.
+            this._cardClock = null;
+            this._updateClocks();
         });
         // PopupMenu refuses to open while empty, so populate it before the
         // first open-state-changed signal can ever arrive.
@@ -84,33 +165,37 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     _apply(state) {
         this._state = state;
-        const cur = this._state?.current ?? null;
-        for (const c of ['qf-dot-work', 'qf-dot-personal', 'qf-dot-none']) this._dot.remove_style_class_name(c);
-        this._dot.add_style_class_name(cur?.tag ? `qf-dot-${cur.tag}` : 'qf-dot-none');
-        this._label.text = cur ? cur.title : (this._state ? 'no task' : 'queue-focus');
-        this._updateTimer();
-        if (this.menu.isOpen && !this._quickAddPending) this._buildMenu();
+        const cur = state?.current ?? null;
+        this._dot.style_class = `qf-dot qf-dot-${cur?.tag ?? 'none'}`;
+        this._label.text = cur ? cur.title : (state ? 'no task' : 'queue-focus');
+        // A rebuilt menu repaints the clocks itself.
+        if (!this._refreshMenu()) this._updateClocks();
     }
 
     _applySettings(settings) {
         this._prefs = settings;
-        this._updateTimer();
+        this._updateClocks();
     }
 
-    /** Show the clock, then wake up right after its next minute boundary. */
-    _updateTimer() {
+    /** Show the clocks, then wake up right after their next minute boundary. */
+    _updateClocks() {
         this._cancelTick();
         const cur = this._state?.current;
-        const wanted = this._prefs.show_timer !== false;
-        const showing = wanted && !!cur?.started_at;
-        this._timer.text = showing ? elapsed(cur.started_at, cur.paused_at) : '';
-        // An empty label still carries its margin, so take it out of the box.
-        this._timer.visible = showing;
-        if (!showing || cur.paused_at) return;
+        const timed = !!cur?.started_at;
+        const paused = timed && !!cur.paused_at;
+        const showing = timed && this._prefs.show_timer !== false;
+        this._clock.text = showing ? panelClock(cur) : '';
+        // An empty pill still carries its padding, so take it out of the box.
+        this._pill.visible = showing;
+        this._pill.style_class = paused ? 'qf-pill qf-pill-paused' : 'qf-pill';
+        this._pill.accessible_name = paused ? 'Resume' : 'Pause';
+        this._label.style_class = paused ? 'qf-label qf-label-paused' : 'qf-label';
+        if (this._cardClock) this._cardClock.text = timed ? cardClock(cur) : '';
+        if (!timed || paused || (!showing && !this._cardClock)) return;
         const secs = Math.max(0, Math.floor(Date.now() / 1000) - cur.started_at);
         this._tickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60 - (secs % 60), () => {
             this._tickId = 0;
-            this._updateTimer();
+            this._updateClocks();
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -135,7 +220,19 @@ class QueueFocusIndicator extends PanelMenu.Button {
         Main.notifyError(APP_NAME, err.message);
     }
 
-    /** Complete the current task; the notification offers to undo that completion. */
+    /** Pause or resume the current task's clock. */
+    togglePause() {
+        this._dropUndo();
+        this.call('TogglePause');
+    }
+
+    /** Make a listed task the current one. */
+    promote(task) {
+        this._dropUndo();
+        this.call('Promote', task.id);
+    }
+
+    /** Complete the current task, then offer to undo that. */
     completeCurrent() {
         this._connection.request('CompleteCurrent', [], (res, err) => {
             if (err) {
@@ -147,23 +244,69 @@ class QueueFocusIndicator extends PanelMenu.Button {
                 this._notify('Nothing in Now');
                 return;
             }
-            // Only the latest completion can be undone: retire the earlier offer.
-            this._doneNotification?.destroy();
-            this._doneNotification = this._notify('Done', title,
-                {label: 'Undo', activate: () => this._undoComplete(id)});
-            this._doneNotification.connect('destroy', notification => {
-                if (this._doneNotification === notification) this._doneNotification = null;
-            });
+            this._offerUndo(id, title);
         });
     }
 
-    _undoComplete(id) {
+    /** Mark a listed task done, then offer to undo that. */
+    completeTask(task) {
+        this._connection.request('Complete', [task.id], (_res, err) => {
+            if (err) {
+                this._fail('Complete', err);
+                return;
+            }
+            this._offerUndo(task.id, task.title);
+        });
+    }
+
+    /**
+     * Offer to undo the completion just made. The menu shows the offer while
+     * it is open; a completion made from a shortcut is offered where the user
+     * is looking instead, in a notification. Only the latest completion can
+     * be undone, so an earlier offer is retired first.
+     */
+    _offerUndo(id, title) {
+        this._dropUndo();
+        this._undo = {id, title};
+        this._undoId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, UNDO_MS, () => {
+            this._undoId = 0;
+            this._undo = null;
+            this._refreshMenu();
+            return GLib.SOURCE_REMOVE;
+        });
+        if (this.menu.isOpen) {
+            this._refreshMenu();
+            return;
+        }
+        this._doneNotification = this._notify('Done', title,
+            {label: 'Undo', activate: () => this.undoComplete(id)});
+        this._doneNotification.connect('destroy', notification => {
+            if (this._doneNotification === notification) this._doneNotification = null;
+        });
+    }
+
+    /**
+     * Withdraw the offer: it was taken, it timed out, or the queue changed
+     * again from here, which the service would refuse to undo across anyway.
+     */
+    _dropUndo() {
+        if (this._undoId) {
+            GLib.source_remove(this._undoId);
+            this._undoId = 0;
+        }
+        this._undo = null;
+        this._doneNotification?.destroy();
+    }
+
+    undoComplete(id) {
         this._connection.request('UndoComplete', [id], (res, err) => {
             if (err) {
                 this._fail('UndoComplete', err);
                 return;
             }
             if (!res[0]) this._notify('Nothing to undo', 'The queue changed since.');
+            this._dropUndo();
+            this._refreshMenu();
         });
     }
 
@@ -225,32 +368,11 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._focusId = 0;
     }
 
-    _taskItem(task, hint, onActivate) {
-        const item = new PopupMenu.PopupBaseMenuItem();
-        if (task.tag) {
-            const chip = new St.Label({
-                text: task.tag === 'work' ? 'W' : 'P',
-                style_class: `qf-chip qf-chip-${task.tag}`,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            item.add_child(chip);
-        }
-        const label = new St.Label({text: task.title, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        item.add_child(label);
-        item.add_child(new St.Label({text: hint, style_class: 'qf-hint', y_align: Clutter.ActorAlign.CENTER}));
-        item.connect('activate', onActivate);
-        return this._focusable(`task:${task.id}`, item);
-    }
-
-    _promoteItem(task) {
-        return this._taskItem(task, '↑', () => this.call('Promote', task.id));
-    }
-
-    _section(title) {
-        const item = new PopupMenu.PopupMenuItem(title, {reactive: false, can_focus: false});
-        item.label.add_style_class_name('qf-section');
-        return item;
+    /** Rebuild the open menu after the queue, or the undo on offer, changed. */
+    _refreshMenu() {
+        if (!this.menu.isOpen || this._quickAddPending) return false;
+        this._buildMenu();
+        return true;
     }
 
     _buildMenu(fresh = false) {
@@ -261,10 +383,135 @@ class QueueFocusIndicator extends PanelMenu.Button {
         const draft = this._entry?.get_text() ?? '';
         this._focusTargets = new Map();
         this._entry = null;
+        this._cardClock = null;
         this.menu.removeAll();
-        const st = this._state;
 
-        const entryItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        // One inert item holds the whole layout; the menu's own keyboard
+        // navigation still works between the focusable actors inside it.
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'qf-menu'});
+        const columns = new St.BoxLayout({style_class: 'qf-columns', x_expand: true});
+        columns.add_child(this._focusColumn());
+        columns.add_child(this._queueColumn(draft));
+        item.add_child(columns);
+        this.menu.addMenuItem(item);
+        this._updateClocks();
+        this._restoreFocus(focusKey);
+    }
+
+    /** Left: the current task as a card, its actions, and the view buttons. */
+    _focusColumn() {
+        const st = this._state;
+        const cur = st?.current ?? null;
+        const accent = `qf-accent-${cur?.tag ?? 'none'}`;
+        const paused = !!cur?.paused_at;
+        const col = column('qf-left');
+        col.add_child(this._card(cur, accent, paused));
+
+        if (cur) {
+            const actions = new St.BoxLayout({style_class: 'qf-actions'});
+            actions.add_child(this._focusable('done',
+                button('✓ Done', `qf-btn qf-primary ${accent}`, () => this.completeCurrent(), {x_expand: true})));
+            actions.add_child(this._focusable('pause',
+                button(paused ? '▶ Resume' : `${PAUSE_GLYPH} Pause`, 'qf-btn qf-secondary',
+                    () => this.togglePause(), {x_expand: true})));
+            col.add_child(actions);
+        } else if (!st) {
+            col.add_child(this._focusable('start',
+                button('Start the service', 'qf-btn qf-secondary', () => this._connection.refresh())));
+        }
+
+        if (this._undo) {
+            const {id, title} = this._undo;
+            const row = new St.BoxLayout({style_class: 'qf-undo'});
+            row.add_child(ellipsized(label(`Done · ${title}`, 'qf-undo-text', {x_expand: true})));
+            row.add_child(this._focusable('undo', button('↶ Undo', 'qf-undo-btn', () => this.undoComplete(id))));
+            col.add_child(row);
+        }
+
+        col.add_child(this._footer());
+        return col;
+    }
+
+    /** The current task, washed with its tag's accent: NOW, title, clock. */
+    _card(cur, accent, paused) {
+        const card = column(`qf-card ${accent}`);
+        const head = new St.BoxLayout({style_class: 'qf-card-head'});
+        head.add_child(label('NOW', 'qf-section'));
+        if (cur?.tag) head.add_child(chip(cur.tag));
+        if (paused) head.add_child(label('PAUSED', 'qf-paused', {x_expand: true, x_align: END}));
+        card.add_child(head);
+        if (!cur) {
+            const hint = this._state ? 'Nothing in Now.\nPick one from Side →\nor add one with !' : 'The service is not running.';
+            card.add_child(label(hint, 'qf-card-empty', {y_expand: true}));
+            return card;
+        }
+        const title = new St.Label({text: cur.title, style_class: 'qf-card-title'});
+        title.clutter_text.line_wrap = true;
+        title.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        card.add_child(title);
+        if (cur.started_at) {
+            this._cardClock = label('', `qf-card-clock${paused ? ' qf-card-clock-paused' : ''}`,
+                {y_expand: true, y_align: END});
+            card.add_child(this._cardClock);
+        }
+        return card;
+    }
+
+    /** The view buttons along the bottom of the left column. */
+    _footer() {
+        const row = new St.BoxLayout({style_class: 'qf-footer', y_expand: true, y_align: END});
+        const open = (text, view, styleClass = 'qf-open-btn', props = {}) => this._focusable(`open:${view}`,
+            button(text, styleClass, () => {
+                this.call('Show', view);
+                this.menu.close();
+            }, props));
+        row.add_child(open('Queue', 'queue'));
+        row.add_child(open('Board', 'board'));
+        row.add_child(open('⚙', 'settings', 'qf-open-btn qf-gear',
+            {x_expand: true, x_align: END, accessible_name: 'Settings'}));
+        return row;
+    }
+
+    /** Right: the quick-add entry, then the rest of Now and Side. */
+    _queueColumn(draft) {
+        const st = this._state;
+        const cur = st?.current ?? null;
+        const col = column('qf-right', {x_expand: true});
+        col.add_child(this._quickAdd(draft));
+
+        const scroll = new St.ScrollView({
+            style_class: 'qf-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
+            x_expand: true,
+        });
+        // Side cards take a wash of the current task's accent, like the card.
+        const list = column(`qf-list qf-accent-${cur?.tag ?? 'none'}`, {x_expand: true});
+        scroll.child = list;
+        col.add_child(scroll);
+        if (!st) return col;
+
+        const rest = st.now.slice(1);
+        if (rest.length) {
+            list.add_child(label('ALSO IN NOW', 'qf-section qf-list-head'));
+            for (const t of rest) list.add_child(this._taskRow(t, 'qf-row'));
+        }
+        list.add_child(label('SIDE', 'qf-section qf-list-head'));
+        const side = column('qf-side');
+        for (const t of st.side) side.add_child(this._taskRow(t, 'qf-side-card'));
+        if (!st.side.length) {
+            const empty = label('Nothing on the side.\nAdd one with @side.', 'qf-side-empty-text',
+                {x_align: CENTER});
+            empty.clutter_text.line_alignment = Pango.Alignment.CENTER;
+            side.add_child(new St.Bin({style_class: 'qf-side-empty', child: empty, x_expand: true}));
+        }
+        list.add_child(side);
+        return col;
+    }
+
+    _quickAdd(draft) {
         const entry = new St.Entry({
             hint_text: 'Add…  !now  #w #p  @later @side',
             text: draft,
@@ -284,73 +531,46 @@ class QueueFocusIndicator extends PanelMenu.Button {
                     this._fail('Add', err);
                     return;
                 }
+                this._dropUndo();
                 entry.set_text('');
                 this.menu.close();
             });
         });
-        entryItem.add_child(entry);
-        this.menu.addMenuItem(entryItem);
         this._entry = this._focusable('entry', entry);
-
-        if (!st) {
-            const start = new PopupMenu.PopupMenuItem('service not running — click to start');
-            start.connect('activate', () => this._connection.refresh());
-            this.menu.addMenuItem(this._focusable('start', start));
-            this.menu.addMenuItem(this._openItems());
-            this._restoreFocus(focusKey);
-            return;
-        }
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        if (st.current) {
-            this.menu.addMenuItem(this._section('NOW'));
-            this.menu.addMenuItem(this._taskItem(st.current, '✓ done', () => this.completeCurrent()));
-            for (const t of st.now.slice(1)) this.menu.addMenuItem(this._promoteItem(t));
-        } else {
-            const pickable = st.side.length > 0 || st.next.length > 0;
-            this.menu.addMenuItem(this._section(pickable ? 'NOW — nothing. Pick one:' : 'NOW — nothing. Add one:'));
-        }
-        if (st.side.length) {
-            this.menu.addMenuItem(this._section('SIDE'));
-            for (const t of st.side) this.menu.addMenuItem(this._promoteItem(t));
-        }
-        if (st.next.length) {
-            this.menu.addMenuItem(this._section('NEXT'));
-            for (const t of st.next.slice(0, NEXT_PREVIEW)) this.menu.addMenuItem(this._promoteItem(t));
-            if (st.next.length > NEXT_PREVIEW) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                    `… ${st.next.length - NEXT_PREVIEW} more`, {reactive: false, can_focus: false}));
-            }
-        }
-        if (st.later.length) this.menu.addMenuItem(this._section(`LATER · ${st.later.length}`));
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this.menu.addMenuItem(this._openItems());
-        this._restoreFocus(focusKey);
+        return entry;
     }
 
-    _openItems() {
-        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const mk = (label, view) => {
-            const b = new St.Button({label, style_class: 'button qf-open-btn', x_expand: true, can_focus: true});
-            b.connect('clicked', () => {
-                this.call('Show', view);
-                this.menu.close();
-            });
-            return this._focusable(`open:${view}`, b);
+    /** A task with its actions, shown while the pointer or key focus is on it. */
+    _taskRow(task, styleClass) {
+        const row = new St.BoxLayout({style_class: styleClass, reactive: true, track_hover: true});
+        if (task.tag) row.add_child(chip(task.tag));
+        row.add_child(ellipsized(label(task.title, 'qf-row-title', {x_expand: true})));
+        const actions = new St.BoxLayout({style_class: 'qf-row-actions', y_align: CENTER, opacity: 0});
+        const promote = button('↑', 'qf-act', () => this.promote(task), {accessible_name: 'Make current'});
+        const done = button('✓', 'qf-act', () => this.completeTask(task), {accessible_name: 'Done'});
+        actions.add_child(this._focusable(`task:${task.id}:promote`, promote));
+        actions.add_child(this._focusable(`task:${task.id}:done`, done));
+        row.add_child(actions);
+        const reveal = () => {
+            actions.opacity = row.hover || promote.has_key_focus() || done.has_key_focus() ? 255 : 0;
         };
-        item.add_child(mk('Queue', 'queue'));
-        item.add_child(mk('Board', 'board'));
-        return item;
+        row.connect('notify::hover', reveal);
+        for (const b of [promote, done]) {
+            b.connect('key-focus-in', reveal);
+            b.connect('key-focus-out', reveal);
+        }
+        return row;
     }
 
     destroy() {
         this._flash.destroy();
         this._cancelTick();
+        this._dropUndo();
         this._connection.destroy();
         this._cancelFocus();
         this._source?.destroy();
         this._entry = null;
+        this._cardClock = null;
         this._focusTargets.clear();
         super.destroy();
     }

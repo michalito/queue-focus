@@ -2,7 +2,7 @@
 
 Queue Focus is a task queue for GNOME. It keeps one task visible in the top bar and stores the rest in four ordered buckets.
 
-A task has a title, a bucket, and an optional `work` or `personal` tag. There are no projects, dates, priorities, or completion history. Marking a task done deletes it. A completion made from the top bar can be undone from its notification for a few seconds.
+A task has a title, a bucket, and an optional `work` or `personal` tag. There are no projects, dates, priorities, or completion history. Marking a task done deletes it. A completion made from the top bar can be undone for a few seconds.
 
 Every so often the screen flashes the current task across the desktop. The reminder is described under [The flash reminder](#the-flash-reminder) and is configured in the Settings view.
 
@@ -24,13 +24,13 @@ Promoting a task puts it first in Now. The previous current task stays in Now be
 
 ### Top bar
 
-The GNOME Shell extension shows the current title and elapsed time. While the timer is paused the time stops and a `⏸` follows it. Its dot uses the tag of the current task: blue for work, orange for personal, and grey when untagged.
+The GNOME Shell extension shows the current title and its elapsed time as a pill. Click the pill to pause the timer, and again to resume it. While the timer is paused the time stops, the pill turns orange, and a `❚❚` leads it. The dot uses the tag of the current task: blue for work, orange for personal, and grey when untagged.
 
 The app window also changes its accent to match the tag of the current task.
 
-Open the top bar menu to add a task, complete the current task, or promote a task from Now, Side, or Next. The menu shows up to eight Next tasks and the number of Later tasks. It also has buttons for the Queue and Board views.
+The top bar menu has two columns. On the left, the current task sits in a card with its tag, its timer, a Done button, and a Pause or Resume button. Below the card are buttons for the Queue and Board views and a gear that opens Settings. On the right is the add entry, then the rest of Now under `Also in Now`, then Side as cards. Each listed task shows a promote button and a done button while the pointer or keyboard focus is on it. Next and Later are left to the Queue and Board views.
 
-Completing the current task from the menu or with the shortcut shows a GNOME notification with an Undo button. Undo makes the task current again with its timer intact and returns any task that was pulled from Next. Only the most recent completion can be undone, and only while nothing else in the queue has changed.
+Marking a task done from the menu puts a `Done · title` row with an Undo button in the menu for a few seconds. Completing the current task with the shortcut shows a GNOME notification with an Undo button instead. Undo puts the task back where it was, with its timer intact when it was current, and returns any task that was pulled from Next. Only the most recent completion can be undone, and only while nothing else in the queue has changed.
 
 The extension starts the app service when needed and restarts it if it crashes. After `queue-focus quit` the top bar reads `queue-focus` until the next request starts the service again. Save warnings and failed requests appear as GNOME notifications. If a connection is lost during a task change, the extension refreshes the queue without automatically repeating the change. An interrupted quick-add keeps its draft; check the queue before submitting it again.
 
@@ -470,23 +470,29 @@ The service exports these methods:
 
 2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence.
 
-3. `CompleteCurrent()` deletes the current task and returns a Boolean.
+3. `CompleteCurrent()` deletes the current task and returns its id and title. When Now is empty it returns `0` and an empty string.
 
-4. `Promote(id)` moves a task to the front of Now.
+4. `Complete(id)` marks a task done. The current task is completed as by `CompleteCurrent`; any other task is deleted.
 
-5. `Remove(id)` deletes a task.
+5. `UndoComplete(id)` reverses the most recent completion and returns whether it did. It refuses when the completed task was not `id`, or when anything else has changed since.
 
-6. `Move(id, bucket, index)` moves a task to a zero based position. It accepts the same bucket values as `Add`. A negative index or an index past the bucket length places it at the end.
+6. `TogglePause()` pauses or resumes the current task's timer and returns whether there was one.
 
-7. `SetTag(id, tag)` accepts `work`, `personal`, `w`, or `p`. An empty string clears the tag.
+7. `Promote(id)` moves a task to the front of Now.
 
-8. `Show(view)` accepts `queue`, `board`, `settings`, `add`, or `toggle`. Any other value opens the Queue view.
+8. `Remove(id)` deletes a task. Unlike `Complete`, it cannot be undone.
 
-9. `Hide()` hides all app windows.
+9. `Move(id, bucket, index)` moves a task to a zero based position. It accepts the same bucket values as `Add`. A negative index or an index past the bucket length places it at the end.
 
-10. `GetSettings()` returns the settings as JSON, with the keys listed under [Settings data](#settings-data).
+10. `SetTag(id, tag)` accepts `work`, `personal`, `w`, or `p`. An empty string clears the tag.
 
-11. `SetSettings(json)` takes a JSON object holding only the settings to change and returns them all. An unknown key or a value that cannot be used changes nothing and returns an error, so a rejected call never leaves half a change behind.
+11. `Show(view)` accepts `queue`, `board`, `settings`, `add`, or `toggle`. Any other value opens the Queue view.
+
+12. `Hide()` hides all app windows.
+
+13. `GetSettings()` returns the settings as JSON, with the keys listed under [Settings data](#settings-data).
+
+14. `SetSettings(json)` takes a JSON object holding only the settings to change and returns them all. An unknown key or a value that cannot be used changes nothing and returns an error, so a rejected call never leaves half a change behind.
 
 The `Changed(json)` signal is emitted after a saved task change. The `SettingsChanged(json)` signal is emitted after a settings change, with the same JSON as `GetSettings`. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced.
 
@@ -539,7 +545,7 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 `make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
 
-`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
+`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer, and the gear opens Settings. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 

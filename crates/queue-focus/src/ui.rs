@@ -374,7 +374,7 @@ impl Ui {
     }
 
     /// Mark a task done. Only completing the current task pulls the head of
-    /// Next, and only that can be undone (from the top bar).
+    /// Next; either can be undone, from the top bar.
     fn complete(&self, id: u64) -> bool {
         self.report(self.state.complete(id)).unwrap_or(false)
     }
