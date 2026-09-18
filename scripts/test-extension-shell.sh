@@ -41,6 +41,8 @@ EOF_BUS
 gsettings set org.gnome.shell enabled-extensions "['$DRIVER']"
 gsettings set org.gnome.shell disable-user-extensions false
 export QF_SHELL_TEST_LOG="$TEST_ROOT/shell.log"
+# Set QF_SHELL_TEST_SHOTS to a directory to keep PNGs of the menu from the run.
+if [ -n "${QF_SHELL_TEST_SHOTS:-}" ]; then mkdir -p -- "$QF_SHELL_TEST_SHOTS"; fi
 dbus-run-session --config-file="$TEST_ROOT/bus.conf" -- bash -c '
   ulimit -c 0
   export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
@@ -68,5 +70,6 @@ if any('/queue-focus@queuefocus.org/' in line and '.js:' in line for line in log
 if not result['ok']:
     print(log, file=sys.stderr)
     raise SystemExit(result.get('stack', result['error']))
-print('GNOME Shell integration passed: real quick-add entry, draft preservation, late reply, success, disable/re-enable')
+print('GNOME Shell integration passed: quick-add draft preservation, late reply, disable/re-enable, '
+      'clock pill pausing without opening the menu, focus card, Side rows, undo, views')
 PY

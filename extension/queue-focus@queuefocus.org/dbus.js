@@ -12,7 +12,9 @@ const IFACE_XML = `
     <method name="GetState"><arg type="s" name="json" direction="out"/></method>
     <method name="Add"><arg type="s" name="text" direction="in"/><arg type="s" name="bucket" direction="in"/><arg type="t" name="id" direction="out"/></method>
     <method name="CompleteCurrent"><arg type="t" name="id" direction="out"/><arg type="s" name="title" direction="out"/></method>
+    <method name="Complete"><arg type="t" name="id" direction="in"/></method>
     <method name="UndoComplete"><arg type="t" name="id" direction="in"/><arg type="b" name="undone" direction="out"/></method>
+    <method name="TogglePause"><arg type="b" name="toggled" direction="out"/></method>
     <method name="Promote"><arg type="t" name="id" direction="in"/></method>
     <method name="Show"><arg type="s" name="view" direction="in"/></method>
     <method name="GetSettings"><arg type="s" name="json" direction="out"/></method>

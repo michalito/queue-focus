@@ -27,10 +27,12 @@ const XML: &str = r#"
       <arg type="t" name="id" direction="out"/>
       <arg type="s" name="title" direction="out"/>
     </method>
+    <method name="Complete"><arg type="t" name="id" direction="in"/></method>
     <method name="UndoComplete">
       <arg type="t" name="id" direction="in"/>
       <arg type="b" name="undone" direction="out"/>
     </method>
+    <method name="TogglePause"><arg type="b" name="toggled" direction="out"/></method>
     <method name="Promote"><arg type="t" name="id" direction="in"/></method>
     <method name="Remove"><arg type="t" name="id" direction="in"/></method>
     <method name="Move">
@@ -167,6 +169,14 @@ fn handle(
             let (id, title) = done.map(|t| (t.id, t.title)).unwrap_or_default();
             Ok(Some((id, title).to_variant()))
         }),
+        // The current task is completed as by CompleteCurrent; any other task
+        // is deleted. Either way the completion is the one UndoComplete reverses.
+        "Complete" => {
+            let Some((id,)) = params.get::<(u64,)>() else {
+                return bad(inv, "expected (t)");
+            };
+            reply(conn, inv, state.complete(id), found);
+        }
         "UndoComplete" => {
             let Some((id,)) = params.get::<(u64,)>() else {
                 return bad(inv, "expected (t)");
@@ -175,6 +185,10 @@ fn handle(
                 Ok(Some((undone,).to_variant()))
             });
         }
+        // Replies false when there is no running or paused clock to toggle.
+        "TogglePause" => reply(conn, inv, state.update(|s| s.toggle_pause()), |toggled| {
+            Ok(Some((toggled,).to_variant()))
+        }),
         "Promote" | "Remove" => {
             let Some((id,)) = params.get::<(u64,)>() else {
                 return bad(inv, "expected (t)");

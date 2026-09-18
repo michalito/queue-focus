@@ -175,11 +175,13 @@ fn is_now_marker(word: &str) -> bool {
     }
 }
 
-/// What `Store::complete_current` removed and what it pulled into Now in its
-/// place, so the completion can be reversed exactly.
+/// What `Store::complete` removed, where it sat, and what it pulled into Now
+/// in its place, so the completion can be reversed exactly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Completed {
     pub task: Task,
+    /// Position of `task` in `tasks` before it was removed.
+    pub index: usize,
     /// The task moved from the head of Next to the head of Now, if any.
     pub pulled: Option<u64>,
 }
@@ -279,10 +281,17 @@ impl Store {
     /// Delete the current task; if Now becomes empty, pull the head of Next.
     pub fn complete_current(&mut self) -> Option<Completed> {
         let id = self.current()?.id;
-        let idx = self.tasks.iter().position(|t| t.id == id)?;
-        let task = self.tasks.remove(idx);
+        self.complete(id)
+    }
+
+    /// Mark a task done: delete it, and when it was the current task and Now
+    /// is left empty, pull the head of Next. Any other task is simply deleted.
+    pub fn complete(&mut self, id: u64) -> Option<Completed> {
+        let index = self.tasks.iter().position(|t| t.id == id)?;
+        let was_current = self.current().is_some_and(|t| t.id == id);
+        let task = self.tasks.remove(index);
         let mut pulled = None;
-        if self.current().is_none() {
+        if was_current && self.current().is_none() {
             let next = self.in_bucket(Bucket::Next).next().map(|t| t.id);
             if let Some(next) = next {
                 self.move_to(next, Bucket::Now, Some(0));
@@ -290,12 +299,17 @@ impl Store {
             }
         }
         self.normalize();
-        Some(Completed { task, pulled })
+        Some(Completed {
+            task,
+            index,
+            pulled,
+        })
     }
 
-    /// Reverse `complete_current`: the pulled task goes back to the head of
-    /// Next and the completed task becomes current again, clock intact.
-    /// Refuses if a task with that id already exists.
+    /// Reverse `complete`: the pulled task goes back to the head of Next and
+    /// the completed task returns to where it was, so a completed current
+    /// task is current again with its clock intact. Refuses if a task with
+    /// that id already exists.
     pub fn undo_complete(&mut self, completed: Completed) -> bool {
         if self.get(completed.task.id).is_some() {
             return false;
@@ -305,10 +319,8 @@ impl Store {
                 self.move_to(pulled, Bucket::Next, Some(0));
             }
         }
-        let mut task = completed.task;
-        task.bucket = Bucket::Now;
-        let at = self.first_pos(Bucket::Now).unwrap_or(self.tasks.len());
-        self.tasks.insert(at, task);
+        let at = completed.index.min(self.tasks.len());
+        self.tasks.insert(at, completed.task);
         self.normalize();
         true
     }
@@ -542,6 +554,30 @@ mod tests {
         assert!(s.undo_complete(done));
         assert_eq!(ids(&s, Bucket::Now), vec![a, b]);
         assert_eq!(ids(&s, Bucket::Next), vec![c]);
+    }
+
+    #[test]
+    fn complete_deletes_any_other_task_and_undo_puts_it_back_in_place() {
+        let mut s = Store::new();
+        let a = s.add("a", Bucket::Now, None, false);
+        let b = s.add("b", Bucket::Side, None, false);
+        let c = s.add("c", Bucket::Side, None, false);
+        let d = s.add("d", Bucket::Side, None, false);
+        let e = s.add("e", Bucket::Next, None, false);
+        let done = s.complete(c).unwrap();
+        assert_eq!(done.task.id, c);
+        assert_eq!(done.pulled, None, "only the current task pulls from Next");
+        assert_eq!(ids(&s, Bucket::Side), vec![b, d]);
+        assert_eq!(s.current().unwrap().id, a);
+        assert_eq!(ids(&s, Bucket::Next), vec![e]);
+        assert!(s.undo_complete(done));
+        assert_eq!(ids(&s, Bucket::Side), vec![b, c, d]);
+        assert_eq!(s.current().unwrap().id, a);
+        assert!(
+            s.get(c).unwrap().started_at.is_none(),
+            "only the head of Now is timed"
+        );
+        assert!(s.complete(99).is_none());
     }
 
     #[test]
