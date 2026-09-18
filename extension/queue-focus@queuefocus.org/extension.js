@@ -274,10 +274,9 @@ class QueueFocusIndicator extends PanelMenu.Button {
             this._refreshMenu();
             return GLib.SOURCE_REMOVE;
         });
-        if (this.menu.isOpen) {
-            this._refreshMenu();
-            return;
-        }
+        // A pending quick-add holds the menu steady; use a notification when
+        // it prevents the inline offer from being rendered.
+        if (this.menu.isOpen && this._refreshMenu()) return;
         this._doneNotification = this._notify('Done', title,
             {label: 'Undo', activate: () => this.undoComplete(id)});
         this._doneNotification.connect('destroy', notification => {

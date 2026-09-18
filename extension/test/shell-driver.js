@@ -347,6 +347,24 @@ export default class ShellTest extends Extension {
         await this._wait(() => this._callsNamed('TogglePause').length === 2, 'pause button reaches TogglePause');
         await this._wait(() => indicator._cardClock?.text === '47m', 'card clock resumes');
 
+        // A pending Add freezes the menu, so completion must offer a notification.
+        const pendingEntry = indicator._entry;
+        const addCount = this._requests.length;
+        pendingEntry.set_text('slow add');
+        pendingEntry.clutter_text.emit('activate');
+        await this._wait(() => this._requests.length === addCount + 1, 'slow add reaches fixture');
+        targets().get(`task:${ci}:done`).emit('clicked', 1);
+        await this._wait(() => indicator._undo?.id === ci && indicator._doneNotification,
+            'completion during pending add offers undo notification');
+        check(indicator._entry === pendingEntry, 'pending add keeps its entry');
+        check(!targets().has('undo'), 'frozen menu cannot show inline undo');
+        indicator.undoComplete(ci);
+        await this._wait(() => !indicator._undo && q.tasks.some(t => t.id === ci),
+            'undo during pending add restores the task');
+        this._requests[addCount].invocation.return_value(new GLib.Variant('(t)', [99]));
+        await this._wait(() => !indicator.menu.isOpen, 'slow add finishes');
+        indicator.menu.open();
+
         // Done on a Side card: the menu offers to undo, no notification.
         targets().get(`task:${ci}:done`).emit('clicked', 1);
         await this._wait(() => indicator._undo?.id === ci && targets().has('undo'), 'menu offers undo');
@@ -355,7 +373,7 @@ export default class ShellTest extends Extension {
         this._pointer(targets().get(`task:${landlord}:done`).get_parent().get_parent());
         await this._shot('menu-undo');
         targets().get('undo').emit('clicked', 1);
-        await this._wait(() => this._callsNamed('UndoComplete').length === 1, 'undo reaches UndoComplete');
+        await this._wait(() => this._callsNamed('UndoComplete').length === 2, 'undo reaches UndoComplete');
         await this._wait(() => !indicator._undo && targets().has(`task:${ci}:done`), 'undo restores the task');
 
         // Done on the card completes the current task; promoting drops the offer.
