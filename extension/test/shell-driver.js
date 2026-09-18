@@ -146,12 +146,14 @@ export default class ShellTest extends Extension {
             },
             TogglePause: () => {
                 record('TogglePause')();
+                if (this._rejectPause) throw new Error('fixture: could not save');
                 const toggled = this._queue.togglePause();
                 if (toggled) this._changed();
                 return toggled;
             },
             Promote: id => {
                 record('Promote')(id);
+                if (this._rejectPromote) throw new Error('fixture: could not save');
                 if (!this._queue.promote(Number(id))) throw new Error('no such task');
                 this._changed();
             },
@@ -370,6 +372,21 @@ export default class ShellTest extends Extension {
         await this._wait(() => indicator._undo?.id === ci && targets().has('undo'), 'menu offers undo');
         check(indicator._doneNotification === null, 'completion from the open menu shows no notification');
         check(!targets().has(`task:${ci}:done`), 'the done task left the list');
+        // Definitive service failures leave the completion and its offer intact.
+        const beforePauseFailure = indicator._entry;
+        this._rejectPause = true;
+        targets().get('pause').emit('clicked', 1);
+        await this._wait(() => this._callsNamed('TogglePause').length === 3, 'failed pause reaches fixture');
+        await this._wait(() => indicator._entry !== beforePauseFailure, 'failed pause reply reconciles');
+        this._rejectPause = false;
+        check(indicator._undo?.id === ci && targets().has('undo'), 'failed pause preserves undo');
+        const beforeFailure = indicator._entry;
+        this._rejectPromote = true;
+        targets().get(`task:${landlord}:promote`).emit('clicked', 1);
+        await this._wait(() => this._callsNamed('Promote').length === 1, 'failed promote reaches fixture');
+        await this._wait(() => indicator._entry !== beforeFailure, 'failed promote reply reconciles');
+        this._rejectPromote = false;
+        check(indicator._undo?.id === ci && targets().has('undo'), 'failed promote preserves undo');
         this._pointer(targets().get(`task:${landlord}:done`).get_parent().get_parent());
         await this._shot('menu-undo');
         targets().get('undo').emit('clicked', 1);
@@ -381,7 +398,7 @@ export default class ShellTest extends Extension {
         await this._wait(() => indicator._undo?.id === fix, 'card done offers undo');
         check(indicator._label.text === 'Write release notes 0.2.0', 'the next Now task became current');
         targets().get(`task:${landlord}:promote`).emit('clicked', 1);
-        await this._wait(() => this._callsNamed('Promote').length === 1, 'promote reaches Promote');
+        await this._wait(() => this._callsNamed('Promote').length === 2, 'promote reaches Promote');
         await this._wait(() => indicator._label.text === 'Wait for landlord reply' && !indicator._undo,
             'promotion makes the task current and withdraws undo');
         check(indicator._dot.has_style_class_name('qf-dot-personal'), 'dot follows the current tag');

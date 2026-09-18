@@ -222,14 +222,28 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     /** Pause or resume the current task's clock. */
     togglePause() {
-        this._dropUndo();
-        this.call('TogglePause');
+        this._connection.request('TogglePause', [], (res, err) => {
+            if (err) {
+                this._fail('TogglePause', err);
+                return;
+            }
+            if (res[0]) {
+                this._dropUndo();
+                this._refreshMenu();
+            }
+        });
     }
 
     /** Make a listed task the current one. */
     promote(task) {
-        this._dropUndo();
-        this.call('Promote', task.id);
+        this._connection.request('Promote', [task.id], (_res, err) => {
+            if (err) {
+                this._fail('Promote', err);
+                return;
+            }
+            this._dropUndo();
+            this._refreshMenu();
+        });
     }
 
     /** Complete the current task, then offer to undo that. */
