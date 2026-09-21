@@ -62,8 +62,9 @@ function label(text, styleClass, props = {}) {
 }
 
 /**
- * A task title: one line, as wide as its text. Whatever holds it grows to fit,
- * so the ellipsis is only for a title the screen itself has no room for.
+ * One line of text, never wrapped. It asks for the width of its text, so
+ * whatever holds it grows to fit, and the ellipsis is only for when there is
+ * no more room to give.
  */
 function oneLine(actor) {
     actor.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -113,6 +114,10 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._doneNotification = null;
         // The card's clock in the menu currently built, if the card has one.
         this._cardClock = null;
+        // The two columns of the menu currently built, and the width the
+        // menu has reached since it was opened (see _buildMenu).
+        this._columns = null;
+        this._menuFloor = 0;
 
         const box = new St.BoxLayout({style_class: 'qf-box'});
         this._dot = label('●', 'qf-dot qf-dot-none');
@@ -418,6 +423,10 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // and put key focus back where it was. A fresh open focuses the entry.
         const focusKey = fresh ? 'entry' : this._focusedKey();
         const draft = this._entry?.get_text() ?? '';
+        // While it stays open the menu only grows. A task that leaves would
+        // otherwise narrow it, and take the buttons out from under a pointer
+        // that has just pressed one of them. Closing lets go of the width.
+        this._menuFloor = fresh ? 0 : Math.max(this._menuFloor, this._columns?.width ?? 0);
         this._focusTargets = new Map();
         this._entry = null;
         this._cardClock = null;
@@ -427,9 +436,15 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // navigation still works between the focusable actors inside it.
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'qf-menu'});
         const columns = new St.BoxLayout({style_class: 'qf-columns', x_expand: true});
+        // As a style, not as the actor's min_width: a forced request is used
+        // as it stands, and one below what the content asks for is an error
+        // the shell does not survive. A style is settled with the content.
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        if (this._menuFloor) columns.style = `min-width: ${this._menuFloor / scale}px;`;
         columns.add_child(this._focusColumn());
         columns.add_child(this._queueColumn(draft));
         item.add_child(columns);
+        this._columns = columns;
         this.menu.addMenuItem(item);
         this._updateClocks();
         this._restoreFocus(focusKey);
@@ -460,7 +475,13 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (this._undo) {
             const {id, title} = this._undo;
             const row = new St.BoxLayout({style_class: 'qf-undo'});
-            row.add_child(oneLine(label(`Done · ${title}`, 'qf-undo-text', {x_expand: true})));
+            // The one line that is not a task but a report on one, arriving
+            // under a pointer that has just pressed Done. It takes the width
+            // the column has and asks for none, so it cannot move the menu.
+            // Both requests are forced together: on its own either could
+            // cross the text's, which the shell does not survive.
+            row.add_child(oneLine(label(`Done · ${title}`, 'qf-undo-text',
+                {x_expand: true, min_width: 0, natural_width: 0})));
             row.add_child(this._focusable('undo', button('↶ Undo', 'qf-undo-btn', () => this.undoComplete(id))));
             col.add_child(row);
         }
@@ -602,6 +623,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._source?.destroy();
         this._entry = null;
         this._cardClock = null;
+        this._columns = null;
         this._focusTargets.clear();
         super.destroy();
     }

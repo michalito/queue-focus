@@ -517,15 +517,6 @@ export default class ShellTest extends Extension {
         await this._pointer(sideCard);
         await this._wait(() => sideCard.hover, 'pointer hovers the long side card');
         await this._shot('menu-long');
-        // So does the offer to undo, which names the task in full.
-        indicator._focusTargets.get(`task:${sideId}:done`).emit('clicked', 1);
-        await this._wait(() => indicator._focusTargets.has('undo'), 'menu offers undo for the long task');
-        await settled();
-        const offer = titles().find(l => l.has_style_class_name('qf-undo-text'));
-        check(offer.text === `Done · ${longSide}` && !cut(offer) && lines(offer) === 1, 'the undo offer is whole');
-        menuOnScreen('undo');
-        await this._shot('menu-long-undo');
-        indicator._dropUndo();
 
         // A title no screen has room for is the one case that is cut short:
         // the panel stops it at the clock and the menu stays on the monitor.
@@ -539,11 +530,40 @@ export default class ShellTest extends Extension {
         check(menu.width <= monitor.width, 'the menu is no wider than the monitor');
         await this._shot('menu-absurd');
 
-        // And back: nothing keeps the width of a title that has gone.
-        await show('Fix login redirect loop', ['CI run for main']);
-        check(menu.width === drawn, `the menu is back to the size drawn (${menu.width} vs ${drawn})`);
-        check(!cut(indicator._label), 'the short title is whole');
+        // While it stays open the menu only grows, so nothing slides out from
+        // under the pointer; closing it lets go of the width.
+        const widest = menu.width;
+        await show('Fix login redirect loop', [longSide, 'CI run for main']);
+        check(menu.width === widest, `the open menu kept its width (${widest} -> ${menu.width})`);
         panelIntact('short again');
+        indicator.menu.close();
+        indicator.menu.open();
+        await settled();
+        const reopened = menu.width;
+        check(reopened < widest && reopened > drawn, `reopened, it fits what it holds (${drawn} < ${reopened} < ${widest})`);
+
+        // Done on the card with the longest title: the column it widened
+        // could narrow, and the offer to undo names that title in a column
+        // too narrow for it. Neither may move the button beside the pointer.
+        const targets = () => indicator._focusTargets;
+        const [longId, ciId] = q.tasks.filter(t => t.bucket === 'side').map(t => t.id);
+        const left_of = actor => actor.get_transformed_position()[0];
+        const before = left_of(targets().get(`task:${ciId}:done`));
+        targets().get(`task:${longId}:done`).emit('clicked', 1);
+        await this._wait(() => targets().has('undo'), 'menu offers undo for the long task');
+        await settled();
+        check(menu.width === reopened, `done left the menu its width (${reopened} -> ${menu.width})`);
+        check(left_of(targets().get(`task:${ciId}:done`)) === before, 'the next Done button stayed where it was');
+        const offer = titles().find(l => l.has_style_class_name('qf-undo-text'));
+        check(offer.text === `Done · ${longSide}` && cut(offer) && lines(offer) === 1,
+            'the undo offer fits the column it is in');
+        menuOnScreen('undo');
+        await this._shot('menu-steady-undo');
+        indicator.menu.close();
+        indicator.menu.open();
+        await settled();
+        check(menu.width === drawn, `reopened, the menu is back to the size drawn (${menu.width} vs ${drawn})`);
+        indicator._dropUndo();
         indicator.menu.close();
     }
 
