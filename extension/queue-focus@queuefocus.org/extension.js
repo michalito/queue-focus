@@ -114,10 +114,10 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._doneNotification = null;
         // The card's clock in the menu currently built, if the card has one.
         this._cardClock = null;
-        // The two columns of the menu currently built, and the width the
-        // menu has reached since it was opened (see _buildMenu).
+        // The two columns of the menu currently built, and the widths they
+        // have reached since it was opened (see _buildMenu).
         this._columns = null;
-        this._menuFloor = 0;
+        this._columnFloors = [0, 0];
 
         const box = new St.BoxLayout({style_class: 'qf-box'});
         this._dot = label('●', 'qf-dot qf-dot-none');
@@ -423,10 +423,11 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // and put key focus back where it was. A fresh open focuses the entry.
         const focusKey = fresh ? 'entry' : this._focusedKey();
         const draft = this._entry?.get_text() ?? '';
-        // While it stays open the menu only grows. A task that leaves would
-        // otherwise narrow it, and take the buttons out from under a pointer
-        // that has just pressed one of them. Closing lets go of the width.
-        this._menuFloor = fresh ? 0 : Math.max(this._menuFloor, this._columns?.width ?? 0);
+        // Keep each column's width while open. Keeping only the total lets a
+        // shorter current title redistribute space and move Done/Pause under
+        // the pointer. Closing lets both columns shrink again.
+        this._columnFloors = this._columnFloors.map((floor, i) => fresh ? 0 :
+            Math.max(floor, this._columns?.get_child_at_index(i)?.width ?? 0));
         this._focusTargets = new Map();
         this._entry = null;
         this._cardClock = null;
@@ -440,9 +441,10 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // as it stands, and one below what the content asks for is an error
         // the shell does not survive. A style is settled with the content.
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        if (this._menuFloor) columns.style = `min-width: ${this._menuFloor / scale}px;`;
-        columns.add_child(this._focusColumn());
-        columns.add_child(this._queueColumn(draft));
+        for (const [i, col] of [this._focusColumn(), this._queueColumn(draft)].entries()) {
+            if (this._columnFloors[i]) col.style = `min-width: ${this._columnFloors[i] / scale}px;`;
+            columns.add_child(col);
+        }
         item.add_child(columns);
         this._columns = columns;
         this.menu.addMenuItem(item);

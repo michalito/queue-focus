@@ -565,6 +565,29 @@ export default class ShellTest extends Extension {
         check(menu.width === drawn, `reopened, the menu is back to the size drawn (${menu.width} vs ${drawn})`);
         indicator._dropUndo();
         indicator.menu.close();
+        await show(long, ['CI run for main']);
+        q.add('Short next task', 'next');
+        this._changed();
+        indicator.menu.open();
+        await settled();
+        const bounds = key => {
+            const actor = targets().get(key);
+            return [left_of(actor), right_of(actor)];
+        };
+        const doneBounds = bounds('done');
+        const pauseBounds = bounds('pause');
+        targets().get('done').emit('clicked', 1);
+        await this._wait(() => indicator._label.text === 'Short next task' && targets().has('undo'),
+            'completing the long current task pulls the short next task');
+        await settled();
+        for (const [key, beforeBounds] of [['done', doneBounds], ['pause', pauseBounds]]) {
+            const afterBounds = bounds(key);
+            check(afterBounds.every((edge, i) => Math.abs(edge - beforeBounds[i]) <= 1),
+                `${key} stays put after completing a long current task (${beforeBounds} -> ${afterBounds})`);
+        }
+        menuOnScreen('short replacement');
+        indicator._dropUndo();
+        indicator.menu.close();
     }
 
     disable() {
