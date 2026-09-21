@@ -4,6 +4,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
+import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -24,6 +25,8 @@ const xml = `<node><interface name="org.queuefocus.QueueFocus1">
 <signal name="Stopping"/>
 </interface></node>`;
 const check = (value, message) => { if (!value) throw new Error(message); };
+/** Every label under `actor`, in the order they are drawn. */
+const labels = actor => actor.get_children().flatMap(c => c instanceof St.Label ? [c] : labels(c));
 const unixNow = () => Math.floor(Date.now() / 1000);
 
 /** Just enough of the service's queue to answer the indicator's calls. */
@@ -37,6 +40,7 @@ class Queue {
     add(title, bucket, tag = null) {
         const id = this.nextId++;
         this.tasks.push({id, title, tag, bucket, started_at: null, paused_at: null});
+        if (bucket === 'now') this.promote(id);
         this._normalize();
         return id;
     }
@@ -46,10 +50,9 @@ class Queue {
     complete(id) {
         const index = this.tasks.findIndex(t => t.id === id);
         if (index < 0) return null;
-        const wasCurrent = this.current()?.id === id;
         const [task] = this.tasks.splice(index, 1);
         let pulled = null;
-        if (wasCurrent && !this.current()) {
+        if (task.bucket === 'now') {
             pulled = this.tasks.find(t => t.bucket === 'next') ?? null;
             if (pulled) pulled.bucket = 'now';
         }
@@ -68,13 +71,17 @@ class Queue {
         return true;
     }
 
+    /** Now holds one task: the one it replaces steps back to the front of Next. */
     promote(id) {
-        const index = this.tasks.findIndex(t => t.id === id);
-        if (index < 0) return false;
-        const [task] = this.tasks.splice(index, 1);
+        const task = this.tasks.find(t => t.id === id);
+        if (!task) return false;
+        const was = this.tasks.find(t => t.bucket === 'now' && t !== task);
         task.bucket = 'now';
-        task.started_at = null;
-        this.tasks.unshift(task);
+        if (was) {
+            was.bucket = 'next';
+            // Ahead of everything stored, so it leads Next.
+            this.tasks = [was, ...this.tasks.filter(t => t !== was)];
+        }
         this._normalize();
         return true;
     }
@@ -91,7 +98,7 @@ class Queue {
         return true;
     }
 
-    /** Only the head of Now carries a clock, as in the service. */
+    /** Only the current task carries a clock, as in the service. */
     _normalize() {
         const cur = this.current();
         for (const t of this.tasks) {
@@ -317,7 +324,7 @@ export default class ShellTest extends Extension {
     async _menu(indicator) {
         const q = this._queue;
         const fix = q.add('Fix login redirect loop', 'now', 'work');
-        q.add('Write release notes 0.2.0', 'now', 'work');
+        const notes = q.add('Write release notes 0.2.0', 'next', 'work');
         const ci = q.add('CI run for main', 'side', 'work');
         const landlord = q.add('Wait for landlord reply', 'side', 'personal');
         q.add("Review a colleague's PR", 'next', 'work');
@@ -347,6 +354,9 @@ export default class ShellTest extends Extension {
             check(targets().has(key), `menu offers ${key}`);
         }
         check(!targets().has(`task:${fix}:done`), 'the current task is not listed again');
+        check(!targets().has(`task:${notes}:done`), 'Next is left to the Queue and Board views');
+        const headings = labels(indicator.menu.actor).map(l => l.text).filter(t => /^[A-Z ]{2,}$/.test(t));
+        check(headings.join() === 'NOW,PAUSED,SIDE', `the menu lists Now as one task, then Side: ${headings}`);
         const sideRow = targets().get(`task:${ci}:done`).get_parent().get_parent();
         await this._pointer(sideRow);
         await this._wait(() => sideRow.hover, 'pointer hovers the side card');
@@ -405,12 +415,14 @@ export default class ShellTest extends Extension {
         // Done on the card completes the current task; promoting drops the offer.
         targets().get('done').emit('clicked', 1);
         await this._wait(() => indicator._undo?.id === fix, 'card done offers undo');
-        check(indicator._label.text === 'Write release notes 0.2.0', 'the next Now task became current');
+        check(indicator._label.text === 'Write release notes 0.2.0', 'the head of Next was pulled into Now');
         targets().get(`task:${landlord}:promote`).emit('clicked', 1);
         await this._wait(() => this._callsNamed('Promote').length === 2, 'promote reaches Promote');
         await this._wait(() => indicator._label.text === 'Wait for landlord reply' && !indicator._undo,
             'promotion makes the task current and withdraws undo');
         check(indicator._dot.has_style_class_name('qf-dot-personal'), 'dot follows the current tag');
+        check(indicator._state.now.length === 1 && indicator._state.next[0].id === notes,
+            'the task it replaced leads Next instead of staying in Now');
 
         // The gear opens Settings and closes the menu.
         targets().get('open:settings').emit('clicked', 1);

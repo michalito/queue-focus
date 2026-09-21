@@ -2,8 +2,8 @@
 //
 // The panel shows the current task: a tag dot, the title, and its clock as a
 // pill that pauses the clock when clicked. The menu is a focus card for that
-// task on the left and the queue it competes with on the right: the rest of
-// Now, then Side. Next and Later are left to the Queue and Board views.
+// task on the left and what runs beside it on the right: Side. Next and Later
+// are left to the Queue and Board views.
 import Atk from 'gi://Atk';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
@@ -486,7 +486,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
         return row;
     }
 
-    /** Right: the quick-add entry, then the rest of Now and Side. */
+    /** Right: the quick-add entry, then Side. */
     _queueColumn(draft) {
         const st = this._state;
         const cur = st?.current ?? null;
@@ -506,14 +506,9 @@ class QueueFocusIndicator extends PanelMenu.Button {
         col.add_child(scroll);
         if (!st) return col;
 
-        const rest = st.now.slice(1);
-        if (rest.length) {
-            list.add_child(label('ALSO IN NOW', 'qf-section qf-list-head'));
-            for (const t of rest) list.add_child(this._taskRow(t, 'qf-row'));
-        }
         list.add_child(label('SIDE', 'qf-section qf-list-head'));
         const side = column('qf-side');
-        for (const t of st.side) side.add_child(this._taskRow(t, 'qf-side-card'));
+        for (const t of st.side) side.add_child(this._sideCard(t));
         if (!st.side.length) {
             const empty = label('Nothing on the side.\nAdd one with @side.', 'qf-side-empty-text',
                 {x_align: CENTER});
@@ -553,12 +548,12 @@ class QueueFocusIndicator extends PanelMenu.Button {
         return entry;
     }
 
-    /** A task with its actions, shown while the pointer or key focus is on it. */
-    _taskRow(task, styleClass) {
-        const row = new St.BoxLayout({style_class: styleClass, reactive: true, track_hover: true});
+    /** A Side task with its actions, shown while the pointer or key focus is on it. */
+    _sideCard(task) {
+        const row = new St.BoxLayout({style_class: 'qf-side-card', reactive: true, track_hover: true});
         if (task.tag) row.add_child(chip(task.tag));
-        row.add_child(ellipsized(label(task.title, 'qf-row-title', {x_expand: true})));
-        const actions = new St.BoxLayout({style_class: 'qf-row-actions', y_align: CENTER, opacity: 0});
+        row.add_child(ellipsized(label(task.title, 'qf-side-title', {x_expand: true})));
+        const actions = new St.BoxLayout({style_class: 'qf-side-actions', y_align: CENTER, opacity: 0});
         const promote = button('↑', 'qf-act', () => this.promote(task), {accessible_name: 'Make current'});
         const done = button('✓', 'qf-act', () => this.completeTask(task), {accessible_name: 'Done'});
         actions.add_child(this._focusable(`task:${task.id}:promote`, promote));

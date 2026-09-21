@@ -332,7 +332,7 @@ impl Settings {
         self.interval_min.clamp(INTERVAL_MIN, INTERVAL_MAX) as u64 * 60
     }
 
-    /// Why the next flash is being held back. `current` is the head of Now and
+    /// Why the next flash is being held back. `current` is the task in Now and
     /// `now` is the local time of day.
     pub fn hold(&self, current: Option<&Task>, now: TimeOfDay) -> Hold {
         let Some(task) = current else {
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn a_paused_timer_holds_flashes_back_only_when_asked() {
         let mut store = Store::new();
-        store.add("a", Bucket::Now, None, false);
+        store.add("a", Bucket::Now, None);
         assert!(store.toggle_pause());
         let mut s = Settings::default();
 
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn quiet_hours_apply_only_when_switched_on() {
         let mut store = Store::new();
-        store.add("a", Bucket::Now, None, false);
+        store.add("a", Bucket::Now, None);
         let mut s = Settings::default();
 
         assert_eq!(s.hold(store.current(), at(3, 0)), Hold::None);

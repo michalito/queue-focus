@@ -114,16 +114,16 @@ fn placement_drops_and_focus() {
         .update(|s| {
             for (name, bucket) in [
                 ("current", Bucket::Now),
-                ("tail", Bucket::Now),
+                ("queued", Bucket::Next),
                 ("next", Bucket::Next),
                 ("side", Bucket::Side),
                 ("later", Bucket::Later),
             ] {
-                ids.push(s.add(name, bucket, None, false));
+                ids.push(s.add(name, bucket, None));
             }
         })
         .unwrap();
-    let [current, tail, next, side, later] = ids.try_into().unwrap();
+    let [current, queued, next, side, later] = ids.try_into().unwrap();
     let app = adw::Application::builder()
         .application_id("org.queuefocus.PlacementTest")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
@@ -137,7 +137,7 @@ fn placement_drops_and_focus() {
     let rendered_ids = || {
         let mut ids = Vec::new();
         let page = ui.current_page();
-        // Both pages lead with a hero holding the head of Now.
+        // Both pages lead with a hero holding the current task.
         ids.extend(
             ui.heroes
                 .borrow()
@@ -145,12 +145,7 @@ fn placement_drops_and_focus() {
                 .find(|h| h.page == page)
                 .and_then(|h| row_id(&h.root)),
         );
-        for list in ui
-            .lists
-            .borrow()
-            .iter()
-            .filter(|l| l.placement.page == page)
-        {
+        for list in ui.lists.borrow().iter().filter(|l| l.page == page) {
             if list.style == RowStyle::Later
                 && !ui.later.borrow().as_ref().unwrap().0.reveals_child()
             {
@@ -164,145 +159,107 @@ fn placement_drops_and_focus() {
         }
         ids
     };
-    assert_eq!(rendered_ids(), [current, side, tail, next]);
-    let section = ui
-        .sections
-        .borrow()
-        .iter()
-        .find(|s| s.placement.page == Page::Queue && s.placement.bucket == Bucket::Next)
-        .unwrap()
-        .count
-        .clone();
-    assert_eq!(section.text(), "2");
-    ui.row_for(next).unwrap().grab_focus();
-    let tail_list = ui
-        .lists
-        .borrow()
-        .iter()
-        .find(|l| {
-            l.placement
-                == placement::List {
-                    page: Page::Queue,
-                    bucket: Bucket::Now,
-                }
-        })
-        .unwrap()
-        .list
-        .clone();
-    assert_eq!(row_id(&tail_list.row_at_y(1).unwrap()), Some(tail));
-    emit_drop(&tail_list, next, 1.0);
-    assert_eq!(state.store().current().unwrap().id, current);
-    assert_eq!(state.store().get(next).unwrap().bucket, Bucket::Now);
-    assert_eq!(rendered_ids(), [current, side, next, tail]);
-    assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(next));
-    // The actual Next header controller appends to Next, not the Now tail.
-    let next_header = ui
-        .sections
-        .borrow()
-        .iter()
-        .find(|s| s.placement.page == Page::Queue && s.placement.bucket == Bucket::Next)
-        .unwrap()
-        .count
-        .parent()
-        .unwrap();
-    emit_drop(&next_header, next, 0.0);
-    assert_eq!(state.store().get(next).unwrap().bucket, Bucket::Next);
-    ui.row_for(tail).unwrap().grab_focus();
-    ui.update(|s| s.move_to(tail, Bucket::Later, None)).unwrap();
-    assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(next));
-    ui.set_later_open(true);
-    settle();
-    assert_eq!(rendered_ids(), [current, side, next, later, tail]);
-    let hero = |page: Page| {
-        ui.heroes
-            .borrow()
-            .iter()
-            .find(|h| h.page == page)
-            .unwrap()
-            .root
-            .clone()
-    };
-    emit_drop(&hero(Page::Queue), next, 0.0);
-    assert_eq!(state.store().current().unwrap().id, next);
-    ui.set_page(Page::Board);
-    settle();
-    // Now=[next, current]: the hero shows the head and the rest of the bucket
-    // is listed under Next, ahead of Next's own rows. Later needs no opening.
-    assert_eq!(rendered_ids(), [next, side, current, later, tail]);
-    let board_section = |bucket: Bucket| {
+    let in_bucket =
+        |bucket: Bucket| -> Vec<u64> { state.store().in_bucket(bucket).map(|t| t.id).collect() };
+    let section = |page: Page, bucket: Bucket| {
         ui.sections
             .borrow()
             .iter()
-            .find(|s| s.placement.page == Page::Board && s.placement.bucket == bucket)
+            .find(|s| s.page == page && s.bucket == bucket)
             .unwrap()
             .count
             .clone()
     };
-    // The hero counts the one task on show; the tail counts under Next.
-    assert_eq!(board_section(Bucket::Now).text(), "1");
-    assert_eq!(board_section(Bucket::Next).text(), "1");
-    assert_eq!(board_section(Bucket::Later).text(), "2");
-    let board_list = |bucket: Bucket| {
+    let list_of = |page: Page, bucket: Bucket| {
         ui.lists
             .borrow()
             .iter()
-            .find(|l| {
-                l.placement
-                    == placement::List {
-                        page: Page::Board,
-                        bucket,
-                    }
-            })
+            .find(|l| l.page == page && l.bucket == bucket)
             .unwrap()
             .list
             .clone()
     };
-    // The redesign's core claim, at the widget level: the head of Now is the
-    // hero's, and the rest of the bucket is listed under the Next header — in
-    // Next's own body, ahead of Next's own rows, wearing Next's clothes.
-    assert_eq!(
-        board_list(Bucket::Now).parent(),
-        board_list(Bucket::Next).parent(),
-        "the Now tail belongs under the Next header"
-    );
-    assert_ne!(
-        board_list(Bucket::Now).parent(),
-        board_list(Bucket::Side).parent()
-    );
-    assert!(board_list(Bucket::Now).has_css_class(RowStyle::BoardRow.css()));
-    assert!(board_list(Bucket::Side).has_css_class(RowStyle::SideCard.css()));
-    assert!(board_list(Bucket::Later).has_css_class(RowStyle::BoardLater.css()));
+    assert_eq!(rendered_ids(), [current, side, queued, next]);
+    assert_eq!(section(Page::Queue, Bucket::Next).text(), "2");
+    // Now holds one task and the hero shows it: neither page lists the bucket.
+    assert!(ui.lists.borrow().iter().all(|l| l.bucket != Bucket::Now));
+
+    // A drop on a row's top half lands in front of it, and focus follows the task.
+    ui.row_for(next).unwrap().grab_focus();
+    let next_list = list_of(Page::Queue, Bucket::Next);
+    assert_eq!(row_id(&next_list.row_at_y(1).unwrap()), Some(queued));
+    emit_drop(&next_list, next, 1.0);
+    assert_eq!(state.store().current().unwrap().id, current);
+    assert_eq!(in_bucket(Bucket::Next), [next, queued]);
+    assert_eq!(rendered_ids(), [current, side, next, queued]);
+    assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(next));
+    // The header appends to the bucket it names.
+    let next_header = section(Page::Queue, Bucket::Next).parent().unwrap();
+    emit_drop(&next_header, next, 0.0);
+    assert_eq!(in_bucket(Bucket::Next), [queued, next]);
+    ui.row_for(queued).unwrap().grab_focus();
+    ui.update(|s| s.move_to(queued, Bucket::Later, None))
+        .unwrap();
+    assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(next));
+    ui.set_later_open(true);
+    settle();
+    assert_eq!(rendered_ids(), [current, side, next, later, queued]);
+
+    // Dropping on the queue's banner takes over as the current task, and the
+    // task it replaces steps back to the front of Next.
+    emit_drop(&hero_of(&ui, Page::Queue), next, 0.0);
+    assert_eq!(in_bucket(Bucket::Now), [next]);
+    assert_eq!(in_bucket(Bucket::Next), [current]);
+    ui.set_page(Page::Board);
+    settle();
+    // Later needs no opening on the board.
+    assert_eq!(rendered_ids(), [next, side, current, later, queued]);
+    assert_eq!(section(Page::Board, Bucket::Now).text(), "1");
+    assert_eq!(section(Page::Board, Bucket::Next).text(), "1");
+    assert_eq!(section(Page::Board, Bucket::Later).text(), "2");
+    assert!(list_of(Page::Board, Bucket::Next).has_css_class(RowStyle::BoardRow.css()));
+    assert!(list_of(Page::Board, Bucket::Side).has_css_class(RowStyle::SideCard.css()));
+    assert!(list_of(Page::Board, Bucket::Later).has_css_class(RowStyle::BoardLater.css()));
     // The Now quadrant has no "empty" line of its own — the hero carries one.
     assert!(ui
         .sections
         .borrow()
         .iter()
-        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Now)
+        .find(|s| s.page == Page::Board && s.bucket == Bucket::Now)
         .unwrap()
         .placeholder
         .is_none());
-    // Dropping on the board's Next header appends to Next, not to the Now tail.
-    emit_drop(&board_section(Bucket::Next).parent().unwrap(), tail, 0.0);
-    assert_eq!(state.store().get(tail).unwrap().bucket, Bucket::Next);
-    assert_eq!(rendered_ids(), [next, side, current, tail, later]);
+    // Dropping on the board's Next header appends to Next.
+    emit_drop(
+        &section(Page::Board, Bucket::Next).parent().unwrap(),
+        queued,
+        0.0,
+    );
+    assert_eq!(in_bucket(Bucket::Next), [current, queued]);
+    assert_eq!(rendered_ids(), [next, side, current, queued, later]);
     // Dropping on the board's hero takes over as the current task.
-    emit_drop(&hero(Page::Board), tail, 0.0);
-    assert_eq!(state.store().current().unwrap().id, tail);
-    assert_eq!(rendered_ids(), [tail, side, next, current, later]);
-    // The Now heading queues behind the current task, unlike the hero.
-    let now_header = board_section(Bucket::Now).parent().unwrap();
+    emit_drop(&hero_of(&ui, Page::Board), queued, 0.0);
+    assert_eq!(in_bucket(Bucket::Now), [queued]);
+    assert_eq!(rendered_ids(), [queued, side, next, current, later]);
+    // The Now heading is part of that panel, so it does exactly the same.
+    let now_header = section(Page::Board, Bucket::Now).parent().unwrap();
     emit_drop(&now_header, side, 0.0);
-    assert_eq!(state.store().current().unwrap().id, tail);
-    assert_eq!(rendered_ids(), [tail, next, current, side, later]);
-    assert_eq!(board_section(Bucket::Now).text(), "1");
-    assert_eq!(board_section(Bucket::Next).text(), "3");
+    assert_eq!(in_bucket(Bucket::Now), [side]);
+    assert_eq!(rendered_ids(), [side, queued, next, current, later]);
+    assert_eq!(section(Page::Board, Bucket::Now).text(), "1");
+    assert_eq!(section(Page::Board, Bucket::Next).text(), "3");
+    assert_eq!(section(Page::Board, Bucket::Side).text(), "0");
+    // Moving the current task out leaves Now empty; nothing is pulled in.
     ui.update(|s| s.move_to(side, Bucket::Side, None)).unwrap();
     settle();
+    assert!(state.store().current().is_none());
+    assert_eq!(section(Page::Board, Bucket::Now).text(), "0");
+    assert_eq!(rendered_ids(), [side, queued, next, current, later]);
     ui.row_for(side).unwrap().grab_focus();
     ui.update(|s| s.remove(side)).unwrap();
-    assert_eq!(rendered_ids(), [tail, next, current, later]);
-    // Side led the row after the hero, so focus falls to whatever took its place.
-    assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(next));
+    assert_eq!(rendered_ids(), [queued, next, current, later]);
+    // Side led the page, so focus falls to whatever took its place.
+    assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(queued));
     ui.set_page(Page::Settings);
     assert!(rendered_ids().is_empty());
     ui.win.borrow().as_ref().unwrap().destroy();
@@ -318,8 +275,8 @@ fn hero_dressing() {
     let (settings, _) = crate::settings::SettingsStore::load_from(dir.join("settings.json"));
     state
         .update(|s| {
-            s.add("untagged current", Bucket::Now, None, false);
-            s.add("queued", Bucket::Next, None, false);
+            s.add("untagged current", Bucket::Now, None);
+            s.add("queued", Bucket::Next, None);
         })
         .unwrap();
     let app = adw::Application::builder()
@@ -386,18 +343,22 @@ fn hero_dressing() {
         .sections
         .borrow()
         .iter()
-        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Side)
+        .find(|s| s.page == Page::Board && s.bucket == Bucket::Side)
         .unwrap()
         .count
         .parent()
         .unwrap();
+    // Dragged out of its panel the current task leaves Now empty: the task it
+    // replaced waits at the front of Next, and only completing pulls from there.
     emit_drop(&side_header, drag_payload(&card).unwrap(), 0.0);
     assert_eq!(state.store().get(queued).unwrap().bucket, Bucket::Side);
-    assert_eq!(drag_payload(&card), Some(current));
+    assert!(state.store().current().is_none());
+    assert_eq!(
+        state.store().in_bucket(Bucket::Next).next().unwrap().id,
+        current
+    );
 
     // Emptied, each says how to fill itself and refuses to start a drag.
-    ui.update(|s| s.remove(current)).unwrap();
-    settle();
     assert!(row_id(&card).is_none());
     assert_eq!(drag_payload(&card), None);
     for hero in [&band, &card] {
@@ -423,10 +384,10 @@ fn drag_feedback() {
     let (settings, _) = crate::settings::SettingsStore::load_from(dir.join("settings.json"));
     state
         .update(|s| {
-            s.add("current", Bucket::Now, None, false);
+            s.add("current", Bucket::Now, None);
             for bucket in [Bucket::Next, Bucket::Later] {
                 for name in ["first", "second"] {
-                    s.add(name, bucket, None, false);
+                    s.add(name, bucket, None);
                 }
             }
         })
@@ -445,17 +406,22 @@ fn drag_feedback() {
         ui.lists
             .borrow()
             .iter()
-            .find(|l| {
-                l.placement
-                    == placement::List {
-                        page: Page::Board,
-                        bucket,
-                    }
-            })
+            .find(|l| l.page == Page::Board && l.bucket == bucket)
             .unwrap()
             .list
             .clone()
     };
+    let header = |bucket: Bucket| {
+        ui.sections
+            .borrow()
+            .iter()
+            .find(|s| s.page == Page::Board && s.bucket == bucket)
+            .unwrap()
+            .count
+            .parent()
+            .unwrap()
+    };
+    let hero = hero_of(&ui, Page::Board);
     let next = list(Bucket::Next);
     let (first, second) = (next.row_at_index(0).unwrap(), next.row_at_index(1).unwrap());
     let band = |row: &gtk::ListBoxRow| {
@@ -465,20 +431,15 @@ fn drag_feedback() {
     };
     let (first_top, first_bottom) = band(&first);
     let (_, second_bottom) = band(&second);
-    let now_header = ui
-        .sections
-        .borrow()
-        .iter()
-        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Now)
-        .unwrap()
-        .count
-        .parent()
-        .unwrap();
-    // With no Now tail, appending to Now lands before the first Next row.
+    // The Now heading is part of the hero's panel: a task dropped there takes
+    // over as current, so it is the hero that rings, not the heading or a row.
+    let now_header = header(Bucket::Now);
     emit_motion(&now_header, 0.0);
-    assert!(first.has_css_class("drop-before"));
+    assert!(hero.has_css_class("drop-into"));
     assert!(!now_header.has_css_class("drop-into"));
+    assert!(!first.has_css_class("drop-before"));
     emit_leave(&now_header);
+    assert!(!hero.has_css_class("drop-into"));
 
     // A row's top half means "in front of this one"; its bottom half means the
     // one after it. The line follows the pointer rather than piling up behind.
@@ -513,8 +474,9 @@ fn drag_feedback() {
     unmark();
 
     // The space under the last row is still the bucket: the line goes at the
-    // end, and dropping there appends. Two lists share this body, so the mark
-    // has to be cleared wherever it was last put, not only on the target.
+    // end, and dropping there appends. The line is drawn on the list rather
+    // than on the space, so the mark has to be cleared wherever it was last
+    // put, not only on the target.
     let body = next.parent().unwrap();
     let space = find_class(&body, "board-drop-space").unwrap();
     // GTK bubbles drag motion: no ancestor of a row target may also append,
@@ -571,14 +533,6 @@ fn drag_feedback() {
     );
 
     // The hero rings as a whole: dropping on it takes over as current.
-    let hero = ui
-        .heroes
-        .borrow()
-        .iter()
-        .find(|h| h.page == Page::Board)
-        .unwrap()
-        .root
-        .clone();
     emit_motion(&hero, 0.0);
     assert!(hero.has_css_class("drop-into"));
     emit_leave(&hero);
@@ -620,41 +574,21 @@ fn drag_feedback() {
         "no line outlives the drag"
     );
 
-    // A section's end line goes after the last row it actually shows. With a
-    // task queued behind the current one and nothing in Next, that row belongs
-    // to the Now tail — and an empty list is zero pixels tall, so a line drawn
-    // on Next would show nothing at all.
-    let tail = ui
-        .update(|s| {
-            let queued: Vec<u64> = s.in_bucket(Bucket::Next).map(|t| t.id).collect();
-            for id in queued {
-                s.move_to(id, Bucket::Later, None);
-            }
-            s.add("queued behind", Bucket::Now, None, false)
-        })
-        .unwrap();
-    settle();
-    let tail_list = list(Bucket::Now);
-    assert_eq!(
-        tail_list.row_at_index(0).and_then(|r| row_id(&r)),
-        Some(tail)
-    );
-    assert!(
-        list(Bucket::Next).row_at_index(0).is_none(),
-        "Next is empty"
-    );
-    emit_motion(&space, 0.0);
-    assert!(
-        tail_list.has_css_class("drop-end"),
-        "the line goes after the last row the section shows"
-    );
-    assert!(!list(Bucket::Next).has_css_class("drop-end"));
-    emit_leave(&space);
-    emit_motion(&now_header, 0.0);
-    assert!(tail_list.has_css_class("drop-end"));
-    assert!(!now_header.has_css_class("drop-into"));
-    emit_leave(&now_header);
-    ui.update(|s| s.move_to(tail, Bucket::Later, None)).unwrap();
+    // A header promises the end of its bucket, like the space under the rows.
+    // An empty list is zero pixels tall, so a line drawn on it would show
+    // nothing at all: with nothing in Next, both ring themselves instead.
+    let next_header = header(Bucket::Next);
+    emit_motion(&next_header, 0.0);
+    assert!(list(Bucket::Next).has_css_class("drop-end"));
+    assert!(!next_header.has_css_class("drop-into"));
+    emit_leave(&next_header);
+    ui.update(|s| {
+        let queued: Vec<u64> = s.in_bucket(Bucket::Next).map(|t| t.id).collect();
+        for id in queued {
+            s.move_to(id, Bucket::Later, None);
+        }
+    })
+    .unwrap();
     settle();
     emit_motion(&space, 0.0);
     assert!(
@@ -662,37 +596,31 @@ fn drag_feedback() {
         "an empty target still gives feedback"
     );
     emit_leave(&space);
-    let section = ui
-        .sections
-        .borrow()
-        .iter()
-        .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Next)
-        .unwrap()
-        .count
-        .parent()
-        .unwrap();
-    emit_motion(&section, 0.0);
-    assert!(section.has_css_class("drop-into"));
-    emit_leave(&section);
-    emit_motion(&now_header, 0.0);
-    assert!(now_header.has_css_class("drop-into"));
-    emit_leave(&now_header);
+    emit_motion(&next_header, 0.0);
+    assert!(next_header.has_css_class("drop-into"));
+    emit_leave(&next_header);
 
-    // With no current task, an append to Now fills the hero, not the tail.
-    ui.update(|s| {
-        let current = s.current().unwrap().id;
-        s.remove(current);
-        s.add("waiting in Next", Bucket::Next, None, false);
-    })
-    .unwrap();
-    settle();
-    let first_next = list(Bucket::Next).row_at_index(0).unwrap();
-    emit_motion(&now_header, 0.0);
-    assert!(hero.has_css_class("drop-into"));
-    assert!(!first_next.has_css_class("drop-before"));
+    // A drop on the Now heading lands where the ring was: the task takes over,
+    // and the one it replaces leads Next rather than staying in Now.
+    let was_current = state.store().current().unwrap().id;
     let to_now = state.store().in_bucket(Bucket::Later).next().unwrap().id;
     emit_drop(&now_header, to_now, 0.0);
+    assert_eq!(state.store().in_bucket(Bucket::Now).count(), 1);
     assert_eq!(state.store().current().unwrap().id, to_now);
+    assert_eq!(
+        state.store().in_bucket(Bucket::Next).next().unwrap().id,
+        was_current
+    );
+    assert!(!hero.has_css_class("drop-into"));
+
+    // With no current task the heading still rings the hero, and fills it.
+    ui.update(|s| s.remove(to_now)).unwrap();
+    settle();
+    assert!(row_id(&hero).is_none());
+    emit_motion(&now_header, 0.0);
+    assert!(hero.has_css_class("drop-into"));
+    emit_drop(&now_header, was_current, 0.0);
+    assert_eq!(state.store().current().unwrap().id, was_current);
     assert!(!hero.has_css_class("drop-into"));
 
     ui.win.borrow().as_ref().unwrap().destroy();

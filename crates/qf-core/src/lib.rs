@@ -1,5 +1,6 @@
 //! Core task model for queue-focus: four buckets (Now / Next / Later / Side),
-//! optional work/personal tag, ordered by position, no history. Plus the user
+//! of which Now holds the one current task; optional work/personal tag,
+//! ordered by position, no history. Plus the user
 //! settings both the app and the shell extension read.
 
 mod model;

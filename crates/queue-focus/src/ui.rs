@@ -3,9 +3,8 @@
 //! (task counts are small; rebuilding is simpler and always correct).
 //!
 //! The queue page is three fixed bands: the current task's banner, a scrolling
-//! card holding Side and Next, and a Later shelf pinned to the bottom. The head
-//! of Now lives in the banner, so the rest of the Now bucket is listed under the
-//! Next header — everything queued behind what you are doing.
+//! card holding Side and Next, and a Later shelf pinned to the bottom. Now holds
+//! the one current task, which lives in the banner, so it is never a list.
 
 use crate::flash::SharedFlash;
 use crate::settings::SharedSettings;
@@ -116,11 +115,10 @@ enum RowStyle {
 }
 
 impl RowStyle {
-    fn of(list: placement::List) -> RowStyle {
-        match (list.page, list.bucket) {
+    fn of(page: Page, bucket: Bucket) -> RowStyle {
+        match (page, bucket) {
             (Page::Board, Bucket::Side) => RowStyle::SideCard,
             (Page::Board, Bucket::Later) => RowStyle::BoardLater,
-            // The Now tail is listed under Next, so it wears Next's clothes.
             (Page::Board, _) => RowStyle::BoardRow,
             (_, Bucket::Later) => RowStyle::Later,
             _ => RowStyle::Queue,
@@ -181,20 +179,25 @@ struct Hero {
     root: gtk::Box,
 }
 
-/// One ListBox showing (part of) one bucket on one page.
+/// One ListBox showing one bucket on one page. Now has none: it is the hero.
 struct BucketList {
-    placement: placement::List,
+    page: Page,
+    bucket: Bucket,
     style: RowStyle,
     list: gtk::ListBox,
 }
 
 /// A titled section: the count beside its header, and the "empty" placeholder
-/// shown while every list under that header is empty. The board's Now header
-/// has no placeholder — the hero carries its own empty state.
+/// shown while the bucket is empty. The board's Now header has no placeholder
+/// — the hero carries its own empty state.
 struct Section {
+    /// Which page's header this is. Rebuilding treats both pages alike; only
+    /// the widget tests have to tell them apart.
+    #[cfg_attr(not(test), allow(dead_code))]
+    page: Page,
+    bucket: Bucket,
     count: gtk::Label,
     placeholder: Option<gtk::Label>,
-    placement: placement::Section,
 }
 
 pub struct Ui {
@@ -751,35 +754,19 @@ impl Ui {
     fn add_queue_section(self: &Rc<Self>, card: &gtk::Box, bucket: Bucket, divided: bool) {
         let (head_box, count) = section_header(bucket, divided);
         let placeholder = placeholder_label();
-        let placement = placement::Section {
-            page: Page::Queue,
-            bucket,
-        };
-        let lists = self.make_lists(placement);
+        let list = self.make_list(Page::Queue, bucket);
 
-        // A header appends to the bucket it names, which is the last list under
-        // it: Next's own rows, not the Now tail queued in front of them.
-        self.header_drop(&head_box, bucket, &lists);
+        self.header_drop(&head_box, bucket, &list);
         self.empty_drop(&placeholder, bucket);
         card.append(&head_box);
         card.append(&placeholder);
-        for list in &lists {
-            card.append(list);
-        }
+        card.append(&list);
         self.sections.borrow_mut().push(Section {
+            page: Page::Queue,
+            bucket,
             count,
             placeholder: Some(placeholder),
-            placement,
         });
-    }
-
-    /// Every list under one header, in the order they are shown.
-    fn make_lists(self: &Rc<Self>, section: placement::Section) -> Vec<gtk::ListBox> {
-        section
-            .lists()
-            .into_iter()
-            .map(|region| self.make_list(region))
-            .collect()
     }
 
     /// Later hangs below the scroll area so it never pushes the queue around.
@@ -814,11 +801,8 @@ impl Ui {
         shelf.append(&toggle);
 
         let placeholder = placeholder_label();
-        let list = self.make_list(placement::List {
-            page: Page::Queue,
-            bucket: Bucket::Later,
-        });
-        self.header_drop(&toggle, Bucket::Later, std::slice::from_ref(&list));
+        let list = self.make_list(Page::Queue, Bucket::Later);
+        self.header_drop(&toggle, Bucket::Later, &list);
         self.empty_drop(&placeholder, Bucket::Later);
         let body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -842,12 +826,10 @@ impl Ui {
 
         *self.later.borrow_mut() = Some((revealer, caret));
         self.sections.borrow_mut().push(Section {
+            page: Page::Queue,
+            bucket: Bucket::Later,
             count,
             placeholder: Some(placeholder),
-            placement: placement::Section {
-                page: Page::Queue,
-                bucket: Bucket::Later,
-            },
         });
         shelf.upcast()
     }
@@ -875,42 +857,6 @@ impl Ui {
             quadrant.set_vexpand(y == 1);
             grid.attach(&quadrant, x, y, width, 1);
         }
-        // The Now heading appends into the tail shown under Next. Wire its
-        // feedback after every quadrant exists, so both boundary lists exist.
-        let header = self
-            .sections
-            .borrow()
-            .iter()
-            .find(|s| s.placement.page == Page::Board && s.placement.bucket == Bucket::Now)
-            .unwrap()
-            .count
-            .parent()
-            .unwrap();
-        let lists = self.lists.borrow();
-        let find_list = |bucket| {
-            lists
-                .iter()
-                .find(|l| l.placement.page == Page::Board && l.placement.bucket == bucket)
-                .unwrap()
-                .list
-                .downgrade()
-        };
-        self.append_drop(
-            &header,
-            Bucket::Now,
-            Highlight::NowTail {
-                hero: self
-                    .heroes
-                    .borrow()
-                    .iter()
-                    .find(|h| h.page == Page::Board)
-                    .unwrap()
-                    .root
-                    .downgrade(),
-                leading: find_list(Bucket::Now),
-                trailing: find_list(Bucket::Next),
-            },
-        );
         grid.upcast()
     }
 
@@ -923,22 +869,28 @@ impl Ui {
             .build();
         head_box.add_css_class(bucket.as_str());
         quadrant.append(&head_box);
-        let placement = placement::Section {
-            page: Page::Board,
-            bucket,
-        };
 
         if bucket == Bucket::Now {
-            // The hero shows the one task on show and nothing else — whatever
-            // is queued behind it is listed under Next — so this quadrant has
+            // Now holds one task and the hero shows it, so this quadrant has
             // no list, and no "empty" line of its own either.
             let hero = self.make_hero(Page::Board, HeroStyle::Card, &["now-hero"]);
             hero.set_vexpand(true);
             quadrant.append(&hero);
+            // The heading is part of the panel: dropping on it takes over as
+            // the current task too, and rings the hero to say so.
+            let this = self.clone();
+            head_box.add_controller(drop_target(
+                Highlight::Hero(hero.downgrade()),
+                move |id, _, _| {
+                    this.update(|s| Destination::Current.apply(s, id))
+                        .unwrap_or(false)
+                },
+            ));
             self.sections.borrow_mut().push(Section {
+                page: Page::Board,
+                bucket,
                 count,
                 placeholder: None,
-                placement,
             });
             return quadrant;
         }
@@ -950,7 +902,7 @@ impl Ui {
             placeholder.set_xalign(0.5);
             placeholder.set_valign(gtk::Align::Center);
         }
-        let lists = self.make_lists(placement);
+        let list = self.make_list(Page::Board, bucket);
 
         let body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -959,10 +911,8 @@ impl Ui {
             .vexpand(true)
             .build();
         body.append(&placeholder);
-        for list in &lists {
-            body.append(list);
-        }
-        self.header_drop(&head_box, bucket, &lists);
+        body.append(&list);
+        self.header_drop(&head_box, bucket, &list);
         self.empty_drop(&placeholder, bucket);
         // A sibling target covers spare space without seeing motion events
         // that bubble from the list or placeholder and replacing their marks.
@@ -971,7 +921,7 @@ impl Ui {
             .css_classes(["board-drop-space"])
             .build();
         body.append(&drop_space);
-        self.append_drop(&drop_space, bucket, end_of(&lists));
+        self.append_drop(&drop_space, bucket, Highlight::End(list.downgrade()));
 
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -994,9 +944,10 @@ impl Ui {
         }
         quadrant.append(&scroll);
         self.sections.borrow_mut().push(Section {
+            page: Page::Board,
+            bucket,
             count,
             placeholder: Some(placeholder),
-            placement,
         });
         quadrant
     }
@@ -1558,8 +1509,8 @@ impl Ui {
         }
     }
 
-    fn make_list(self: &Rc<Self>, placement: placement::List) -> gtk::ListBox {
-        let style = RowStyle::of(placement);
+    fn make_list(self: &Rc<Self>, page: Page, bucket: Bucket) -> gtk::ListBox {
+        let style = RowStyle::of(page, bucket);
         let classes = vec!["bucket-list", style.css()];
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
@@ -1582,18 +1533,13 @@ impl Ui {
                 .downcast_ref::<gtk::ListBox>()
                 .and_then(|l| anchor_at(l, y))
                 .and_then(|r| row_id(&r));
-            this.update(|s| {
-                Destination::List {
-                    list: placement,
-                    before,
-                }
-                .apply(s, id)
-            })
-            .unwrap_or(false)
+            this.update(|s| Destination::List { bucket, before }.apply(s, id))
+                .unwrap_or(false)
         }));
 
         self.lists.borrow_mut().push(BucketList {
-            placement,
+            page,
+            bucket,
             style,
             list: list.clone(),
         });
@@ -1606,9 +1552,9 @@ impl Ui {
         self: &Rc<Self>,
         header: &impl IsA<gtk::Widget>,
         bucket: Bucket,
-        lists: &[gtk::ListBox],
+        list: &gtk::ListBox,
     ) {
-        self.append_drop(header, bucket, end_of(lists));
+        self.append_drop(header, bucket, Highlight::End(list.downgrade()));
     }
 
     /// A list is zero-height while empty, so its placeholder has to accept the
@@ -1667,15 +1613,13 @@ impl Ui {
 
         for bl in self.lists.borrow().iter() {
             bl.list.remove_all();
-            let leads = placement.leads(bl.placement);
-            for (i, id) in placement.rows(bl.placement).iter().enumerate() {
+            for id in placement.rows(bl.bucket) {
                 let t = store.get(*id).expect("placement comes from this store");
-                let row = self.build_row(t, bl.placement, bl.style, leads && i == 0);
-                bl.list.append(&row);
+                bl.list.append(&self.build_row(t, bl.page, bl.style));
             }
         }
         for section in self.sections.borrow().iter() {
-            let n = placement.count(section.placement);
+            let n = placement.rows(section.bucket).len();
             section.count.set_label(&n.to_string());
             if let Some(placeholder) = &section.placeholder {
                 placeholder.set_visible(n == 0);
@@ -1720,8 +1664,8 @@ impl Ui {
         }
     }
 
-    /// The current task's panel. Dropping on it promotes, which on the queue
-    /// page is the only way to move a task right to the front.
+    /// The current task's panel. Dropping on it promotes: the task takes over
+    /// and the one shown steps back to the front of Next.
     fn make_hero(self: &Rc<Self>, page: Page, style: HeroStyle, classes: &[&str]) -> gtk::Box {
         let root = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -1730,7 +1674,7 @@ impl Ui {
             .build();
         let this = self.clone();
         root.add_controller(drop_target(Highlight::Ring, move |id, _, _| {
-            this.update(|s| Destination::Banner.apply(s, id))
+            this.update(|s| Destination::Current.apply(s, id))
                 .unwrap_or(false)
         }));
         if page == Page::Board {
@@ -1852,7 +1796,7 @@ impl Ui {
                 .upcast()
         };
         let done = self.done_button(id, style);
-        let menu = self.task_menu(id, true, Bucket::Now, &["flat", "hero-btn"]);
+        let menu = self.task_menu(id, Bucket::Now, &["flat", "hero-btn"]);
 
         match style {
             // The queue's band is one line of title with its buttons beside it.
@@ -1978,27 +1922,16 @@ impl Ui {
         button
     }
 
-    fn build_row(
-        self: &Rc<Self>,
-        task: &Task,
-        list: placement::List,
-        style: RowStyle,
-        leads: bool,
-    ) -> gtk::ListBoxRow {
+    fn build_row(self: &Rc<Self>, task: &Task, page: Page, style: RowStyle) -> gtk::ListBoxRow {
         let id = task.id;
         // Both pages hold a row per task, but only the visible one may host the
         // editor — otherwise rebuild() focuses a widget nobody can see.
-        let renaming = self.renaming.get() == Some(id) && list.page == self.current_page();
-        let mut classes = vec!["task-row"];
-        if leads {
-            // Whatever leads a section draws no hairline above it.
-            classes.push("leads");
-        }
+        let renaming = self.renaming.get() == Some(id) && page == self.current_page();
         let row = gtk::ListBoxRow::builder()
             // Double-clicking inside the rename entry must not promote the row.
             .activatable(!renaming)
             .name(format!("task-{id}"))
-            .css_classes(classes)
+            .css_classes(["task-row"])
             .build();
         row.update_property(&[gtk::accessible::Property::Label(&task.title)]);
         // Every row can be picked up and dragged, and says so. GTK CSS has no
@@ -2067,20 +2000,14 @@ impl Ui {
             });
             content.append(&to_next);
         }
-        content.append(&self.task_menu(id, false, list.bucket, &["flat", "row-btn"]));
+        content.append(&self.task_menu(id, task.bucket, &["flat", "row-btn"]));
 
         row.add_controller(task_drag_source());
         row
     }
 
     /// The ⋮ menu. Mirrors every keyboard action so the mouse never loses out.
-    fn task_menu(
-        self: &Rc<Self>,
-        id: u64,
-        is_current: bool,
-        bucket: Bucket,
-        classes: &[&str],
-    ) -> gtk::MenuButton {
+    fn task_menu(self: &Rc<Self>, id: u64, bucket: Bucket, classes: &[&str]) -> gtk::MenuButton {
         let popover = gtk::Popover::builder()
             .has_arrow(false)
             .position(gtk::PositionType::Bottom)
@@ -2090,7 +2017,7 @@ impl Ui {
             .orientation(gtk::Orientation::Vertical)
             .build();
 
-        if !is_current {
+        if bucket != Bucket::Now {
             let this = self.clone();
             items.append(&menu_item(
                 &popover,
@@ -2118,7 +2045,11 @@ impl Ui {
         }));
 
         items.append(&menu_separator());
-        for b in ORDER.into_iter().filter(|&b| b != bucket) {
+        // Moving to Now is "Make current", which leads the menu already.
+        for b in ORDER
+            .into_iter()
+            .filter(|&b| b != bucket && b != Bucket::Now)
+        {
             let this = self.clone();
             items.append(&menu_item(
                 &popover,
@@ -2453,12 +2384,7 @@ impl Ui {
                 widgets.insert(id, hero.root.clone().upcast());
             }
         }
-        for bl in self
-            .lists
-            .borrow()
-            .iter()
-            .filter(|bl| bl.placement.page == page)
-        {
+        for bl in self.lists.borrow().iter().filter(|bl| bl.page == page) {
             let mut child = bl.list.first_child();
             while let Some(row) = child {
                 if let Some(id) = row_id(&row) {
@@ -2704,30 +2630,19 @@ enum Highlight {
     Ring,
     /// The target is a list: mark the row the task would land in front of.
     Before,
-    /// The line after the last row the section shows — for the targets that
-    /// append. A section can hold more than one list (Next holds the Now tail
-    /// in front of its own rows), and which of them ends it depends on what is
-    /// in them, so the choice is made while the drag is over it.
-    End(Vec<glib::WeakRef<gtk::ListBox>>),
-    /// Append to Now: fill an empty hero, otherwise mark its queued tail.
-    NowTail {
-        hero: glib::WeakRef<gtk::Box>,
-        leading: glib::WeakRef<gtk::ListBox>,
-        trailing: glib::WeakRef<gtk::ListBox>,
-    },
-}
-
-/// `Highlight::End` over every list under one header, in the order shown.
-fn end_of(lists: &[gtk::ListBox]) -> Highlight {
-    Highlight::End(lists.iter().map(|list| list.downgrade()).collect())
+    /// The line after the bucket's last row — for the targets that append: a
+    /// header, or the space under the rows.
+    End(glib::WeakRef<gtk::ListBox>),
+    /// The Now heading: the task would take the hero's place, so ring that.
+    Hero(glib::WeakRef<gtk::Box>),
 }
 
 thread_local! {
     /// Where the drag is pointing right now. One drag means one mark, and
     /// clearing it has to reach whatever was marked last — which is not always
-    /// something the target under the pointer can see. The Next quadrant holds
-    /// two lists in one body, so its end line and a row's line belong to
-    /// different widgets, and either can be the one left over.
+    /// something the target under the pointer can see. A bucket's header and
+    /// the space under its rows both draw on the list, and the Now heading
+    /// draws on the hero, so the mark can be on a widget other than the target.
     static MARKED: RefCell<Vec<(gtk::Widget, &'static str)>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -2750,40 +2665,19 @@ impl Highlight {
     /// it back would be a cycle nothing could break.
     fn list(&self, target: &gtk::Widget) -> Option<gtk::ListBox> {
         match self {
-            Highlight::Ring | Highlight::NowTail { .. } => None,
+            Highlight::Ring | Highlight::Hero(_) => None,
             Highlight::Before => target.downcast_ref::<gtk::ListBox>().cloned(),
-            Highlight::End(lists) => {
-                let shown: Vec<gtk::ListBox> =
-                    lists.iter().filter_map(glib::WeakRef::upgrade).collect();
-                // An empty list is zero pixels tall, so a line drawn on it
-                // would not show at all.
-                shown
-                    .iter()
-                    .rev()
-                    .find(|list| list.first_child().is_some())
-                    .cloned()
-            }
+            // An empty list is zero pixels tall, so a line drawn on it would
+            // not show at all.
+            Highlight::End(list) => list.upgrade().filter(|l| l.first_child().is_some()),
         }
     }
 
     fn show(&self, target: &gtk::Widget, y: f64, dragged: Option<u64>) {
         unmark();
-        if let Highlight::NowTail {
-            hero,
-            leading,
-            trailing,
-        } = self
-        {
-            if let Some(hero) = hero.upgrade().filter(|h| row_id(h).is_none()) {
+        if let Highlight::Hero(hero) = self {
+            if let Some(hero) = hero.upgrade() {
                 mark(&hero, "drop-into");
-                return;
-            }
-            if let Some(list) = leading.upgrade().filter(|l| l.first_child().is_some()) {
-                mark(&list, "drop-end");
-            } else if let Some(row) = trailing.upgrade().and_then(|l| l.first_child()) {
-                mark(&row, "drop-before");
-            } else {
-                mark(target, "drop-into");
             }
             return;
         }
@@ -2882,18 +2776,16 @@ mod tests {
     /// checks the mapping, so a swap here would silently reshape the page.
     #[test]
     fn row_style_dresses_each_bucket_for_the_page_it_is_on() {
-        let of = |page, bucket| RowStyle::of(placement::List { page, bucket });
+        let of = RowStyle::of;
         // The queue is one card of one-line rows, whatever the bucket — except
         // the Later shelf, which is dim and offers a way back out.
-        for bucket in [Bucket::Now, Bucket::Next, Bucket::Side] {
+        for bucket in [Bucket::Next, Bucket::Side] {
             assert_eq!(of(Page::Queue, bucket), RowStyle::Queue);
         }
         assert_eq!(of(Page::Queue, Bucket::Later), RowStyle::Later);
-        // The board dresses every quadrant differently, and the Now tail wears
-        // Next's clothes because Next is the header it is listed under.
+        // The board dresses every listed quadrant differently.
         assert_eq!(of(Page::Board, Bucket::Side), RowStyle::SideCard);
         assert_eq!(of(Page::Board, Bucket::Next), RowStyle::BoardRow);
-        assert_eq!(of(Page::Board, Bucket::Now), RowStyle::BoardRow);
         assert_eq!(of(Page::Board, Bucket::Later), RowStyle::BoardLater);
 
         for (style, lines, buttons, gap, class) in [

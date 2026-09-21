@@ -110,19 +110,10 @@
 }
 .qf-entry:hover { background-color: rgba(255, 255, 255, 0.14); }
 
-/* The rest of Now as rows, then Side as cards; it scrolls only past ~8 rows. */
+/* Side as cards; the list scrolls only past five or so of them. */
 .qf-scroll { max-height: 300px; }
 .qf-list { spacing: 2px; }
 .qf-list-head { padding: 8px 8px 4px; letter-spacing: 0.08em; }
-.qf-row { min-height: 34px; padding: 0 8px; border-radius: 8px; spacing: 8px; }
-.qf-row:hover { background-color: rgba(255, 255, 255, 0.08); }
-.qf-row-actions { spacing: 4px; }
-.qf-act {
-  min-height: 26px; min-width: 34px; padding: 0 8px;
-  border-radius: 6px; font-weight: 700;
-  background-color: rgba(255, 255, 255, 0.14);
-}
-.qf-act:hover, .qf-act:focus { background-color: rgba(255, 255, 255, 0.26); }
 
 .qf-side { spacing: 8px; padding: 1px; }
 .qf-side-card {
@@ -137,8 +128,14 @@
 .qf-accent-work .qf-side-card { background-color: rgba(53, 132, 228, 0.07); }
 .qf-accent-personal .qf-side-card { background-color: rgba(230, 97, 0, 0.07); }
 .qf-side-card:hover { background-color: rgba(255, 255, 255, 0.12); }
-.qf-side-card .qf-row-title { font-size: 1.09em; font-weight: 700; }
-.qf-side-card .qf-act { min-height: 28px; min-width: 36px; }
+.qf-side-title { font-size: 1.09em; font-weight: 700; }
+.qf-side-actions { spacing: 4px; }
+.qf-act {
+  min-height: 28px; min-width: 36px; padding: 0 8px;
+  border-radius: 6px; font-weight: 700;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+.qf-act:hover, .qf-act:focus { background-color: rgba(255, 255, 255, 0.26); }
 .qf-side-empty {
   min-height: 70px;
   padding: 8px;
