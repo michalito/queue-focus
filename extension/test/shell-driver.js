@@ -530,6 +530,28 @@ export default class ShellTest extends Extension {
         check(menu.width <= monitor.width, 'the menu is no wider than the monitor');
         await this._shot('menu-absurd');
 
+        // Changed and the method reply can both rebuild before a layout frame.
+        indicator._refreshMenu();
+        indicator._refreshMenu();
+        await settled();
+        menuOnScreen('consecutive oversized rebuilds');
+        for (const key of ['done', 'pause']) {
+            const control = indicator._focusTargets.get(key);
+            check(control.get_transformed_position()[0] >= monitor.x &&
+                right_of(control) <= monitor.x + monitor.width,
+            `${key} stays on screen after consecutive oversized rebuilds`);
+        }
+
+        indicator._focusTargets.get('pause').emit('clicked', 1);
+        await this._wait(() => indicator._state.current.paused_at, 'pause the oversized current task');
+        await settled();
+        menuOnScreen('oversized task paused');
+        const [oversizedSide] = await show('Short current task', [absurd]);
+        indicator._focusTargets.get(`task:${oversizedSide}:promote`).emit('clicked', 1);
+        await this._wait(() => indicator._state.current.id === oversizedSide, 'promote the oversized Side task');
+        await settled();
+        menuOnScreen('oversized Side task promoted');
+
         // While it stays open the menu only grows, so nothing slides out from
         // under the pointer; closing it lets go of the width.
         const widest = menu.width;

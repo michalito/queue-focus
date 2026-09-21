@@ -426,8 +426,13 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // Keep each column's width while open. Keeping only the total lets a
         // shorter current title redistribute space and move Done/Pause under
         // the pointer. Closing lets both columns shrink again.
-        this._columnFloors = this._columnFloors.map((floor, i) => fresh ? 0 :
-            Math.max(floor, this._columns?.get_child_at_index(i)?.width ?? 0));
+        this._columnFloors = this._columnFloors.map((floor, i) => {
+            if (fresh) return 0;
+            const col = this._columns?.get_child_at_index(i);
+            // Changed and a method reply can rebuild before the next frame.
+            // An unallocated actor reports its uncapped natural width.
+            return col?.has_allocation() ? Math.max(floor, col.width) : floor;
+        });
         this._focusTargets = new Map();
         this._entry = null;
         this._cardClock = null;
