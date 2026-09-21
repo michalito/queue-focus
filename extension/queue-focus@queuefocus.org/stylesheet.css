@@ -8,9 +8,8 @@
 .qf-dot-none { color: rgba(255, 255, 255, 0.35); }
 .qf-dot-work { color: #62a0ea; }
 .qf-dot-personal { color: #ffa348; }
-/* The title is as wide as its text. The indicator sets max-width itself, to
-   the room the panel has; this one only stands where it cannot measure that. */
-.qf-label { font-weight: 600; max-width: 480px; }
+/* The title is as wide as its text; the panel cuts it short at the clock. */
+.qf-label { font-weight: 600; }
 .qf-label-paused { color: rgba(255, 255, 255, 0.7); }
 
 /* The clock is a pill and a pause button: white wash while running, a

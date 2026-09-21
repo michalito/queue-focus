@@ -439,8 +439,8 @@ export default class ShellTest extends Extension {
     /**
      * Titles are shown whole and on one line: the panel button and the menu
      * grow sideways to fit them, and only a title the screen has no room for
-     * is cut short — without pushing anything else off the panel or the menu
-     * off the monitor.
+     * is cut short — without moving the clock, squeezing anything else on the
+     * panel, or taking the menu off the monitor.
      */
     async _widths(indicator) {
         indicator._dropUndo();
@@ -448,8 +448,12 @@ export default class ShellTest extends Extension {
         const q = this._queue = new Queue();
         const monitor = Main.layoutManager.primaryMonitor;
         const {_leftBox: left, _centerBox: center, _rightBox: right} = Main.panel;
+        const activities = Main.panel.statusArea.activities.container;
+        check(left.get_child_at_index(0) === activities && left.get_child_at_index(1) === indicator.container,
+            'the indicator sits beside Activities');
         const natural = actor => actor.get_preferred_width(-1)[1];
         const right_of = actor => actor.get_transformed_position()[0] + actor.get_transformed_size()[0];
+        const middle = actor => actor.get_transformed_position()[0] + actor.get_transformed_size()[0] / 2;
         const settled = () => new Promise(resolve => {
             const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
                 this._sources.delete(id);
@@ -463,8 +467,10 @@ export default class ShellTest extends Extension {
             .some(c => l.has_style_class_name(c)));
         const cut = l => l.clutter_text.get_layout().is_ellipsized();
         const lines = l => l.clutter_text.get_layout().get_line_count();
+        // Whatever the title does, the rest of the panel stays as it was.
         const panelIntact = when => {
-            check(left.width === natural(left), `${when}: the left of the panel keeps its width`);
+            check(Math.abs(middle(center) - (monitor.x + monitor.width / 2)) <= 1, `${when}: the clock stays in the middle`);
+            check(activities.width === natural(activities), `${when}: Activities keeps its width`);
             check(right.width === natural(right), `${when}: the right of the panel keeps its width`);
             check(right_of(left) <= center.get_transformed_position()[0] &&
                 right_of(center) <= right.get_transformed_position()[0], `${when}: the panel's boxes do not overlap`);
@@ -522,10 +528,11 @@ export default class ShellTest extends Extension {
         indicator._dropUndo();
 
         // A title no screen has room for is the one case that is cut short:
-        // the panel keeps its other boxes and the menu stays on the monitor.
+        // the panel stops it at the clock and the menu stays on the monitor.
         const absurd = Array.from({length: 32}, (_v, i) => `word${i} and`).join(' ').slice(0, 256);
         await show(absurd, [absurd]);
-        check(cut(indicator._label), 'a title wider than the panel is cut short');
+        check(cut(indicator._label), 'a title that would reach the clock is cut short');
+        check(left.width < natural(left), 'by the panel, which gives the left box no more than that');
         check(titles().every(l => cut(l) && lines(l) === 1), 'a title wider than the screen is cut short, never wrapped');
         panelIntact('absurd');
         menuOnScreen('absurd');

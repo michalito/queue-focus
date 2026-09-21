@@ -6,7 +6,7 @@
 // are left to the Queue and Board views.
 //
 // Titles are shown whole, on one line: the panel button and the menu grow
-// sideways to fit them, and stop only where the screen does (see layout.js).
+// sideways to fit them, and stop only where the screen does.
 import Atk from 'gi://Atk';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
@@ -19,7 +19,6 @@ import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {FlashOverlay} from './flash.js';
 import {connectQueue} from './dbus.js';
-import {menuMaxWidth, panelTitleRoom} from './layout.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -30,8 +29,6 @@ const APP_ICON = 'org.queuefocus.QueueFocus-symbolic';
 // How long the menu offers to undo a completion made from it.
 const UNDO_MS = 8000;
 const PAUSE_GLYPH = '❚❚';
-// The air kept between the panel's centre box and the boxes either side of it.
-const PANEL_GAP = 12;
 // gschema key → what to do when pressed.
 const KEYBINDINGS = {
     'toggle-queue': ind => ind.call('Show', 'toggle'),
@@ -116,9 +113,6 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._doneNotification = null;
         // The card's clock in the menu currently built, if the card has one.
         this._cardClock = null;
-        // A pending refit of the title (see _fitTitle), and its last result.
-        this._fitId = 0;
-        this._titleRoom = null;
 
         const box = new St.BoxLayout({style_class: 'qf-box'});
         this._dot = label('●', 'qf-dot qf-dot-none');
@@ -158,15 +152,6 @@ class QueueFocusIndicator extends PanelMenu.Button {
             flash: event => this._flash.show(event),
             warning: message => Main.notifyError(APP_NAME, message),
         });
-
-        // What the title may grow into changes with the panel around it: its
-        // width, what either side asks for, and what else shares the centre.
-        Main.panel.connectObject('notify::width', () => this._queueFit(), this);
-        for (const box of [Main.panel._leftBox, Main.panel._centerBox, Main.panel._rightBox])
-            box?.connectObject('notify::allocation', () => this._queueFit(), this);
-        global.display.connectObject('workareas-changed', () => this._queueFit(), this);
-        // Nor is there a centre box to measure until the button is in it.
-        this.container.connectObject('parent-set', () => this._queueFit(), this);
 
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open) {
@@ -213,8 +198,6 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._pill.accessible_name = paused ? 'Resume' : 'Pause';
         this._label.style_class = paused ? 'qf-label qf-label-paused' : 'qf-label';
         if (this._cardClock) this._cardClock.text = timed ? cardClock(cur) : '';
-        // The title and the pill share the button, and both have just changed.
-        this._fitTitle();
         if (!timed || paused || (!showing && !this._cardClock)) return;
         const secs = Math.max(0, Math.floor(Date.now() / 1000) - cur.started_at);
         this._tickId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60 - (secs % 60), () => {
@@ -233,66 +216,18 @@ class QueueFocusIndicator extends PanelMenu.Button {
     // ---- widths -----------------------------------------------------------
 
     /**
-     * Let the title take the room the panel really has. The panel gives its
-     * centre box whatever width it asks for and cuts the side boxes short to
-     * pay for it, so an unbounded title would push the system menu off the
-     * panel. The limit is therefore the panel's own: see panelTitleRoom.
-     */
-    _fitTitle() {
-        const {_leftBox: left, _centerBox: center, _rightBox: right} = Main.panel;
-        const monitor = Main.layoutManager.findMonitorForActor(Main.panel) ?? Main.layoutManager.primaryMonitor;
-        // Without these the stylesheet's own limit stands.
-        if (!left || !right || !monitor || this.container.get_parent() !== center) return;
-        const natural = actor => actor.get_preferred_width(-1)[1];
-        const workArea = Main.layoutManager.getWorkAreaForMonitor(monitor.index);
-        const rtl = Main.panel.get_text_direction() === Clutter.TextDirection.RTL;
-        const room = panelTitleRoom({
-            panelWidth: Main.panel.width || monitor.width,
-            centerOffset: 2 * (workArea.x - monitor.x) + workArea.width - monitor.width,
-            startWidth: natural(rtl ? right : left),
-            endWidth: natural(rtl ? left : right),
-            centerWidth: natural(center),
-            titleWidth: natural(this._label),
-            gap: PANEL_GAP,
-            scale: St.ThemeContext.get_for_stage(global.stage).scale_factor,
-        });
-        if (room === this._titleRoom) return;
-        this._titleRoom = room;
-        this._label.style = `max-width: ${room}px;`;
-    }
-
-    /** Refit once the layout pass that called for it is over. */
-    _queueFit() {
-        if (this._fitId) return;
-        const laters = global.compositor.get_laters();
-        this._fitId = laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
-            this._fitId = 0;
-            this._fitTitle();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    _cancelFit() {
-        if (!this._fitId) return;
-        global.compositor.get_laters().remove(this._fitId);
-        this._fitId = 0;
-    }
-
-    /**
-     * Keep the menu on the screen. The panel button limits the menu's height
-     * on every open, replacing its style, so the width goes in after it.
+     * Keep the menu on the screen: it is as wide as its titles, and nothing
+     * upstream limits that. The panel button limits the menu's height on every
+     * open, replacing its style, so the width goes in after it.
      */
     _capMenu() {
         const actor = this.menu.actor;
         const workArea = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.primaryIndex);
-        const width = menuMaxWidth({
-            workAreaWidth: workArea.width,
-            // The shell keeps a menu this far from the work area's edges.
-            edge: actor.get_theme_node().get_length('-arrow-rise'),
-            margins: actor.margin_left + actor.margin_right,
-            scale: St.ThemeContext.get_for_stage(global.stage).scale_factor,
-        });
-        actor.style = `${actor.style ?? ''} max-width: ${width}px;`;
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        // The shell keeps a menu its arrow's rise away from either edge.
+        const edges = 2 * actor.get_theme_node().get_length('-arrow-rise') + actor.margin_left + actor.margin_right;
+        const maxWidth = Math.floor((workArea.width - edges) / scale);
+        actor.style = `${actor.style ?? ''} max-width: ${maxWidth}px;`;
     }
 
     // ---- actions ----------------------------------------------------------
@@ -661,7 +596,6 @@ class QueueFocusIndicator extends PanelMenu.Button {
     destroy() {
         this._flash.destroy();
         this._cancelTick();
-        this._cancelFit();
         this._dropUndo();
         this._connection.destroy();
         this._cancelFocus();
@@ -676,7 +610,11 @@ class QueueFocusIndicator extends PanelMenu.Button {
 export default class QueueFocusExtension extends Extension {
     enable() {
         this._indicator = new Indicator();
-        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'center');
+        // Beside Activities, where a title can grow. The panel gives its left
+        // box only the room up to the clock, so a long title is cut there by
+        // the panel itself; in the centre it would push the clock about with
+        // every task and have to be measured against both sides.
+        Main.panel.addToStatusArea(this.uuid, this._indicator, 1, 'left');
 
         // Global shortcuts, configurable via the extension's gsettings schema.
         this._settings = this.getSettings();
