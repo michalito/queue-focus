@@ -205,8 +205,17 @@ export default class ShellTest extends Extension {
         });
     }
 
-    /** Move a virtual pointer over an actor, optionally pressing and releasing. */
-    _pointer(actor, click = false) {
+    /**
+     * Move a virtual pointer over an actor, optionally pressing and releasing.
+     * Where the actor is only means something once the layout it is part of
+     * has caught up with the change that came before, so wait for that.
+     */
+    async _pointer(actor, click = false) {
+        await this._wait(() => {
+            for (let a = actor; a && a !== global.stage; a = a.get_parent())
+                if (!a.has_allocation()) return false;
+            return true;
+        }, 'the actor under the pointer is laid out');
         this._device ??= Clutter.get_default_backend().get_default_seat()
             .create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
         const [x, y] = actor.get_transformed_position();
@@ -321,14 +330,14 @@ export default class ShellTest extends Extension {
 
         // The clock pill pauses the clock instead of opening the menu.
         check(!indicator.menu.isOpen, 'menu starts closed');
-        this._pointer(indicator._pill, true);
+        await this._pointer(indicator._pill, true);
         await this._wait(() => this._callsNamed('TogglePause').length === 1, 'pill press reaches TogglePause');
         await this._wait(() => indicator._clock.text === '❚❚ 47m', 'panel shows the paused clock');
         check(!indicator.menu.isOpen, 'pill press did not open the menu');
         check(indicator._pill.has_style_class_name('qf-pill-paused'), 'paused pill is styled as such');
 
         // The rest of the panel button opens the menu as before.
-        this._pointer(indicator._label, true);
+        await this._pointer(indicator._label, true);
         await this._wait(() => indicator.menu.isOpen, 'title press opens the menu');
         await this._wait(() => indicator._cardClock, 'card shows a clock');
         check(indicator._cardClock.text === '47m ❚❚', 'card clock trails the pause glyph');
@@ -339,7 +348,7 @@ export default class ShellTest extends Extension {
         }
         check(!targets().has(`task:${fix}:done`), 'the current task is not listed again');
         const sideRow = targets().get(`task:${ci}:done`).get_parent().get_parent();
-        this._pointer(sideRow);
+        await this._pointer(sideRow);
         await this._wait(() => sideRow.hover, 'pointer hovers the side card');
         check(targets().get(`task:${ci}:done`).get_parent().opacity === 255, 'hover reveals the actions');
         await this._shot('menu-paused');
@@ -387,7 +396,7 @@ export default class ShellTest extends Extension {
         await this._wait(() => indicator._entry !== beforeFailure, 'failed promote reply reconciles');
         this._rejectPromote = false;
         check(indicator._undo?.id === ci && targets().has('undo'), 'failed promote preserves undo');
-        this._pointer(targets().get(`task:${landlord}:done`).get_parent().get_parent());
+        await this._pointer(targets().get(`task:${landlord}:done`).get_parent().get_parent());
         await this._shot('menu-undo');
         targets().get('undo').emit('clicked', 1);
         await this._wait(() => this._callsNamed('UndoComplete').length === 2, 'undo reaches UndoComplete');
