@@ -374,6 +374,8 @@ Queue rows carry a button that makes the task current and a menu button. Later r
 
 The current task's banner and the Board's Now panel have their own done button and menu. Click the tag to cycle it, and click the timer to pause or resume. On the Board the tag is a button even when there is no tag yet, and reads `–` until there is.
 
+A title the window has cut short shows the whole of it in a tooltip. That is the Queue view's rows and banner, and the Board's Next, Side, and Later. A title that fits shows no tooltip.
+
 Closing an app window hides it. The service continues running so the top bar and global shortcuts keep working.
 
 ## Command line use

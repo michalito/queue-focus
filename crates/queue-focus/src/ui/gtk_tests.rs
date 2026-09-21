@@ -94,6 +94,20 @@ fn find_class(root: &impl IsA<gtk::Widget>, class: &str) -> Option<gtk::Widget> 
         .find(|w| w.has_css_class(class))
 }
 
+/// Ask a title for its tooltip the way a resting pointer would. `true` means
+/// it has one to show.
+fn offers_tooltip(title: &gtk::Label) -> bool {
+    let tooltip = glib::Object::new::<gtk::Tooltip>();
+    title.emit_by_name::<bool>("query-tooltip", &[&0i32, &0i32, &false, &tooltip])
+}
+
+fn title_in(root: &impl IsA<gtk::Widget>, class: &str) -> gtk::Label {
+    find_class(root, class)
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap()
+}
+
 fn hero_of(ui: &Rc<Ui>, page: Page) -> gtk::Box {
     ui.heroes
         .borrow()
@@ -311,15 +325,35 @@ fn hero_dressing() {
         assert!(has_class(hero, "timer-btn"));
     }
 
+    // A title that fits has nothing to add, so it offers no tooltip.
+    let queued_id = state.store().in_bucket(Bucket::Next).next().unwrap().id;
+    let queued_row = ui.row_for(queued_id).unwrap();
+    assert!(!offers_tooltip(&title_in(&card, "current-title")));
+    assert!(!offers_tooltip(&title_in(&queued_row, "row-title")));
+
     // Board titles remain complete even when the Queue banner truncates them.
     let long_title = "W".repeat(256);
     let current_id = state.store().current().unwrap().id;
-    ui.update(|s| s.rename(current_id, &long_title)).unwrap();
+    ui.update(|s| {
+        s.rename(current_id, &long_title);
+        s.rename(queued_id, &long_title);
+    })
+    .unwrap();
     settle();
-    let title = find_class(&card, "current-title")
-        .unwrap()
-        .downcast::<gtk::Label>()
-        .unwrap();
+    // The panel scrolls rather than cuts, so it still has nothing to add; the
+    // row under it is cut at three lines, and says the rest in a tooltip.
+    let queued_title = title_in(&ui.row_for(queued_id).unwrap(), "row-title");
+    assert!(queued_title.layout().is_ellipsized());
+    assert!(offers_tooltip(&queued_title));
+    assert!(!offers_tooltip(&title_in(&card, "current-title")));
+    // The queue's band cuts the same title at three lines, so there it does.
+    ui.set_page(Page::Queue);
+    settle();
+    assert!(offers_tooltip(&title_in(&band, "current-title")));
+    ui.set_page(Page::Board);
+    ui.update(|s| s.rename(queued_id, "queued")).unwrap();
+    settle();
+    let title = title_in(&card, "current-title");
     assert_eq!(title.text(), long_title);
     assert_eq!(title.ellipsize(), pango::EllipsizeMode::None);
     assert!(!title.layout().is_ellipsized());

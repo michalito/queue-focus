@@ -1778,7 +1778,7 @@ impl Ui {
             entry.add_css_class("rename-title");
             entry.upcast::<gtk::Widget>()
         } else {
-            gtk::Label::builder()
+            let title = gtk::Label::builder()
                 .label(&task.title)
                 .xalign(0.0)
                 .hexpand(true)
@@ -1792,8 +1792,9 @@ impl Ui {
                     pango::EllipsizeMode::None
                 })
                 .css_classes(["current-title"])
-                .build()
-                .upcast()
+                .build();
+            tooltip_when_cut(&title);
+            title.upcast()
         };
         let done = self.done_button(id, style);
         let menu = self.task_menu(id, Bucket::Now, &["flat", "hero-btn"]);
@@ -1967,6 +1968,7 @@ impl Ui {
                 title.set_wrap_mode(pango::WrapMode::WordChar);
                 title.set_lines(lines);
             }
+            tooltip_when_cut(&title);
             content.append(&title);
         }
         if style != RowStyle::SideCard {
@@ -2476,6 +2478,20 @@ fn chip_label(tag: Option<Tag>) -> gtk::Label {
             None => ["chip", "untagged"],
         })
         .build()
+}
+
+/// A title the window has cut short says the rest in a tooltip. One that fits
+/// has nothing to add, so it shows none: the answer is worked out when the
+/// pointer asks, from the layout as it is then.
+fn tooltip_when_cut(title: &gtk::Label) {
+    title.set_has_tooltip(true);
+    title.connect_query_tooltip(|title, _, _, _, tooltip| {
+        let cut = title.layout().is_ellipsized();
+        if cut {
+            tooltip.set_text(Some(&title.text()));
+        }
+        cut
+    });
 }
 
 /// Everything clickable gets the pointer cursor the design asks for. GTK CSS
