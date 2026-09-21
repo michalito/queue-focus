@@ -104,7 +104,7 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<Tag>,
     pub created_at: u64,
-    /// Unix seconds since this task became the current (head of Now) task.
+    /// Unix seconds since this task became the current task, the one in Now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<u64>,
     /// Unix seconds at which the timer was paused; `None` while it runs.
@@ -182,7 +182,7 @@ pub struct Completed {
     pub task: Task,
     /// Position of `task` in `tasks` before it was removed.
     pub index: usize,
-    /// The task moved from the head of Next to the head of Now, if any.
+    /// The task moved from the head of Next into Now, if any.
     pub pulled: Option<u64>,
 }
 
@@ -194,12 +194,36 @@ pub fn unix_now() -> u64 {
 }
 
 /// Ordered task store. `tasks` order is the display order within each bucket.
+///
+/// Now is a slot rather than a list: it holds the one task being done, the
+/// current task. A task that enters Now takes the slot, and the task it found
+/// there steps back to the front of Next, where completing pulls from.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "StoredTasks")]
 pub struct Store {
-    #[serde(default = "one")]
     pub next_id: u64,
-    #[serde(default)]
     pub tasks: Vec<Task>,
+}
+
+/// The task file as it was written. Older versions queued tasks up in Now, so
+/// what is read goes through `normalize` like every other way into the model.
+#[derive(Deserialize)]
+struct StoredTasks {
+    #[serde(default = "one")]
+    next_id: u64,
+    #[serde(default)]
+    tasks: Vec<Task>,
+}
+
+impl From<StoredTasks> for Store {
+    fn from(stored: StoredTasks) -> Self {
+        let mut store = Store {
+            next_id: stored.next_id,
+            tasks: stored.tasks,
+        };
+        store.normalize();
+        store
+    }
 }
 
 fn one() -> u64 {
@@ -224,7 +248,7 @@ impl Store {
         self.tasks.iter().filter(move |t| t.bucket == bucket)
     }
 
-    /// The focused task: head of Now.
+    /// The task being done: the one in Now.
     pub fn current(&self) -> Option<&Task> {
         self.in_bucket(Bucket::Now).next()
     }
@@ -239,7 +263,8 @@ impl Store {
 
     // ---- mutations (all call normalize) -------------------------------
 
-    pub fn add(&mut self, title: &str, bucket: Bucket, tag: Option<Tag>, front: bool) -> u64 {
+    /// Add a task at the end of `bucket`. Added to Now, it becomes current.
+    pub fn add(&mut self, title: &str, bucket: Bucket, tag: Option<Tag>) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let task = Task {
@@ -251,11 +276,9 @@ impl Store {
             started_at: None,
             paused_at: None,
         };
-        if front {
-            let pos = self.first_pos(bucket).unwrap_or(self.tasks.len());
-            self.tasks.insert(pos, task);
-        } else {
-            self.tasks.push(task);
+        self.tasks.push(task);
+        if bucket == Bucket::Now {
+            self.place(id, Bucket::Now, Some(0));
         }
         self.normalize();
         id
@@ -264,8 +287,7 @@ impl Store {
     pub fn quick_add(&mut self, input: &str, default_bucket: Bucket) -> Option<u64> {
         let q = QuickAdd::parse(input)?;
         let bucket = q.bucket.unwrap_or(default_bucket);
-        let front = bucket == Bucket::Now;
-        Some(self.add(&q.title, bucket, q.tag, front))
+        Some(self.add(&q.title, bucket, q.tag))
     }
 
     pub fn remove(&mut self, id: u64) -> bool {
@@ -278,24 +300,22 @@ impl Store {
         removed
     }
 
-    /// Delete the current task; if Now becomes empty, pull the head of Next.
+    /// Delete the current task and pull the head of Next into Now.
     pub fn complete_current(&mut self) -> Option<Completed> {
         let id = self.current()?.id;
         self.complete(id)
     }
 
-    /// Mark a task done: delete it, and when it was the current task and Now
-    /// is left empty, pull the head of Next. Any other task is simply deleted.
+    /// Mark a task done: delete it, and when it was the current task, pull the
+    /// head of Next into Now. Any other task is simply deleted.
     pub fn complete(&mut self, id: u64) -> Option<Completed> {
         let index = self.tasks.iter().position(|t| t.id == id)?;
-        let was_current = self.current().is_some_and(|t| t.id == id);
         let task = self.tasks.remove(index);
         let mut pulled = None;
-        if was_current && self.current().is_none() {
-            let next = self.in_bucket(Bucket::Next).next().map(|t| t.id);
-            if let Some(next) = next {
-                self.move_to(next, Bucket::Now, Some(0));
-                pulled = Some(next);
+        if task.bucket == Bucket::Now {
+            pulled = self.in_bucket(Bucket::Next).next().map(|t| t.id);
+            if let Some(next) = pulled {
+                self.place(next, Bucket::Now, Some(0));
             }
         }
         self.normalize();
@@ -316,7 +336,7 @@ impl Store {
         }
         if let Some(pulled) = completed.pulled {
             if self.get(pulled).is_some_and(|t| t.bucket == Bucket::Now) {
-                self.move_to(pulled, Bucket::Next, Some(0));
+                self.place(pulled, Bucket::Next, Some(0));
             }
         }
         let at = completed.index.min(self.tasks.len());
@@ -325,13 +345,33 @@ impl Store {
         true
     }
 
-    /// Make a task the current one (head of Now).
+    /// Make a task the current one. The task it replaces steps back to the
+    /// front of Next.
     pub fn promote(&mut self, id: u64) -> bool {
-        self.move_to(id, Bucket::Now, Some(0))
+        self.move_to(id, Bucket::Now, None)
     }
 
-    /// Move a task into `bucket` at `index` (None = end).
+    /// Move a task into `bucket` at `index` (None = end). Now has one place
+    /// in it, so moving a task there promotes it whatever the index.
     pub fn move_to(&mut self, id: u64, bucket: Bucket, index: Option<usize>) -> bool {
+        if bucket == Bucket::Now && self.current().is_some_and(|t| t.id == id) {
+            // Already there: leave the store as it is, so nothing is saved.
+            return true;
+        }
+        let index = if bucket == Bucket::Now {
+            Some(0)
+        } else {
+            index
+        };
+        let moved = self.place(id, bucket, index);
+        if moved {
+            self.normalize();
+        }
+        moved
+    }
+
+    /// Reposition a task without settling the store; callers normalize.
+    fn place(&mut self, id: u64, bucket: Bucket, index: Option<usize>) -> bool {
         let Some(pos) = self.tasks.iter().position(|t| t.id == id) else {
             return false;
         };
@@ -348,7 +388,6 @@ impl Store {
                 .unwrap_or(self.tasks.len()),
         };
         self.tasks.insert(insert_at, task);
-        self.normalize();
         true
     }
 
@@ -419,8 +458,14 @@ impl Store {
         }
     }
 
-    /// Only the current task carries a (possibly paused) timer.
+    /// Settle the store after a change. Now keeps its first task and the rest
+    /// step back to the front of Next, in order; then only the current task
+    /// carries a (possibly paused) timer.
     fn normalize(&mut self) {
+        let displaced: Vec<u64> = self.in_bucket(Bucket::Now).skip(1).map(|t| t.id).collect();
+        for id in displaced.into_iter().rev() {
+            self.place(id, Bucket::Next, Some(0));
+        }
         let cur = self.current().map(|t| t.id);
         let now = unix_now();
         for t in &mut self.tasks {
@@ -434,10 +479,6 @@ impl Store {
                 t.paused_at = None;
             }
         }
-    }
-
-    fn first_pos(&self, bucket: Bucket) -> Option<usize> {
-        self.tasks.iter().position(|t| t.bucket == bucket)
     }
 
     /// Compact JSON snapshot for the shell extension / CLI.
@@ -474,33 +515,116 @@ mod tests {
     #[test]
     fn add_and_order() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Next, None, false);
-        let b = s.add("b", Bucket::Next, None, false);
-        let c = s.add("c", Bucket::Next, None, true);
-        assert_eq!(ids(&s, Bucket::Next), vec![c, a, b]);
+        let a = s.add("a", Bucket::Next, None);
+        let b = s.add("b", Bucket::Next, None);
+        let c = s.add("c", Bucket::Next, None);
+        assert_eq!(ids(&s, Bucket::Next), vec![a, b, c]);
         assert!(s.current().is_none());
     }
 
     #[test]
     fn promote_and_timer() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Next, None, false);
-        let b = s.add("b", Bucket::Later, None, false);
+        let a = s.add("a", Bucket::Next, None);
+        let b = s.add("b", Bucket::Later, None);
         assert!(s.promote(b));
         assert_eq!(s.current().unwrap().id, b);
         assert!(s.get(b).unwrap().started_at.is_some());
         assert!(s.get(a).unwrap().started_at.is_none());
         s.promote(a);
-        assert_eq!(ids(&s, Bucket::Now), vec![a, b]);
-        assert!(s.get(b).unwrap().started_at.is_none(), "only head is timed");
+        assert_eq!(ids(&s, Bucket::Now), vec![a]);
+        assert!(s.get(b).unwrap().started_at.is_none(), "only Now is timed");
+    }
+
+    /// Every way into Now, with a task already there.
+    #[test]
+    fn now_holds_one_task_and_the_one_it_replaces_steps_back_to_next() {
+        /// Puts a task into Now: the listed one, or one of its own making.
+        type Enter = fn(&mut Store, u64);
+        let ways: [(&str, Enter); 5] = [
+            ("promote", |s, id| assert!(s.promote(id))),
+            ("move to the end", |s, id| {
+                assert!(s.move_to(id, Bucket::Now, None))
+            }),
+            ("move to an index", |s, id| {
+                assert!(s.move_to(id, Bucket::Now, Some(7)))
+            }),
+            ("add", |s, _| {
+                s.add("added", Bucket::Now, None);
+            }),
+            ("quick add", |s, _| {
+                s.quick_add("!added", Bucket::Later).unwrap();
+            }),
+        ];
+        for (way, enter) in ways {
+            let mut s = Store::new();
+            let was = s.add("was current", Bucket::Now, None);
+            let queued = s.add("queued", Bucket::Next, None);
+            let side = s.add("side", Bucket::Side, None);
+            s.tasks[0].started_at = Some(1000);
+            assert!(s.toggle_pause());
+
+            enter(&mut s, side);
+
+            assert_eq!(s.in_bucket(Bucket::Now).count(), 1, "{way}");
+            assert_ne!(s.current().unwrap().id, was, "{way}");
+            assert!(s.current().unwrap().started_at.is_some(), "{way}");
+            assert_eq!(
+                ids(&s, Bucket::Next),
+                vec![was, queued],
+                "{way}: completing pulls it straight back"
+            );
+            let was = s.get(was).unwrap();
+            assert!(was.started_at.is_none() && !was.is_paused(), "{way}");
+        }
+    }
+
+    #[test]
+    fn entering_now_again_changes_nothing() {
+        let mut s = Store::new();
+        let a = s.add("a", Bucket::Now, None);
+        let b = s.add("b", Bucket::Next, None);
+        s.tasks[0].started_at = Some(1000);
+        let before = s.clone();
+        assert!(s.promote(a));
+        assert!(s.move_to(a, Bucket::Now, Some(3)));
+        assert!(!s.shift(a, 1), "there is nowhere to go within Now");
+        assert_eq!(s, before);
+        assert_eq!(ids(&s, Bucket::Next), vec![b]);
+    }
+
+    /// Older versions let tasks queue up in Now, behind the current one.
+    #[test]
+    fn a_file_with_several_tasks_in_now_keeps_the_first_and_queues_the_rest() {
+        let json = r#"{"next_id":6,"tasks":[
+            {"id":1,"title":"next","bucket":"next","created_at":0},
+            {"id":2,"title":"current","bucket":"now","created_at":0,"started_at":10,"paused_at":40},
+            {"id":3,"title":"side","bucket":"side","created_at":0},
+            {"id":4,"title":"behind","bucket":"now","created_at":0},
+            {"id":5,"title":"further behind","bucket":"now","created_at":0,"started_at":20}]}"#;
+        let s: Store = serde_json::from_str(json).unwrap();
+        assert_eq!(ids(&s, Bucket::Now), vec![2]);
+        assert_eq!(ids(&s, Bucket::Next), vec![4, 5, 1]);
+        assert_eq!(ids(&s, Bucket::Side), vec![3]);
+        let current = s.current().unwrap();
+        assert_eq!(
+            (current.started_at, current.paused_at),
+            (Some(10), Some(40))
+        );
+        assert!(s.get(5).unwrap().started_at.is_none());
+        assert_eq!(s.next_id, 6);
+
+        // What is written back is already settled, so it loads unchanged.
+        let again: Store = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(again, s);
     }
 
     #[test]
     fn complete_pulls_from_next() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Now, None, false);
-        let b = s.add("b", Bucket::Next, None, false);
-        let c = s.add("c", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Now, None);
+        let b = s.add("b", Bucket::Next, None);
+        let c = s.add("c", Bucket::Next, None);
         let done = s.complete_current().unwrap();
         assert_eq!(done.task.id, a);
         assert_eq!(done.pulled, Some(b));
@@ -515,24 +639,11 @@ mod tests {
     }
 
     #[test]
-    fn complete_does_not_pull_when_now_has_more() {
-        let mut s = Store::new();
-        let a = s.add("a", Bucket::Now, None, false);
-        let b = s.add("b", Bucket::Now, None, false);
-        let c = s.add("c", Bucket::Next, None, false);
-        let done = s.complete_current().unwrap();
-        assert_eq!(done.task.id, a);
-        assert_eq!(done.pulled, None);
-        assert_eq!(s.current().unwrap().id, b);
-        assert_eq!(ids(&s, Bucket::Next), vec![c]);
-    }
-
-    #[test]
     fn undo_complete_restores_the_task_and_returns_the_pulled_one() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Now, Some(Tag::Work), false);
-        let b = s.add("b", Bucket::Next, None, false);
-        let c = s.add("c", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Now, Some(Tag::Work));
+        let b = s.add("b", Bucket::Next, None);
+        let c = s.add("c", Bucket::Next, None);
         s.tasks[0].started_at = Some(1000);
         let done = s.complete_current().unwrap();
         assert!(s.undo_complete(done));
@@ -545,25 +656,40 @@ mod tests {
     }
 
     #[test]
-    fn undo_complete_without_a_pull_puts_the_task_back_in_front() {
+    fn undo_complete_without_a_pull_fills_now_again() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Now, None, false);
-        let b = s.add("b", Bucket::Now, None, false);
-        let c = s.add("c", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Now, None);
+        let b = s.add("b", Bucket::Side, None);
         let done = s.complete_current().unwrap();
+        assert_eq!(done.pulled, None, "nothing in Next to pull");
+        assert!(s.current().is_none());
         assert!(s.undo_complete(done));
-        assert_eq!(ids(&s, Bucket::Now), vec![a, b]);
-        assert_eq!(ids(&s, Bucket::Next), vec![c]);
+        assert_eq!(ids(&s, Bucket::Now), vec![a]);
+        assert_eq!(ids(&s, Bucket::Side), vec![b]);
+    }
+
+    /// The pulled task sits after the completed one's old index or before it
+    /// depending on where Next was stored; undo has to win the slot either way.
+    #[test]
+    fn undo_complete_takes_the_slot_back_wherever_the_pulled_task_is_stored() {
+        let mut s = Store::new();
+        let b = s.add("b", Bucket::Next, None);
+        let a = s.add("a", Bucket::Now, None);
+        let done = s.complete_current().unwrap();
+        assert_eq!(s.current().unwrap().id, b);
+        assert!(s.undo_complete(done));
+        assert_eq!(ids(&s, Bucket::Now), vec![a]);
+        assert_eq!(ids(&s, Bucket::Next), vec![b]);
     }
 
     #[test]
     fn complete_deletes_any_other_task_and_undo_puts_it_back_in_place() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Now, None, false);
-        let b = s.add("b", Bucket::Side, None, false);
-        let c = s.add("c", Bucket::Side, None, false);
-        let d = s.add("d", Bucket::Side, None, false);
-        let e = s.add("e", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Now, None);
+        let b = s.add("b", Bucket::Side, None);
+        let c = s.add("c", Bucket::Side, None);
+        let d = s.add("d", Bucket::Side, None);
+        let e = s.add("e", Bucket::Next, None);
         let done = s.complete(c).unwrap();
         assert_eq!(done.task.id, c);
         assert_eq!(done.pulled, None, "only the current task pulls from Next");
@@ -575,7 +701,7 @@ mod tests {
         assert_eq!(s.current().unwrap().id, a);
         assert!(
             s.get(c).unwrap().started_at.is_none(),
-            "only the head of Now is timed"
+            "only the current task is timed"
         );
         assert!(s.complete(99).is_none());
     }
@@ -583,7 +709,7 @@ mod tests {
     #[test]
     fn undo_complete_refuses_a_task_that_already_exists() {
         let mut s = Store::new();
-        s.add("a", Bucket::Now, None, false);
+        s.add("a", Bucket::Now, None);
         let done = s.complete_current().unwrap();
         assert!(s.undo_complete(done.clone()));
         assert!(!s.undo_complete(done));
@@ -593,9 +719,9 @@ mod tests {
     #[test]
     fn move_and_shift() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Next, None, false);
-        let b = s.add("b", Bucket::Next, None, false);
-        let c = s.add("c", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Next, None);
+        let b = s.add("b", Bucket::Next, None);
+        let c = s.add("c", Bucket::Next, None);
         assert!(s.shift(c, -1));
         assert_eq!(ids(&s, Bucket::Next), vec![a, c, b]);
         assert!(!s.shift(a, -1));
@@ -645,7 +771,7 @@ mod tests {
     #[test]
     fn tags_and_rename() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Next, None);
         s.cycle_tag(a);
         assert_eq!(s.get(a).unwrap().tag, Some(Tag::Work));
         s.cycle_tag(a);
@@ -661,7 +787,7 @@ mod tests {
     fn task_titles_are_bounded_at_every_model_ingress() {
         let oversized = "🦀".repeat(MAX_TITLE_CHARS + 20);
         let mut store = Store::new();
-        let id = store.add(&oversized, Bucket::Next, None, false);
+        let id = store.add(&oversized, Bucket::Next, None);
         assert_eq!(
             store.get(id).unwrap().title.chars().count(),
             MAX_TITLE_CHARS
@@ -697,7 +823,7 @@ mod tests {
     #[test]
     fn pause_freezes_the_clock_and_resume_keeps_it() {
         let mut s = Store::new();
-        let a = s.add("a", Bucket::Now, None, false);
+        let a = s.add("a", Bucket::Now, None);
         // Pretend the task has been running for a minute.
         let now = unix_now();
         s.tasks[0].started_at = Some(now - 60);
@@ -722,8 +848,8 @@ mod tests {
     fn pause_needs_a_current_task_and_never_outlives_it() {
         let mut s = Store::new();
         assert!(!s.toggle_pause(), "nothing in Now");
-        let a = s.add("a", Bucket::Now, None, false);
-        let b = s.add("b", Bucket::Next, None, false);
+        let a = s.add("a", Bucket::Now, None);
+        let b = s.add("b", Bucket::Next, None);
         assert!(s.toggle_pause());
         assert!(s.get(a).unwrap().is_paused());
 
@@ -739,7 +865,7 @@ mod tests {
     #[test]
     fn a_paused_task_survives_the_snapshot_and_the_file() {
         let mut s = Store::new();
-        s.add("a", Bucket::Now, Some(Tag::Work), false);
+        s.add("a", Bucket::Now, Some(Tag::Work));
         s.tasks[0].started_at = Some(1000);
         assert!(s.toggle_pause());
         let paused_at = s.current().unwrap().paused_at;
@@ -766,8 +892,8 @@ mod tests {
     #[test]
     fn snapshot_roundtrip() {
         let mut s = Store::new();
-        s.add("a", Bucket::Now, Some(Tag::Work), false);
-        s.add("b", Bucket::Side, None, false);
+        s.add("a", Bucket::Now, Some(Tag::Work));
+        s.add("b", Bucket::Side, None);
         let json = s.snapshot_json();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["current"]["title"], "a");

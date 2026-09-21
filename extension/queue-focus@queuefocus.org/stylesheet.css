@@ -8,7 +8,8 @@
 .qf-dot-none { color: rgba(255, 255, 255, 0.35); }
 .qf-dot-work { color: #62a0ea; }
 .qf-dot-personal { color: #ffa348; }
-.qf-label { font-weight: 600; max-width: 320px; }
+/* The title is as wide as its text; the panel cuts it short at the clock. */
+.qf-label { font-weight: 600; }
 .qf-label-paused { color: rgba(255, 255, 255, 0.7); }
 
 /* The clock is a pill and a pause button: white wash while running, a
@@ -30,9 +31,11 @@
    Being inert makes it :insensitive, whose greyed text everything inside
    would inherit, so the menu's normal text colour is restated here. */
 .qf-menu, .qf-menu:insensitive { padding: 8px; spacing: 0; color: white; }
+/* The columns start at the mock's widths and grow with the titles in them:
+   every title is one line, shown whole. */
 .qf-columns { spacing: 14px; }
-.qf-left { width: 250px; spacing: 12px; }
-.qf-right { width: 348px; spacing: 6px; }
+.qf-left { min-width: 250px; spacing: 12px; }
+.qf-right { min-width: 348px; spacing: 6px; }
 
 /* Letter spacing is left off the card's own headings: St does not count it in
    a label's natural width, so a spaced label in a row comes out ellipsized. */
@@ -56,7 +59,7 @@
 .qf-card.qf-accent-personal { background-color: rgba(230, 97, 0, 0.16); }
 .qf-card-head { spacing: 8px; }
 .qf-paused { font-size: 0.8em; font-weight: 700; color: #ffa348; }
-.qf-card-title { font-size: 1.16em; font-weight: 700; max-height: 5.4em; }
+.qf-card-title { font-size: 1.16em; font-weight: 700; }
 .qf-card-clock { font-family: monospace; font-size: 2.05em; font-weight: 600; }
 .qf-card-clock-paused { color: rgba(255, 255, 255, 0.55); }
 .qf-card-empty { font-size: 1.02em; color: rgba(255, 255, 255, 0.6); }
@@ -110,19 +113,10 @@
 }
 .qf-entry:hover { background-color: rgba(255, 255, 255, 0.14); }
 
-/* The rest of Now as rows, then Side as cards; it scrolls only past ~8 rows. */
+/* Side as cards; the list scrolls only past five or so of them. */
 .qf-scroll { max-height: 300px; }
 .qf-list { spacing: 2px; }
 .qf-list-head { padding: 8px 8px 4px; letter-spacing: 0.08em; }
-.qf-row { min-height: 34px; padding: 0 8px; border-radius: 8px; spacing: 8px; }
-.qf-row:hover { background-color: rgba(255, 255, 255, 0.08); }
-.qf-row-actions { spacing: 4px; }
-.qf-act {
-  min-height: 26px; min-width: 34px; padding: 0 8px;
-  border-radius: 6px; font-weight: 700;
-  background-color: rgba(255, 255, 255, 0.14);
-}
-.qf-act:hover, .qf-act:focus { background-color: rgba(255, 255, 255, 0.26); }
 
 .qf-side { spacing: 8px; padding: 1px; }
 .qf-side-card {
@@ -137,8 +131,14 @@
 .qf-accent-work .qf-side-card { background-color: rgba(53, 132, 228, 0.07); }
 .qf-accent-personal .qf-side-card { background-color: rgba(230, 97, 0, 0.07); }
 .qf-side-card:hover { background-color: rgba(255, 255, 255, 0.12); }
-.qf-side-card .qf-row-title { font-size: 1.09em; font-weight: 700; }
-.qf-side-card .qf-act { min-height: 28px; min-width: 36px; }
+.qf-side-title { font-size: 1.09em; font-weight: 700; }
+.qf-side-actions { spacing: 4px; }
+.qf-act {
+  min-height: 28px; min-width: 36px; padding: 0 8px;
+  border-radius: 6px; font-weight: 700;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+.qf-act:hover, .qf-act:focus { background-color: rgba(255, 255, 255, 0.26); }
 .qf-side-empty {
   min-height: 70px;
   padding: 8px;

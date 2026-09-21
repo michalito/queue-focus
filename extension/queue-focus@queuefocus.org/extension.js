@@ -2,8 +2,11 @@
 //
 // The panel shows the current task: a tag dot, the title, and its clock as a
 // pill that pauses the clock when clicked. The menu is a focus card for that
-// task on the left and the queue it competes with on the right: the rest of
-// Now, then Side. Next and Later are left to the Queue and Board views.
+// task on the left and what runs beside it on the right: Side. Next and Later
+// are left to the Queue and Board views.
+//
+// Titles are shown whole, on one line: the panel button and the menu grow
+// sideways to fit them, and stop only where the screen does.
 import Atk from 'gi://Atk';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
@@ -58,8 +61,12 @@ function label(text, styleClass, props = {}) {
     return new St.Label({text, style_class: styleClass, y_align: CENTER, ...props});
 }
 
-/** A label that shortens with an ellipsis rather than widening its row. */
-function ellipsized(actor) {
+/**
+ * One line of text, never wrapped. It asks for the width of its text, so
+ * whatever holds it grows to fit, and the ellipsis is only for when there is
+ * no more room to give.
+ */
+function oneLine(actor) {
     actor.clutter_text.ellipsize = Pango.EllipsizeMode.END;
     return actor;
 }
@@ -107,10 +114,14 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._doneNotification = null;
         // The card's clock in the menu currently built, if the card has one.
         this._cardClock = null;
+        // The two columns of the menu currently built, and the widths they
+        // have reached since it was opened (see _buildMenu).
+        this._columns = null;
+        this._columnFloors = [0, 0];
 
         const box = new St.BoxLayout({style_class: 'qf-box'});
         this._dot = label('●', 'qf-dot qf-dot-none');
-        this._label = ellipsized(label('…', 'qf-label'));
+        this._label = oneLine(label('…', 'qf-label'));
         this._clock = label('', 'qf-clock');
         // The clock is a pause button living inside the panel button. It takes
         // the press itself so the panel button never turns it into a menu
@@ -149,6 +160,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open) {
+                this._capMenu();
                 if (!this._quickAddPending) this._buildMenu(true);
                 return;
             }
@@ -204,6 +216,23 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (!this._tickId) return;
         GLib.source_remove(this._tickId);
         this._tickId = 0;
+    }
+
+    // ---- widths -----------------------------------------------------------
+
+    /**
+     * Keep the menu on the screen: it is as wide as its titles, and nothing
+     * upstream limits that. The panel button limits the menu's height on every
+     * open, replacing its style, so the width goes in after it.
+     */
+    _capMenu() {
+        const actor = this.menu.actor;
+        const workArea = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.primaryIndex);
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        // The shell keeps a menu its arrow's rise away from either edge.
+        const edges = 2 * actor.get_theme_node().get_length('-arrow-rise') + actor.margin_left + actor.margin_right;
+        const maxWidth = Math.floor((workArea.width - edges) / scale);
+        actor.style = `${actor.style ?? ''} max-width: ${maxWidth}px;`;
     }
 
     // ---- actions ----------------------------------------------------------
@@ -394,6 +423,16 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // and put key focus back where it was. A fresh open focuses the entry.
         const focusKey = fresh ? 'entry' : this._focusedKey();
         const draft = this._entry?.get_text() ?? '';
+        // Keep each column's width while open. Keeping only the total lets a
+        // shorter current title redistribute space and move Done/Pause under
+        // the pointer. Closing lets both columns shrink again.
+        this._columnFloors = this._columnFloors.map((floor, i) => {
+            if (fresh) return 0;
+            const col = this._columns?.get_child_at_index(i);
+            // Changed and a method reply can rebuild before the next frame.
+            // An unallocated actor reports its uncapped natural width.
+            return col?.has_allocation() ? Math.max(floor, col.width) : floor;
+        });
         this._focusTargets = new Map();
         this._entry = null;
         this._cardClock = null;
@@ -403,9 +442,16 @@ class QueueFocusIndicator extends PanelMenu.Button {
         // navigation still works between the focusable actors inside it.
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'qf-menu'});
         const columns = new St.BoxLayout({style_class: 'qf-columns', x_expand: true});
-        columns.add_child(this._focusColumn());
-        columns.add_child(this._queueColumn(draft));
+        // As a style, not as the actor's min_width: a forced request is used
+        // as it stands, and one below what the content asks for is an error
+        // the shell does not survive. A style is settled with the content.
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        for (const [i, col] of [this._focusColumn(), this._queueColumn(draft)].entries()) {
+            if (this._columnFloors[i]) col.style = `min-width: ${this._columnFloors[i] / scale}px;`;
+            columns.add_child(col);
+        }
         item.add_child(columns);
+        this._columns = columns;
         this.menu.addMenuItem(item);
         this._updateClocks();
         this._restoreFocus(focusKey);
@@ -436,7 +482,13 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (this._undo) {
             const {id, title} = this._undo;
             const row = new St.BoxLayout({style_class: 'qf-undo'});
-            row.add_child(ellipsized(label(`Done · ${title}`, 'qf-undo-text', {x_expand: true})));
+            // The one line that is not a task but a report on one, arriving
+            // under a pointer that has just pressed Done. It takes the width
+            // the column has and asks for none, so it cannot move the menu.
+            // Both requests are forced together: on its own either could
+            // cross the text's, which the shell does not survive.
+            row.add_child(oneLine(label(`Done · ${title}`, 'qf-undo-text',
+                {x_expand: true, min_width: 0, natural_width: 0})));
             row.add_child(this._focusable('undo', button('↶ Undo', 'qf-undo-btn', () => this.undoComplete(id))));
             col.add_child(row);
         }
@@ -458,11 +510,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
             card.add_child(label(hint, 'qf-card-empty', {y_expand: true}));
             return card;
         }
-        const title = new St.Label({text: cur.title, style_class: 'qf-card-title'});
-        title.clutter_text.line_wrap = true;
-        title.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        card.add_child(title);
+        card.add_child(oneLine(new St.Label({text: cur.title, style_class: 'qf-card-title'})));
         if (cur.started_at) {
             this._cardClock = label('', `qf-card-clock${paused ? ' qf-card-clock-paused' : ''}`,
                 {y_expand: true, y_align: END});
@@ -486,7 +534,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
         return row;
     }
 
-    /** Right: the quick-add entry, then the rest of Now and Side. */
+    /** Right: the quick-add entry, then Side. */
     _queueColumn(draft) {
         const st = this._state;
         const cur = st?.current ?? null;
@@ -506,14 +554,9 @@ class QueueFocusIndicator extends PanelMenu.Button {
         col.add_child(scroll);
         if (!st) return col;
 
-        const rest = st.now.slice(1);
-        if (rest.length) {
-            list.add_child(label('ALSO IN NOW', 'qf-section qf-list-head'));
-            for (const t of rest) list.add_child(this._taskRow(t, 'qf-row'));
-        }
         list.add_child(label('SIDE', 'qf-section qf-list-head'));
         const side = column('qf-side');
-        for (const t of st.side) side.add_child(this._taskRow(t, 'qf-side-card'));
+        for (const t of st.side) side.add_child(this._sideCard(t));
         if (!st.side.length) {
             const empty = label('Nothing on the side.\nAdd one with @side.', 'qf-side-empty-text',
                 {x_align: CENTER});
@@ -553,12 +596,15 @@ class QueueFocusIndicator extends PanelMenu.Button {
         return entry;
     }
 
-    /** A task with its actions, shown while the pointer or key focus is on it. */
-    _taskRow(task, styleClass) {
-        const row = new St.BoxLayout({style_class: styleClass, reactive: true, track_hover: true});
+    /**
+     * A Side task with its actions, shown while the pointer or key focus is on
+     * it. Hidden, they still take their room, so revealing them moves nothing.
+     */
+    _sideCard(task) {
+        const row = new St.BoxLayout({style_class: 'qf-side-card', reactive: true, track_hover: true});
         if (task.tag) row.add_child(chip(task.tag));
-        row.add_child(ellipsized(label(task.title, 'qf-row-title', {x_expand: true})));
-        const actions = new St.BoxLayout({style_class: 'qf-row-actions', y_align: CENTER, opacity: 0});
+        row.add_child(oneLine(label(task.title, 'qf-side-title', {x_expand: true})));
+        const actions = new St.BoxLayout({style_class: 'qf-side-actions', y_align: CENTER, opacity: 0});
         const promote = button('↑', 'qf-act', () => this.promote(task), {accessible_name: 'Make current'});
         const done = button('✓', 'qf-act', () => this.completeTask(task), {accessible_name: 'Done'});
         actions.add_child(this._focusable(`task:${task.id}:promote`, promote));
@@ -584,6 +630,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._source?.destroy();
         this._entry = null;
         this._cardClock = null;
+        this._columns = null;
         this._focusTargets.clear();
         super.destroy();
     }
@@ -592,7 +639,11 @@ class QueueFocusIndicator extends PanelMenu.Button {
 export default class QueueFocusExtension extends Extension {
     enable() {
         this._indicator = new Indicator();
-        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'center');
+        // Beside Activities, where a title can grow. The panel gives its left
+        // box only the room up to the clock, so a long title is cut there by
+        // the panel itself; in the centre it would push the clock about with
+        // every task and have to be measured against both sides.
+        Main.panel.addToStatusArea(this.uuid, this._indicator, 1, 'left');
 
         // Global shortcuts, configurable via the extension's gsettings schema.
         this._settings = this.getSettings();

@@ -431,9 +431,8 @@ popover.task-menu > contents {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 10%, transparent);
 }
 
-/* Next: one card of hairline-separated rows, holding the Now tail in front of
-   Next's own. Whatever leads it sits against the card's edge, so it draws no
-   line of its own. */
+/* Next: one card of hairline-separated rows. The first sits against the card's
+   edge, so it draws no line of its own. */
 .board-card {
   border: 1px solid var(--card-shade-color);
   border-radius: 12px;
@@ -442,7 +441,7 @@ popover.task-menu > contents {
 .board-rows > row {
   border-top: 1px solid var(--card-shade-color);
 }
-.board-rows > row.leads {
+.board-rows > row:first-child {
   border-top: none;
 }
 .board-rows > row:hover {

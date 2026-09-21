@@ -41,8 +41,12 @@ EOF_BUS
 gsettings set org.gnome.shell enabled-extensions "['$DRIVER']"
 gsettings set org.gnome.shell disable-user-extensions false
 export QF_SHELL_TEST_LOG="$TEST_ROOT/shell.log"
-# Set QF_SHELL_TEST_SHOTS to a directory to keep PNGs of the menu from the run.
-if [ -n "${QF_SHELL_TEST_SHOTS:-}" ]; then mkdir -p -- "$QF_SHELL_TEST_SHOTS"; fi
+# Set QF_SHELL_TEST_SHOTS to a directory to keep PNGs of the menu from the run,
+# and the shell's own log beside them.
+if [ -n "${QF_SHELL_TEST_SHOTS:-}" ]; then
+  mkdir -p -- "$QF_SHELL_TEST_SHOTS"
+  trap 'cp -- "$QF_SHELL_TEST_LOG" "$QF_SHELL_TEST_SHOTS/shell.log" 2>/dev/null || true; rm -rf -- "$TEST_ROOT"' EXIT
+fi
 dbus-run-session --config-file="$TEST_ROOT/bus.conf" -- bash -c '
   ulimit -c 0
   export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
@@ -67,9 +71,15 @@ log = open(sys.argv[2]).read()
 if any('/queue-focus@queuefocus.org/' in line and '.js:' in line for line in log.splitlines()):
     print(log, file=sys.stderr)
     raise SystemExit('GNOME logged an error from the shipped extension')
+# An actor asking for less than its own minimum is fatal to the shell in a box
+# layout and only a warning elsewhere. Neither is ever acceptable from a menu.
+if any('Clutter-ERROR' in line or ('natural' in line and 'minimum' in line) for line in log.splitlines()):
+    print(log, file=sys.stderr)
+    raise SystemExit('GNOME logged an inconsistent size request')
 if not result['ok']:
     print(log, file=sys.stderr)
     raise SystemExit(result.get('stack', result['error']))
 print('GNOME Shell integration passed: quick-add draft preservation, late reply, disable/re-enable, '
-      'clock pill pausing without opening the menu, focus card, Side rows, undo, views')
+      'clock pill pausing without opening the menu, focus card, Side cards, undo, one task in Now, views, '
+      'titles shown whole with the panel and menu growing to fit')
 PY

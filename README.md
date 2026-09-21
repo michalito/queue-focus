@@ -10,25 +10,31 @@ Queue Focus supports GNOME Shell 48, 49, and 50.
 
 ## The four buckets
 
-1. Now contains active tasks. The first task in Now is the current task. It appears in the top bar and has a timer you can pause.
+1. Now holds one task: the current task, the one you are doing. It appears in the top bar and has a timer you can pause. Now never holds more than one task.
 
 2. Side contains work that can continue beside the current task. A build, download, or request waiting for a reply can go here.
 
-3. Next is an ordered queue. If completing the current task leaves Now empty, the first task in Next moves to Now.
+3. Next is an ordered queue. Completing the current task moves the first task in Next to Now.
 
 4. Later is the backlog.
 
-Promoting a task puts it first in Now. The previous current task stays in Now behind it. A task starts a new timer whenever it becomes current, and any pause is cleared.
+Promoting a task puts it in Now. The task that was there steps back to the front of Next, so completing the new one brings it straight back. This happens however a task reaches Now: promoting it, dropping it on the current task, moving it with `1`, or adding it with `!`. A task starts a new timer whenever it becomes current, and any pause is cleared.
+
+Moving or deleting the current task leaves Now empty. Only completing a task pulls the next one in.
 
 ## What you can open
 
 ### Top bar
 
-The GNOME Shell extension shows the current title and its elapsed time as a pill. Click the pill to pause the timer, and again to resume it. While the timer is paused the time stops, the pill turns orange, and a `❚❚` leads it. The dot uses the tag of the current task: blue for work, orange for personal, and grey when untagged.
+The GNOME Shell extension sits beside the Activities button and shows the current title in full, with its elapsed time as a pill. The title is never wrapped, and the button grows to the right to fit it. The clock stays in the middle of the panel whatever the title does: the panel gives its left side only the room up to the clock, so a title long enough to reach it is cut short there with an ellipsis. Click the pill to pause the timer, and again to resume it. While the timer is paused the time stops, the pill turns orange, and a `❚❚` leads it. The dot uses the tag of the current task: blue for work, orange for personal, and grey when untagged.
 
 The app window also changes its accent to match the tag of the current task.
 
-The top bar menu has two columns. On the left, the current task sits in a card with its tag, its timer, a Done button, and a Pause or Resume button. Below the card are buttons for the Queue and Board views and a gear that opens Settings. On the right is the add entry, then the rest of Now under `Also in Now`, then Side as cards. Each listed task shows a promote button and a done button while the pointer or keyboard focus is on it. Next and Later are left to the Queue and Board views.
+The top bar menu has two columns. On the left, the current task sits in a card with its tag, its timer, a Done button, and a Pause or Resume button. Below the card are buttons for the Queue and Board views and a gear that opens Settings. On the right is the add entry, then Side as cards. Each Side task shows a promote button and a done button while the pointer or keyboard focus is on it. Next and Later are left to the Queue and Board views.
+
+Every title in the menu is one line, shown whole. The two columns start at a fixed width and grow sideways with the titles in them, so the menu is as wide as its longest titles need. It stops at the edges of the screen, and only a title wider than that is cut short.
+
+While the menu stays open it only grows. When a task leaves, the menu keeps its width until you close it, so the buttons stay where the pointer left them. For the same reason the `Done · title` row is the one line that fits the column it is in and never widens it: it appears right under a pointer that has just pressed Done.
 
 Marking a task done from the menu puts a `Done · title` row with an Undo button in the menu for a few seconds. Completing the current task with the shortcut shows a GNOME notification with an Undo button instead. Undo puts the task back where it was, with its timer intact when it was current, and returns any task that was pulled from Next. Only the most recent completion can be undone, and only while nothing else in the queue has changed.
 
@@ -40,7 +46,7 @@ The Queue view is a narrow window in three fixed bands.
 
 1. The current task sits at the top in its own banner: the `Now` heading, its tag, a timer, the title, a done button, and a menu. When Now is empty the banner reads `empty — promote one ↑`.
 
-2. Below it, one scrolling card holds Side and then Next. Anything else in Now — what is queued behind the current task — is listed at the top of Next.
+2. Below it, one scrolling card holds Side and then Next.
 
 3. Later is a shelf pinned to the bottom of the window. It starts collapsed and scrolls once open. Its rows can be promoted or moved to Next directly.
 
@@ -48,15 +54,15 @@ The Queue view is a narrow window in three fixed bands.
 
 The Board view shows the same tasks in four quadrants. Use it when you need to move several tasks.
 
-1. Now takes the wide top left as a panel: the tag, the timer, the title in full (scrollable when long), a done button, and a menu. It shows the one task you are doing. Dropping a task on it makes that task current. When Now is empty it reads `empty — drop a task here`.
+1. Now takes the wide top left as a panel: the tag, the timer, the title in full (scrollable when long), a done button, and a menu. It shows the one task you are doing. Dropping a task on it, or on the `Now` heading above it, makes that task current. When Now is empty it reads `empty — drop a task here`.
 
 2. Side takes the narrow top right, one card per task, and grows to a point before it scrolls.
 
-3. Next takes the wide bottom left and fills the rest of the window. Anything else in Now — what is queued behind the current task — is listed at the top of it, exactly as on the Queue view.
+3. Next takes the wide bottom left and fills the rest of the window.
 
 4. Later takes the narrow bottom right, one dim line per task. It is never collapsed here.
 
-While you drag, a line shows where the task would land and the row it came from fades. Dropping on the Now panel rings it first.
+While you drag, a line shows where the task would land and the row it came from fades. Dropping on the Now panel or its heading rings the panel first.
 
 ### Settings view
 
@@ -64,7 +70,7 @@ The gear button in the header bar opens Settings in the same window. `Ctrl+,` do
 
 ### Quick add window
 
-The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next. Press `Ctrl+Enter` to add to Now. Press `Escape` to close it.
+The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
 
 All views use the same service and task file. A change in one view appears in the others.
 
@@ -316,9 +322,9 @@ The accepted tag markers are:
 
 The accepted bucket markers are `@now`, `@next`, `@later`, and `@side`. Their short forms are `@n`, `@x`, `@l`, and `@s`.
 
-Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same.
+Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task.
 
-In the main window, Enter adds to Next and `Ctrl+Enter` adds to Now. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
+In the main window, Enter adds to Next and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
 
 ## Use the app window
 
@@ -334,9 +340,9 @@ The task keys act on the focused task. In the Queue view the current task's bann
 
 3. `Enter` makes the focused task current. The current task is already current, so its banner ignores it.
 
-4. `d`, `x`, and `Delete` mark the focused task done. A task that is not current is deleted. Completing the current task also pulls from Next when Now becomes empty.
+4. `d`, `x`, and `Delete` mark the focused task done. A task that is not current is deleted. Completing the current task also pulls the first task in Next into Now.
 
-5. `1`, `2`, `3`, and `4` move the task to Now, Next, Later, and Side.
+5. `1`, `2`, `3`, and `4` move the task to Now, Next, Later, and Side. Moving a task to Now makes it current, exactly as `Enter` does.
 
 6. `t` cycles the tag through no tag, work, personal, and no tag.
 
@@ -362,11 +368,13 @@ The Settings view has no tasks on it, so the task keys do nothing there. `q` and
 
 ### Mouse
 
-Double click a task to make it current. Drag a task to a new position or bucket. Drop it on a bucket heading to place it at the end of that bucket. This also works with an empty bucket or the collapsed Later shelf. On the Board the space under a bucket's last row does the same. Drop a task on the current task's banner, or on the Board's Now panel, to make it current.
+Double click a task to make it current. Drag a task to a new position or bucket. Drop it on a bucket heading to place it at the end of that bucket. This also works with an empty bucket or the collapsed Later shelf. The Board's `Now` heading is the exception: it makes the task current. On the Board the space under a bucket's last row does the same. Drop a task on the current task's banner, or on the Board's Now panel, to make it current.
 
-Queue rows carry a button that makes the task current and a menu button. Later rows add a `→ next` button. Board rows have the menu alone because the quadrants are narrower. Every row's menu can make the task current, cycle its tag, mark it done, move it to another bucket, rename it, or delete it.
+Queue rows carry a button that makes the task current and a menu button. Later rows add a `→ next` button. Board rows have the menu alone because the quadrants are narrower. Every row's menu can make the task current, cycle its tag, mark it done, move it to Side, Next, or Later, rename it, or delete it.
 
 The current task's banner and the Board's Now panel have their own done button and menu. Click the tag to cycle it, and click the timer to pause or resume. On the Board the tag is a button even when there is no tag yet, and reads `–` until there is.
+
+A title the window has cut short shows the whole of it in a tooltip. That is the Queue view's rows and banner, and the Board's Next, Side, and Later. A title that fits shows no tooltip.
 
 Closing an app window hides it. The service continues running so the top bar and global shortcuts keep working.
 
@@ -404,7 +412,7 @@ queue-focus --help
 
 `queue-focus done` completes the current task. It prints the deleted title, or `nothing in Now`.
 
-`queue-focus status` prints a compact JSON snapshot with `current`, `now`, `side`, `next`, and `later` fields. Each task in it carries its id, title, tag, start time, and pause time. This is a view of the current state, not the storage file format.
+`queue-focus status` prints a compact JSON snapshot with `current`, `now`, `side`, `next`, and `later` fields. `now` lists the Now bucket like the other three, so it holds the current task and nothing else, or is empty. Each task in the snapshot carries its id, title, tag, start time, and pause time. This is a view of the current state, not the storage file format.
 
 `queue-focus hide` hides every app window. `queue-focus quit` stops the service and keeps it stopped until the next app or extension request. `queue-focus restart` stops the service and starts it again, for example after replacing the binary.
 
@@ -424,7 +432,7 @@ The default path is:
 ~/.local/share/queue-focus/tasks.json
 ```
 
-The file is readable JSON. It contains the next task id and an ordered list of tasks. Each task has an id, title, bucket, creation time, optional tag, optional start time, and optional pause time. A file written by an older version loads unchanged.
+The file is readable JSON. It contains the next task id and an ordered list of tasks. Each task has an id, title, bucket, creation time, optional tag, optional start time, and optional pause time. A file written by an older version loads as it is, with one exception: earlier versions let tasks queue up in Now behind the current one. On load the first task in Now stays current with its timer, and the rest move to the front of Next in the order they had. The file itself is rewritten at the next task change.
 
 The app creates the data directory with mode `0700` and the file with mode `0600`. It sets those modes when it loads an older file. It rejects a task file that is a symbolic link.
 
@@ -468,7 +476,7 @@ The service exports these methods:
 
 1. `GetState()` returns the same JSON snapshot as `queue-focus status`.
 
-2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence.
+2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence. A task added to `now` becomes the current task, as with `Promote`.
 
 3. `CompleteCurrent()` deletes the current task and returns its id and title. When Now is empty it returns `0` and an empty string.
 
@@ -478,11 +486,11 @@ The service exports these methods:
 
 6. `TogglePause()` pauses or resumes the current task's timer and returns whether there was one.
 
-7. `Promote(id)` moves a task to the front of Now.
+7. `Promote(id)` makes a task the current one. The task it replaces moves to the front of Next.
 
 8. `Remove(id)` deletes a task. Unlike `Complete`, it cannot be undone.
 
-9. `Move(id, bucket, index)` moves a task to a zero based position. It accepts the same bucket values as `Add`. A negative index or an index past the bucket length places it at the end.
+9. `Move(id, bucket, index)` moves a task to a zero based position. It accepts the same bucket values as `Add`. A negative index or an index past the bucket length places it at the end. Now holds one task, so a move to `now` ignores the index and does what `Promote` does.
 
 10. `SetTag(id, tag)` accepts `work`, `personal`, `w`, or `p`. An empty string clears the tag.
 
@@ -545,7 +553,7 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 `make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
 
-`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer, and the gear opens Settings. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
+`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer and sends the replaced task to Next, and the gear opens Settings. Last it checks the widths with short, long, and impossibly long titles: long titles are whole and on one line in the panel and the menu, the menu grows with them, and at the limit the clock is still in the middle, Activities and the system menu keep their widths, and the menu stays on the monitor. An open menu keeps its width when its longest task is marked done, the next done button does not move, and closing the menu lets the width go. The run also fails if the shell logs an inconsistent size request, which is the kind of layout mistake that can end a session. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run, and the shell's own log beside them. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 

@@ -275,7 +275,7 @@ mod tests {
         let seen = notifications.clone();
         state.on_change(move || seen.set(seen.get() + 1));
 
-        let result = state.update(|store| store.add("lost", Bucket::Next, None, false));
+        let result = state.update(|store| store.add("lost", Bucket::Next, None));
 
         assert!(result.is_err());
         assert!(state.store().is_empty());
@@ -296,7 +296,7 @@ mod tests {
         state.on_change(move || seen.set(seen.get() + 1));
 
         let result = state.update_with(
-            |store| store.add("committed", Bucket::Next, None, false),
+            |store| store.add("committed", Bucket::Next, None),
             |path, store| {
                 qf_core::save(path, store)?;
                 Err(qf_core::SaveError::AfterCommit(io::Error::other(
@@ -326,15 +326,15 @@ mod tests {
     fn completing_the_current_task_pulls_next_and_deleting_others_does_not() {
         let (dir, state) = writable_state("complete");
         let now = state
-            .update(|s| s.add("now", Bucket::Now, None, false))
+            .update(|s| s.add("now", Bucket::Now, None))
             .unwrap()
             .into_value();
         let next = state
-            .update(|s| s.add("next", Bucket::Next, None, false))
+            .update(|s| s.add("next", Bucket::Next, None))
             .unwrap()
             .into_value();
         let later = state
-            .update(|s| s.add("later", Bucket::Later, None, false))
+            .update(|s| s.add("later", Bucket::Later, None))
             .unwrap()
             .into_value();
 
@@ -351,11 +351,11 @@ mod tests {
     fn undo_reverses_the_last_completion_once() {
         let (dir, state) = writable_state("undo");
         let a = state
-            .update(|s| s.add("a", Bucket::Now, None, false))
+            .update(|s| s.add("a", Bucket::Now, None))
             .unwrap()
             .into_value();
         let b = state
-            .update(|s| s.add("b", Bucket::Next, None, false))
+            .update(|s| s.add("b", Bucket::Next, None))
             .unwrap()
             .into_value();
 
@@ -383,15 +383,15 @@ mod tests {
     fn undo_puts_a_deleted_side_task_back_in_place() {
         let (dir, state) = writable_state("undo-side");
         let now = state
-            .update(|s| s.add("now", Bucket::Now, None, false))
+            .update(|s| s.add("now", Bucket::Now, None))
             .unwrap()
             .into_value();
         let first = state
-            .update(|s| s.add("first", Bucket::Side, None, false))
+            .update(|s| s.add("first", Bucket::Side, None))
             .unwrap()
             .into_value();
         let second = state
-            .update(|s| s.add("second", Bucket::Side, None, false))
+            .update(|s| s.add("second", Bucket::Side, None))
             .unwrap()
             .into_value();
 
@@ -411,12 +411,12 @@ mod tests {
     fn undo_is_refused_after_any_other_change() {
         let (dir, state) = writable_state("undo-stale");
         let a = state
-            .update(|s| s.add("a", Bucket::Now, None, false))
+            .update(|s| s.add("a", Bucket::Now, None))
             .unwrap()
             .into_value();
         state.complete_current().unwrap();
         state
-            .update(|s| s.add("meanwhile", Bucket::Later, None, false))
+            .update(|s| s.add("meanwhile", Bucket::Later, None))
             .unwrap();
 
         assert!(!state.undo_complete(a).unwrap().into_value());
@@ -429,11 +429,11 @@ mod tests {
     fn undo_is_bound_to_the_task_that_was_completed_last() {
         let (dir, state) = writable_state("undo-bound");
         let a = state
-            .update(|s| s.add("a", Bucket::Now, None, false))
+            .update(|s| s.add("a", Bucket::Now, None))
             .unwrap()
             .into_value();
         let b = state
-            .update(|s| s.add("b", Bucket::Next, None, false))
+            .update(|s| s.add("b", Bucket::Next, None))
             .unwrap()
             .into_value();
         state.complete_current().unwrap();
@@ -454,7 +454,7 @@ mod tests {
     fn requests_that_change_nothing_neither_save_nor_invalidate_undo() {
         let (dir, state) = writable_state("undo-noop");
         let a = state
-            .update(|s| s.add("a", Bucket::Now, None, false))
+            .update(|s| s.add("a", Bucket::Now, None))
             .unwrap()
             .into_value();
         let notifications = Rc::new(Cell::new(0));
@@ -478,7 +478,7 @@ mod tests {
     fn a_failed_undo_save_keeps_the_record_for_another_try() {
         let (dir, state) = writable_state("undo-save-failure");
         let a = state
-            .update(|s| s.add("a", Bucket::Now, None, false))
+            .update(|s| s.add("a", Bucket::Now, None))
             .unwrap()
             .into_value();
         state.complete_current().unwrap();

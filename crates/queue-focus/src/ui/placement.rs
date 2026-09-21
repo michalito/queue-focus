@@ -1,57 +1,10 @@
-//! Task placement, independent of GTK. A displayed section is not a bucket:
-//! the Next section contains both the Now tail and the Next bucket, because the
-//! head of Now belongs to the hero panel rather than to any list. Both pages
-//! read the same way — hero, Side, Now tail, Next, Later — and differ only in
-//! how those are laid out.
+//! Task placement, independent of GTK. Both pages read the same way — the hero
+//! holding the current task, then Side, Next and Later — and differ only in
+//! how those are laid out. Now is never a list: the one task in it is the hero's.
 use super::Page;
 use qf_core::{Bucket, Store};
 
 pub(super) const ORDER: [Bucket; 4] = [Bucket::Now, Bucket::Side, Bucket::Next, Bucket::Later];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct List {
-    pub page: Page,
-    pub bucket: Bucket,
-}
-
-impl List {
-    /// The header this list is shown under. Now has no list of its own: its
-    /// tail queues under Next, behind whatever the hero is showing.
-    pub fn section(self) -> Section {
-        Section {
-            page: self.page,
-            bucket: match self.bucket {
-                Bucket::Now => Bucket::Next,
-                bucket => bucket,
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Section {
-    pub page: Page,
-    pub bucket: Bucket,
-}
-
-impl Section {
-    /// The lists under this header, in order. A Now section has none: the hero
-    /// shows the head, and everything behind it is listed under Next.
-    pub fn lists(self) -> Vec<List> {
-        let buckets = match self.bucket {
-            Bucket::Now => vec![],
-            Bucket::Next => vec![Bucket::Now, Bucket::Next],
-            bucket => vec![bucket],
-        };
-        buckets
-            .into_iter()
-            .map(|bucket| List {
-                page: self.page,
-                bucket,
-            })
-            .collect()
-    }
-}
 
 /// Owned snapshot of what was rendered, retained across store mutations.
 #[derive(Default)]
@@ -66,36 +19,9 @@ impl Placement {
         }
     }
 
-    pub fn rows(&self, list: List) -> &[u64] {
-        let ids = &self.buckets[ORDER.iter().position(|b| *b == list.bucket).unwrap()];
-        if list.bucket == Bucket::Now {
-            // The head is the hero's, so it is nobody's row.
-            &ids[ids.len().min(1)..]
-        } else {
-            ids
-        }
-    }
-
-    pub fn count(&self, section: Section) -> usize {
-        if section.bucket == Bucket::Now {
-            // The hero holds one task at a time; the rest counts under Next.
-            return self.buckets[0].len().min(1);
-        }
-        section
-            .lists()
-            .into_iter()
-            .map(|list| self.rows(list).len())
-            .sum()
-    }
-
-    /// Whether this list leads its section — the one row under a header that
-    /// draws no hairline above it.
-    pub fn leads(&self, list: List) -> bool {
-        list.section()
-            .lists()
-            .into_iter()
-            .take_while(|candidate| *candidate != list)
-            .all(|earlier| self.rows(earlier).is_empty())
+    /// The tasks shown for a bucket, in order; for Now, the one in the hero.
+    pub fn rows(&self, bucket: Bucket) -> &[u64] {
+        &self.buckets[ORDER.iter().position(|b| *b == bucket).unwrap()]
     }
 
     pub fn visible(&self, page: Page, later_open: bool) -> Vec<u64> {
@@ -104,17 +30,10 @@ impl Placement {
         }
         // The board gives Later a column of its own, so it is never collapsed.
         let later_open = later_open || page == Page::Board;
-        self.buckets[0]
-            .first()
+        ORDER
             .into_iter()
-            .copied()
-            .chain(
-                [Bucket::Side, Bucket::Next, Bucket::Later]
-                    .into_iter()
-                    .filter(|bucket| *bucket != Bucket::Later || later_open)
-                    .flat_map(|bucket| Section { page, bucket }.lists())
-                    .flat_map(|list| self.rows(list).iter().copied()),
-            )
+            .filter(|bucket| *bucket != Bucket::Later || later_open)
+            .flat_map(|bucket| self.rows(bucket).iter().copied())
             .collect()
     }
 }
@@ -145,33 +64,37 @@ impl Focus {
 
 #[derive(Clone, Copy)]
 pub(super) enum Destination {
-    Banner,
+    /// The hero, or the Now heading: take over as the current task.
+    Current,
     Append(Bucket),
-    List { list: List, before: Option<u64> },
+    List {
+        bucket: Bucket,
+        before: Option<u64>,
+    },
 }
 
 impl Destination {
     pub fn apply(self, store: &mut Store, id: u64) -> bool {
         match self {
-            Self::Banner => store.promote(id),
+            Self::Current => store.promote(id),
             Self::Append(bucket) => store.move_to(id, bucket, None),
-            Self::List { list, before } => {
+            Self::List { bucket, before } => {
                 let index = if let Some(anchor) = before {
                     // A stale row must not turn into a different destination.
-                    if !Placement::new(store).rows(list).contains(&anchor) {
+                    if !Placement::new(store).rows(bucket).contains(&anchor) {
                         return false;
                     }
                     if anchor == id {
                         return store.get(id).is_some();
                     }
                     store
-                        .in_bucket(list.bucket)
+                        .in_bucket(bucket)
                         .filter(|t| t.id != id)
                         .position(|t| t.id == anchor)
                 } else {
                     None
                 };
-                store.move_to(id, list.bucket, index)
+                store.move_to(id, bucket, index)
             }
         }
     }
@@ -181,146 +104,112 @@ impl Destination {
 mod tests {
     use super::*;
 
-    fn list(page: Page, bucket: Bucket) -> List {
-        List { page, bucket }
-    }
-    fn section(page: Page, bucket: Bucket) -> Section {
-        Section { page, bucket }
-    }
+    /// The buckets that are shown as lists, and so can be dragged within.
+    const LISTED: [Bucket; 3] = [Bucket::Side, Bucket::Next, Bucket::Later];
+
     fn in_bucket(store: &Store, bucket: Bucket) -> Vec<u64> {
         store.in_bucket(bucket).map(|t| t.id).collect()
     }
-    fn drop_before(store: &mut Store, id: u64, list: List, before: Option<u64>) -> bool {
-        Destination::List { list, before }.apply(store, id)
+    fn drop_before(store: &mut Store, id: u64, bucket: Bucket, before: Option<u64>) -> bool {
+        Destination::List { bucket, before }.apply(store, id)
     }
 
     #[test]
-    fn placement_counts_and_navigation_share_the_composite_section() {
+    fn both_pages_read_hero_side_next_later() {
         let mut store = Store::new();
-        let current = store.add("current", Bucket::Now, None, false);
-        let tail = store.add("tail", Bucket::Now, None, false);
-        let next = store.add("next", Bucket::Next, None, false);
-        let side = store.add("side", Bucket::Side, None, false);
-        let later = store.add("later", Bucket::Later, None, false);
+        let next = store.add("next", Bucket::Next, None);
+        let later = store.add("later", Bucket::Later, None);
+        let side = store.add("side", Bucket::Side, None);
+        let current = store.add("current", Bucket::Now, None);
         let p = Placement::new(&store);
-        for page in [Page::Queue, Page::Board] {
-            // The head is the hero's on either page, so the tail is the list.
-            assert_eq!(p.rows(list(page, Bucket::Now)), [tail]);
-            assert!(section(page, Bucket::Now).lists().is_empty());
-            // Now counts the one task on show; the tail counts under Next.
-            assert_eq!(p.count(section(page, Bucket::Now)), 1);
-            assert_eq!(p.count(section(page, Bucket::Next)), 2);
-            // The tail leads the Next section; Next's own list follows it.
-            assert!(p.leads(list(page, Bucket::Now)));
-            assert!(!p.leads(list(page, Bucket::Next)));
-            assert!(p.leads(list(page, Bucket::Side)));
-        }
-        assert_eq!(p.visible(Page::Queue, false), [current, side, tail, next]);
-        assert_eq!(
-            p.visible(Page::Queue, true),
-            [current, side, tail, next, later]
-        );
+        assert_eq!(p.rows(Bucket::Now), [current]);
+        assert_eq!(p.rows(Bucket::Next), [next]);
+        assert_eq!(p.visible(Page::Queue, false), [current, side, next]);
+        assert_eq!(p.visible(Page::Queue, true), [current, side, next, later]);
         // Later has a column of its own on the board: never collapsed.
-        assert_eq!(
-            p.visible(Page::Board, false),
-            [current, side, tail, next, later]
-        );
         assert_eq!(p.visible(Page::Board, false), p.visible(Page::Queue, true));
         assert!(p.visible(Page::Settings, true).is_empty());
         assert!(Placement::default().visible(Page::Queue, true).is_empty());
-        // An empty Now leaves the hero blank and Next leading its own section.
+        // An empty Now leaves the hero blank and the lists as they were.
         let mut store = Store::new();
-        let only = store.add("only", Bucket::Next, None, false);
+        let only = store.add("only", Bucket::Next, None);
         let p = Placement::new(&store);
-        assert_eq!(p.count(section(Page::Board, Bucket::Now)), 0);
-        assert!(p.rows(list(Page::Board, Bucket::Now)).is_empty());
-        assert!(p.leads(list(Page::Board, Bucket::Next)));
+        assert!(p.rows(Bucket::Now).is_empty());
         assert_eq!(p.visible(Page::Board, false), [only]);
     }
 
+    /// Every way a drop can name Now does the same thing: the task takes over
+    /// and the one it replaces leads Next.
     #[test]
-    fn moves_use_actual_buckets_and_refresh_both_pages() {
+    fn every_drop_into_now_takes_over_as_the_current_task() {
+        for destination in [
+            Destination::Current,
+            Destination::Append(Bucket::Now),
+            Destination::List {
+                bucket: Bucket::Now,
+                before: None,
+            },
+        ] {
+            let mut store = Store::new();
+            let current = store.add("current", Bucket::Now, None);
+            let next = store.add("next", Bucket::Next, None);
+            let side = store.add("side", Bucket::Side, None);
+            assert!(destination.apply(&mut store, side));
+            assert_eq!(in_bucket(&store, Bucket::Now), [side]);
+            assert_eq!(in_bucket(&store, Bucket::Next), [current, next]);
+            assert_eq!(
+                Placement::new(&store).visible(Page::Queue, false),
+                [side, current, next]
+            );
+            // The current task dropped on its own panel stays where it is.
+            assert!(destination.apply(&mut store, side));
+            assert_eq!(in_bucket(&store, Bucket::Now), [side]);
+        }
+        // The current task can be dragged out, which empties the hero.
         let mut store = Store::new();
-        let current = store.add("current", Bucket::Now, None, false);
-        let tail = store.add("tail", Bucket::Now, None, false);
-        let next = store.add("next", Bucket::Next, None, false);
-        assert!(drop_before(
-            &mut store,
-            next,
-            list(Page::Queue, Bucket::Now),
-            Some(tail)
-        ));
-        assert_eq!(
-            Placement::new(&store).visible(Page::Queue, false),
-            [current, next, tail]
-        );
-        assert_eq!(
-            Placement::new(&store).rows(list(Page::Board, Bucket::Now)),
-            [next, tail]
-        );
-        assert!(Destination::Append(Bucket::Next).apply(&mut store, tail));
-        assert_eq!(store.get(tail).unwrap().bucket, Bucket::Next);
-        // J/K stays within its stored bucket despite the composite section.
-        assert!(!store.shift(tail, -1));
-        assert!(Destination::Banner.apply(&mut store, tail));
-        assert_eq!(store.current().unwrap().id, tail);
-        // The head is not a row, so no drop can anchor on it — taking over as
-        // the current task means dropping on the hero itself.
-        assert!(!drop_before(
-            &mut store,
-            current,
-            list(Page::Board, Bucket::Now),
-            Some(tail)
-        ));
-        assert_eq!(store.current().unwrap().id, tail);
-        assert!(Destination::Banner.apply(&mut store, current));
-        assert_eq!(store.current().unwrap().id, current);
+        let current = store.add("current", Bucket::Now, None);
+        let next = store.add("next", Bucket::Next, None);
+        assert!(drop_before(&mut store, current, Bucket::Next, Some(next)));
+        assert!(store.current().is_none());
+        assert_eq!(in_bucket(&store, Bucket::Next), [current, next]);
     }
 
-    /// Every drag a user can start, dropped everywhere it can land. The rows
-    /// are what can be picked up and aimed at; the expectation is modelled in
-    /// the stored bucket, which is where the move actually has to land.
+    /// Every drag a user can start, dropped everywhere it can land in a list.
     #[test]
     fn anchored_moves_cover_every_source_and_destination_pair() {
         let fixture = || {
             let mut store = Store::new();
-            for bucket in ORDER {
+            for bucket in LISTED {
                 for _ in 0..3 {
-                    store.add("task", bucket, None, false);
+                    store.add("task", bucket, None);
                 }
             }
+            store.add("current", Bucket::Now, None);
             store
         };
-        for page in [Page::Queue, Page::Board] {
-            for source in ORDER {
-                for destination in ORDER {
-                    let rows = Placement::new(&fixture()).rows(list(page, source)).len();
-                    let targets = Placement::new(&fixture())
-                        .rows(list(page, destination))
-                        .len();
-                    // Now offers one row fewer: its head is the hero's.
-                    assert_eq!(rows, if source == Bucket::Now { 2 } else { 3 });
-                    for source_index in 0..rows {
-                        for target_index in 0..=targets {
-                            let mut store = fixture();
-                            let p = Placement::new(&store);
-                            let id = p.rows(list(page, source))[source_index];
-                            let region = list(page, destination);
-                            let anchor = p.rows(region).get(target_index).copied();
-                            let mut expected = in_bucket(&store, destination);
-                            if anchor != Some(id) {
-                                expected.retain(|candidate| *candidate != id);
-                                let index = anchor
-                                    .and_then(|a| {
-                                        expected.iter().position(|candidate| *candidate == a)
-                                    })
-                                    .unwrap_or(expected.len());
-                                expected.insert(index, id);
-                            }
-                            assert!(drop_before(&mut store, id, region, anchor));
-                            assert_eq!(in_bucket(&store, destination), expected);
-                            assert_eq!(store.tasks.len(), 12);
+        for source in ORDER {
+            for destination in LISTED {
+                let rows = Placement::new(&fixture()).rows(source).len();
+                // Now offers the one task in the hero.
+                assert_eq!(rows, if source == Bucket::Now { 1 } else { 3 });
+                for source_index in 0..rows {
+                    for target_index in 0..=3 {
+                        let mut store = fixture();
+                        let p = Placement::new(&store);
+                        let id = p.rows(source)[source_index];
+                        let anchor = p.rows(destination).get(target_index).copied();
+                        let mut expected = in_bucket(&store, destination);
+                        if anchor != Some(id) {
+                            expected.retain(|candidate| *candidate != id);
+                            let index = anchor
+                                .and_then(|a| expected.iter().position(|candidate| *candidate == a))
+                                .unwrap_or(expected.len());
+                            expected.insert(index, id);
                         }
+                        assert!(drop_before(&mut store, id, destination, anchor));
+                        assert_eq!(in_bucket(&store, destination), expected);
+                        assert_eq!(store.tasks.len(), 10);
+                        assert!(store.in_bucket(Bucket::Now).count() <= 1);
                     }
                 }
             }
@@ -330,20 +219,15 @@ mod tests {
     #[test]
     fn missing_or_stale_anchors_are_rejected_without_moving_the_source() {
         let mut store = Store::new();
-        let current = store.add("current", Bucket::Now, None, false);
-        let source = store.add("source", Bucket::Next, None, false);
-        for page in [Page::Queue, Page::Board] {
-            for anchor in [current, 999] {
-                assert!(!drop_before(
-                    &mut store,
-                    source,
-                    list(page, Bucket::Now),
-                    Some(anchor)
-                ));
-                assert_eq!(store.get(source).unwrap().bucket, Bucket::Next);
-            }
+        let current = store.add("current", Bucket::Now, None);
+        let source = store.add("source", Bucket::Later, None);
+        // The current task is the hero's, not a row of Next; 999 is nobody's.
+        for anchor in [current, 999] {
+            assert!(!drop_before(&mut store, source, Bucket::Next, Some(anchor)));
+            assert_eq!(store.get(source).unwrap().bucket, Bucket::Later);
         }
         assert!(!Destination::Append(Bucket::Later).apply(&mut store, 999));
+        assert!(!Destination::Current.apply(&mut store, 999));
     }
 
     #[test]

@@ -285,7 +285,7 @@ mod tests {
         assert!(load(&path).unwrap().is_empty());
 
         let mut store = Store::new();
-        store.add("x", Bucket::Now, None, false);
+        store.add("x", Bucket::Now, None);
         save(&path, &store).unwrap();
 
         let loaded = load(&path).unwrap();
@@ -419,7 +419,7 @@ mod tests {
         let directory = root.join("queue-focus");
         let path = directory.join("tasks.json");
         let mut store = Store::new();
-        store.add("private task", Bucket::Now, None, false);
+        store.add("private task", Bucket::Now, None);
 
         save(&path, &store).unwrap();
         assert_eq!(mode(&directory), DIRECTORY_MODE);
