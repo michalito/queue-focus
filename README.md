@@ -26,11 +26,13 @@ Moving or deleting the current task leaves Now empty. Only completing a task pul
 
 ### Top bar
 
-The GNOME Shell extension shows the current title and its elapsed time as a pill. Click the pill to pause the timer, and again to resume it. While the timer is paused the time stops, the pill turns orange, and a `❚❚` leads it. The dot uses the tag of the current task: blue for work, orange for personal, and grey when untagged.
+The GNOME Shell extension shows the current title in full and its elapsed time as a pill. The title is never wrapped, and the button grows sideways to fit it. It is cut short with an ellipsis only when the panel has no room left. That limit is worked out from the panel itself, so the Activities button and the system menu keep their places and their full width. The clock shares the middle of the panel with the title, so it keeps its width but moves sideways as the title grows or shrinks. On a panel too crowded to leave the title 160 pixels, the title keeps those 160 and the sides give way instead. Click the pill to pause the timer, and again to resume it. While the timer is paused the time stops, the pill turns orange, and a `❚❚` leads it. The dot uses the tag of the current task: blue for work, orange for personal, and grey when untagged.
 
 The app window also changes its accent to match the tag of the current task.
 
 The top bar menu has two columns. On the left, the current task sits in a card with its tag, its timer, a Done button, and a Pause or Resume button. Below the card are buttons for the Queue and Board views and a gear that opens Settings. On the right is the add entry, then Side as cards. Each Side task shows a promote button and a done button while the pointer or keyboard focus is on it. Next and Later are left to the Queue and Board views.
+
+Every title in the menu is one line, shown whole. The two columns start at a fixed width and grow sideways with the titles in them, so the menu is as wide as its longest titles need. It stops at the edges of the screen, and only a title wider than that is cut short.
 
 Marking a task done from the menu puts a `Done · title` row with an Undo button in the menu for a few seconds. Completing the current task with the shortcut shows a GNOME notification with an Undo button instead. Undo puts the task back where it was, with its timer intact when it was current, and returns any task that was pulled from Next. Only the most recent completion can be undone, and only while nothing else in the queue has changed.
 
@@ -543,11 +545,11 @@ make run
 
 `make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
 
-The extension tests need Node.js. Connection tests drive owner changes, delayed replies, retries, and interrupted requests with a deterministic D-Bus and timer stand-in. Retry delays increase from 1.5 seconds to a 60-second cap and reset only once both task state and settings recover. The fast flash-overlay tests stub the GNOME toolkit and load the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
+The extension tests need Node.js. Connection tests drive owner changes, delayed replies, retries, and interrupted requests with a deterministic D-Bus and timer stand-in. Retry delays increase from 1.5 seconds to a 60-second cap and reset only once both task state and settings recover. The fast flash-overlay tests stub the GNOME toolkit and load the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks. The layout tests check the top bar's width limits against a copy of the rule GNOME Shell's panel uses to place its three boxes, with a dock on either side and at more than one scale.
 
 `make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
 
-`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer and sends the replaced task to Next, and the gear opens Settings. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
+`make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer and sends the replaced task to Next, and the gear opens Settings. Last it checks the widths with short, long, and impossibly long titles: long titles are whole and on one line in the panel and the menu, the menu grows and shrinks with them, and at the limit the panel's other boxes keep their widths and the menu stays on the monitor. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
@@ -576,7 +578,7 @@ Makefile
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 
-`extension/queue-focus@queuefocus.org/connection.js` owns connection recovery and request lifetimes; `dbus.js` supplies its GNOME D-Bus and timer adapter. The indicator handles drawing and notifications.
+`extension/queue-focus@queuefocus.org/connection.js` owns connection recovery and request lifetimes; `dbus.js` supplies its GNOME D-Bus and timer adapter. `layout.js` holds the width limits for the panel title and the menu as plain arithmetic. The indicator handles drawing and notifications.
 
 `extension/test` contains the extension tests and the stubbed GNOME Shell they run against. It is not installed.
 

@@ -23,6 +23,7 @@ test:            ## unit + isolated integration tests
 	$(CARGO) test --workspace
 	node extension/test/flash.test.mjs
 	node extension/test/connection.test.mjs
+	node extension/test/layout.test.mjs
 	scripts/test-install-local.sh
 	scripts/test-set-version.sh
 
@@ -38,11 +39,12 @@ test-version:    ## isolated versioning integration tests
 test-extension:  ## shell-extension tests, against a stubbed GNOME Shell
 	node extension/test/flash.test.mjs
 	node extension/test/connection.test.mjs
+	node extension/test/layout.test.mjs
 
 test-extension-dbus: ## real GJS adapter test on a private D-Bus (needs gjs)
 	GIO_USE_VFS=local dbus-run-session -- gjs -m extension/test/dbus.test.js
 
-test-extension-shell: ## real quick-add test in a disposable headless GNOME Shell
+test-extension-shell: ## real quick-add, menu and width tests in a disposable headless GNOME Shell
 	scripts/test-extension-shell.sh
 
 check:           ## fmt + clippy + JS/Python/shell syntax

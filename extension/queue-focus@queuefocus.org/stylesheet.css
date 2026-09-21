@@ -8,7 +8,9 @@
 .qf-dot-none { color: rgba(255, 255, 255, 0.35); }
 .qf-dot-work { color: #62a0ea; }
 .qf-dot-personal { color: #ffa348; }
-.qf-label { font-weight: 600; max-width: 320px; }
+/* The title is as wide as its text. The indicator sets max-width itself, to
+   the room the panel has; this one only stands where it cannot measure that. */
+.qf-label { font-weight: 600; max-width: 480px; }
 .qf-label-paused { color: rgba(255, 255, 255, 0.7); }
 
 /* The clock is a pill and a pause button: white wash while running, a
@@ -30,9 +32,11 @@
    Being inert makes it :insensitive, whose greyed text everything inside
    would inherit, so the menu's normal text colour is restated here. */
 .qf-menu, .qf-menu:insensitive { padding: 8px; spacing: 0; color: white; }
+/* The columns start at the mock's widths and grow with the titles in them:
+   every title is one line, shown whole. */
 .qf-columns { spacing: 14px; }
-.qf-left { width: 250px; spacing: 12px; }
-.qf-right { width: 348px; spacing: 6px; }
+.qf-left { min-width: 250px; spacing: 12px; }
+.qf-right { min-width: 348px; spacing: 6px; }
 
 /* Letter spacing is left off the card's own headings: St does not count it in
    a label's natural width, so a spaced label in a row comes out ellipsized. */
@@ -56,7 +60,7 @@
 .qf-card.qf-accent-personal { background-color: rgba(230, 97, 0, 0.16); }
 .qf-card-head { spacing: 8px; }
 .qf-paused { font-size: 0.8em; font-weight: 700; color: #ffa348; }
-.qf-card-title { font-size: 1.16em; font-weight: 700; max-height: 5.4em; }
+.qf-card-title { font-size: 1.16em; font-weight: 700; }
 .qf-card-clock { font-family: monospace; font-size: 2.05em; font-weight: 600; }
 .qf-card-clock-paused { color: rgba(255, 255, 255, 0.55); }
 .qf-card-empty { font-size: 1.02em; color: rgba(255, 255, 255, 0.6); }

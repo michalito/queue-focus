@@ -318,6 +318,7 @@ export default class ShellTest extends Extension {
         check(this._requests.length === 3, 'no automatic add replay');
 
         await this._menu(Main.panel.statusArea[UUID]);
+        await this._widths(Main.panel.statusArea[UUID]);
     }
 
     /** The focus card and queue with a populated fixture, driven by pointer and actors. */
@@ -433,6 +434,110 @@ export default class ShellTest extends Extension {
         // From a shortcut, with the menu closed, undo is offered in a notification.
         indicator.completeCurrent();
         await this._wait(() => indicator._undo && indicator._doneNotification, 'shortcut completion notifies');
+    }
+
+    /**
+     * Titles are shown whole and on one line: the panel button and the menu
+     * grow sideways to fit them, and only a title the screen has no room for
+     * is cut short — without pushing anything else off the panel or the menu
+     * off the monitor.
+     */
+    async _widths(indicator) {
+        indicator._dropUndo();
+        indicator.menu.close();
+        const q = this._queue = new Queue();
+        const monitor = Main.layoutManager.primaryMonitor;
+        const {_leftBox: left, _centerBox: center, _rightBox: right} = Main.panel;
+        const natural = actor => actor.get_preferred_width(-1)[1];
+        const right_of = actor => actor.get_transformed_position()[0] + actor.get_transformed_size()[0];
+        const settled = () => new Promise(resolve => {
+            const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                this._sources.delete(id);
+                resolve();
+                return GLib.SOURCE_REMOVE;
+            });
+            this._sources.add(id);
+        });
+        const menu = indicator.menu.actor;
+        const titles = () => labels(menu).filter(l => ['qf-card-title', 'qf-side-title', 'qf-undo-text']
+            .some(c => l.has_style_class_name(c)));
+        const cut = l => l.clutter_text.get_layout().is_ellipsized();
+        const lines = l => l.clutter_text.get_layout().get_line_count();
+        const panelIntact = when => {
+            check(left.width === natural(left), `${when}: the left of the panel keeps its width`);
+            check(right.width === natural(right), `${when}: the right of the panel keeps its width`);
+            check(right_of(left) <= center.get_transformed_position()[0] &&
+                right_of(center) <= right.get_transformed_position()[0], `${when}: the panel's boxes do not overlap`);
+        };
+        const menuOnScreen = when => {
+            const [x] = menu.get_transformed_position();
+            check(x >= monitor.x && right_of(menu) <= monitor.x + monitor.width,
+                `${when}: the menu is on the monitor (${x}..${right_of(menu)} of ${monitor.width})`);
+        };
+        const show = async (current, side) => {
+            q.tasks = [];
+            q.add(current, 'now', 'work');
+            const ids = side.map(title => q.add(title, 'side', 'personal'));
+            this._changed();
+            await this._wait(() => indicator._label.text === current, 'panel shows the new title');
+            await settled();
+            return ids;
+        };
+
+        // Short titles: the menu is the size the design drew.
+        await show('Fix login redirect loop', ['CI run for main']);
+        indicator.menu.open();
+        await settled();
+        const drawn = menu.width;
+        check(titles().length === 2 && titles().every(l => !cut(l) && lines(l) === 1), 'short titles are whole');
+        panelIntact('short');
+        menuOnScreen('short');
+
+        // Long ones, arriving while the menu is open: everything grows to fit.
+        const long = 'Reconcile the payments export with the ledger totals';
+        const longSide = 'Wait for the landlord to confirm the lease dates';
+        const [sideId] = await show(long, [longSide, 'CI run for main']);
+        check(!cut(indicator._label) && indicator._label.width >= natural(indicator._label.clutter_text),
+            'the panel shows a long title whole');
+        check(titles().length === 3, 'the card and both Side cards carry a title');
+        for (const l of titles()) {
+            check(!cut(l) && lines(l) === 1, `"${l.text}" is whole and on one line`);
+            check(l.width >= natural(l.clutter_text), `"${l.text}" has the width it asks for`);
+        }
+        check(menu.width > drawn, `the menu grew to fit (${drawn} -> ${menu.width})`);
+        panelIntact('long');
+        menuOnScreen('long');
+        const sideCard = indicator._focusTargets.get(`task:${sideId}:done`).get_parent().get_parent();
+        await this._pointer(sideCard);
+        await this._wait(() => sideCard.hover, 'pointer hovers the long side card');
+        await this._shot('menu-long');
+        // So does the offer to undo, which names the task in full.
+        indicator._focusTargets.get(`task:${sideId}:done`).emit('clicked', 1);
+        await this._wait(() => indicator._focusTargets.has('undo'), 'menu offers undo for the long task');
+        await settled();
+        const offer = titles().find(l => l.has_style_class_name('qf-undo-text'));
+        check(offer.text === `Done · ${longSide}` && !cut(offer) && lines(offer) === 1, 'the undo offer is whole');
+        menuOnScreen('undo');
+        await this._shot('menu-long-undo');
+        indicator._dropUndo();
+
+        // A title no screen has room for is the one case that is cut short:
+        // the panel keeps its other boxes and the menu stays on the monitor.
+        const absurd = Array.from({length: 32}, (_v, i) => `word${i} and`).join(' ').slice(0, 256);
+        await show(absurd, [absurd]);
+        check(cut(indicator._label), 'a title wider than the panel is cut short');
+        check(titles().every(l => cut(l) && lines(l) === 1), 'a title wider than the screen is cut short, never wrapped');
+        panelIntact('absurd');
+        menuOnScreen('absurd');
+        check(menu.width <= monitor.width, 'the menu is no wider than the monitor');
+        await this._shot('menu-absurd');
+
+        // And back: nothing keeps the width of a title that has gone.
+        await show('Fix login redirect loop', ['CI run for main']);
+        check(menu.width === drawn, `the menu is back to the size drawn (${menu.width} vs ${drawn})`);
+        check(!cut(indicator._label), 'the short title is whole');
+        panelIntact('short again');
+        indicator.menu.close();
     }
 
     disable() {
