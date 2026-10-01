@@ -16,7 +16,7 @@ pub use elapsed::{long_elapsed, short_elapsed};
 pub use model::{
     unix_now, Bucket, Completed, QuickAdd, Store, Tag, Task, MAX_QUICK_ADD_BYTES, MAX_TITLE_CHARS,
 };
-pub use reminder::FlashEvent;
+pub use reminder::{FlashEvent, FlashStatus, Reminder};
 pub use settings::{
     pick_style, within_window, FlashColor, FlashStyle, Hold, Intensity, Palette, Settings, Theme,
     TimeOfDay, INTERVAL_MAX, INTERVAL_MIN,
