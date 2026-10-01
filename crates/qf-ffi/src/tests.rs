@@ -427,22 +427,89 @@ fn problems_that_pile_up_keep_the_first_ones() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// A panic while the lock is held must not lock the app out of its queue.
-#[test]
-fn a_poisoned_lock_still_serves() {
-    let dir = temp_dir("poison");
-    let engine = open(&dir);
-    engine.add("kept".into(), None).unwrap();
+/// Make a change in memory, then panic before it can be saved, the way an
+/// overflow or a bug in the core would.
+fn panic_mid_change(engine: &Arc<QueueEngine>) {
     let held = engine.clone();
     let panicked = std::thread::spawn(move || {
-        let _state = held.state.lock().unwrap();
-        panic!("injected while holding the lock");
+        let _ = held.change(|e| {
+            e.update(|s| {
+                s.tasks[0].title = "half made".into();
+                panic!("injected after a change in memory");
+            })
+        });
     })
     .join();
     assert!(panicked.is_err());
     assert!(engine.state.is_poisoned());
-    assert_eq!(engine.snapshot().next[0].title, "kept");
+}
+
+fn titles(engine: &QueueEngine) -> Vec<String> {
+    engine
+        .snapshot()
+        .next
+        .into_iter()
+        .map(|t| t.title)
+        .collect()
+}
+
+/// A panic must not lock the app out of its queue, nor leave the half-made
+/// change in memory for the next change to save.
+#[test]
+fn a_panic_mid_change_starts_again_from_the_files() {
+    let dir = temp_dir("panic");
+    let engine = open(&dir);
+    engine.add("kept".into(), None).unwrap();
+    panic_mid_change(&engine);
+
+    assert_eq!(titles(&engine), ["kept"], "the half-made change is gone");
+    assert!(!engine.state.is_poisoned());
     engine.add("after".into(), None).unwrap();
+    let stored = fs::read_to_string(dir.join("tasks.json")).unwrap();
+    assert!(!stored.contains("half made"), "{stored}");
+    assert!(stored.contains("after"), "{stored}");
+
+    let problems = engine.tick(0, noon(), 0).unwrap().problems;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("reloaded the queue"), "{problems:?}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// When the files cannot be read to start again, nothing is saved on top of
+/// the half-made change; the app can still show what it had, and recovers
+/// once the files read again.
+#[test]
+fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
+    let dir = temp_dir("panic-unreadable");
+    let engine = open(&dir);
+    engine.add("kept".into(), None).unwrap();
+    let good = fs::read(dir.join("tasks.json")).unwrap();
+    fs::write(dir.join("tasks.json"), b"{ broken").unwrap();
+    panic_mid_change(&engine);
+
+    match engine.add("refused".into(), None) {
+        Err(QfError::Persistence { message }) => {
+            assert!(message.contains("cannot reload the queue"), "{message}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    let mut settings = engine.settings();
+    settings.vary = !settings.vary;
+    assert!(engine.set_settings(settings).is_err());
+    assert_eq!(engine.flash_now(0, 0), None);
+    assert_eq!(fs::read(dir.join("tasks.json")).unwrap(), b"{ broken");
+    let first = engine.tick(0, noon(), 0).unwrap();
+    assert_eq!(first.flash, None);
+    assert_eq!(first.problems.len(), 1, "told once: {:?}", first.problems);
+    assert!(engine.tick(1, noon(), 0).unwrap().problems.is_empty());
+    assert!(engine.flush().is_empty());
+
+    fs::write(dir.join("tasks.json"), &good).unwrap();
+    assert_eq!(titles(&engine), ["kept"]);
+    engine.add("after".into(), None).unwrap();
+    assert_eq!(titles(&engine), ["kept", "after"]);
+    let problems = engine.tick(2, noon(), 0).unwrap().problems;
+    assert!(problems[0].contains("reloaded the queue"), "{problems:?}");
     fs::remove_dir_all(dir).unwrap();
 }
 

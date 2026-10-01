@@ -10,8 +10,8 @@ pub use types::*;
 
 use qf_core::{Engine, EngineError, Outcome};
 use std::fmt;
-use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 uniffi::setup_scaffolding!();
 
@@ -59,6 +59,8 @@ fn invalid(message: String) -> QfError {
 /// main actor.
 #[derive(uniffi::Object)]
 pub struct QueueEngine {
+    /// Where the files are, to start again from them after a panic.
+    dir: PathBuf,
     state: Mutex<State>,
     open_warning: Option<String>,
 }
@@ -66,9 +68,49 @@ pub struct QueueEngine {
 struct State {
     engine: Engine,
     problems: Vec<String>,
+    /// Why changes are refused: a panic may have left a change half made in
+    /// memory, and the files could not be read to start again.
+    damaged: Option<String>,
 }
 
 impl State {
+    /// After a panic the engine may hold a change half made, so start again
+    /// from the files, which hold what last committed. The undo offer and a
+    /// settings change not yet written go with it. Until the files can be
+    /// read, changes are refused rather than saved on top of a half-made one.
+    fn recover(&mut self, dir: &Path, just_panicked: bool) {
+        match Engine::open(dir, qf_core::unix_now) {
+            Ok((engine, _)) => {
+                self.engine = engine;
+                self.damaged = None;
+                self.report(
+                    "Queue Focus hit an internal error and reloaded the queue from its files. \
+                     The last change may not have been kept."
+                        .into(),
+                );
+            }
+            Err(error) => {
+                let message = format!(
+                    "Queue Focus hit an internal error and cannot reload the queue ({error}), \
+                     so it refuses changes until it can."
+                );
+                if just_panicked {
+                    self.report(message.clone());
+                }
+                self.damaged = Some(message);
+            }
+        }
+    }
+
+    fn usable(&self) -> Result<(), QfError> {
+        match &self.damaged {
+            Some(message) => Err(QfError::Persistence {
+                message: message.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
+
     fn report(&mut self, problem: String) {
         if self.problems.len() < MAX_PENDING_PROBLEMS {
             self.problems.push(problem);
@@ -86,11 +128,21 @@ impl State {
 }
 
 impl QueueEngine {
-    /// A panic elsewhere must not lock the app out of its queue, so a
-    /// poisoned lock is taken as it stands: every change either saved or
-    /// rolled back before the panic could happen.
+    /// A panic must not lock the app out of its queue, nor leave a half-made
+    /// change in memory for the next one to save: a poisoned lock starts
+    /// again from the files (see `State::recover`).
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        let (mut state, panicked) = match self.state.lock() {
+            Ok(state) => (state, false),
+            Err(poisoned) => {
+                self.state.clear_poison();
+                (poisoned.into_inner(), true)
+            }
+        };
+        if panicked || state.damaged.is_some() {
+            state.recover(&self.dir, panicked);
+        }
+        state
     }
 
     fn change<T>(
@@ -98,6 +150,7 @@ impl QueueEngine {
         f: impl FnOnce(&mut Engine) -> Result<Outcome<T>, EngineError>,
     ) -> Result<T, QfError> {
         let mut state = self.lock();
+        state.usable()?;
         let result = f(&mut state.engine);
         state.settle(result)
     }
@@ -111,14 +164,17 @@ impl QueueEngine {
     /// cannot be read leaves the defaults in place and an `open_warning`.
     #[uniffi::constructor]
     pub fn new(dir: String) -> Result<Arc<Self>, QfError> {
+        let dir = PathBuf::from(dir);
         let (engine, open_warning) =
-            Engine::open(Path::new(&dir), qf_core::unix_now).map_err(|e| QfError::Persistence {
+            Engine::open(&dir, qf_core::unix_now).map_err(|e| QfError::Persistence {
                 message: e.to_string(),
             })?;
         Ok(Arc::new(QueueEngine {
+            dir,
             state: Mutex::new(State {
                 engine,
                 problems: Vec::new(),
+                damaged: None,
             }),
             open_warning,
         }))
@@ -234,10 +290,9 @@ impl QueueEngine {
     /// Returns whether anything changed; the file catches up on a tick.
     pub fn set_settings(&self, settings: QueueSettings) -> Result<bool, QfError> {
         let settings: qf_core::Settings = settings.try_into().map_err(invalid)?;
-        Ok(self
-            .lock()
-            .engine
-            .update_settings(|current| *current = settings))
+        let mut state = self.lock();
+        state.usable()?;
+        Ok(state.engine.update_settings(|current| *current = settings))
     }
 
     // ---- the clock -----------------------------------------------------
@@ -252,12 +307,16 @@ impl QueueEngine {
     ) -> Result<TickResult, QfError> {
         let local_time = local_time.try_into().map_err(invalid)?;
         let mut state = self.lock();
-        let tick = state.engine.tick(now, local_time, random);
-        if let Some(problem) = tick.settings_problem {
-            state.report(problem);
+        let mut flash = None;
+        if state.damaged.is_none() {
+            let tick = state.engine.tick(now, local_time, random);
+            if let Some(problem) = tick.settings_problem {
+                state.report(problem);
+            }
+            flash = tick.flash.map(Into::into);
         }
         Ok(TickResult {
-            flash: tick.flash.map(Into::into),
+            flash,
             problems: std::mem::take(&mut state.problems),
         })
     }
@@ -265,15 +324,19 @@ impl QueueEngine {
     /// A flash now, whatever the quiet rules say, so long as Now holds a
     /// task. The wait for the next one starts over.
     pub fn flash_now(&self, now: u64, random: u32) -> Option<FlashEvent> {
-        self.lock().engine.flash_now(now, random).map(Into::into)
+        let mut state = self.lock();
+        state.usable().ok()?;
+        state.engine.flash_now(now, random).map(Into::into)
     }
 
     /// Write the settings if the file is behind. Call before the app quits.
     /// Returns every problem not yet reported.
     pub fn flush(&self) -> Vec<String> {
         let mut state = self.lock();
-        if let Some(problem) = state.engine.flush() {
-            state.report(problem);
+        if state.damaged.is_none() {
+            if let Some(problem) = state.engine.flush() {
+                state.report(problem);
+            }
         }
         std::mem::take(&mut state.problems)
     }
