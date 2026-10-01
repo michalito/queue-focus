@@ -3,9 +3,10 @@
 //! position, no history. Plus the user settings, the flash reminder, and the
 //! `Engine` that saves every change and that each platform's app drives.
 //!
-//! Nothing here has a clock, randomness or a toolkit of its own: the host
-//! supplies the time and a random number, so every decision is an ordinary
-//! function with an ordinary test.
+//! There is no toolkit here. The reminder has no clock or randomness of its
+//! own either: the host supplies the time, the local time of day and a random
+//! number, so its decisions are ordinary functions with ordinary tests. Task
+//! timestamps are the one thing that read the system clock.
 
 mod elapsed;
 mod engine;
