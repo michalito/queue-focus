@@ -17,7 +17,7 @@ die() {
 }
 
 [ "$(uname -s)" = Darwin ] || die "builds for macOS, on macOS"
-for tool in lipo xcodebuild; do
+for tool in lipo xcodebuild python3; do
   command -v "$tool" >/dev/null || die "missing $tool (install the Xcode command line tools)"
 done
 
@@ -26,7 +26,12 @@ readonly CARGO=scripts/cargo
 readonly PROFILE=release-ffi
 readonly TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 readonly PACKAGE=macos/QfCore
-readonly WORK=target/mac-core
+# Wherever Cargo puts its output: CARGO_TARGET_DIR or a config file can move
+# it, and reading a hardcoded path would package an old library.
+TARGET_DIR=$("$CARGO" metadata --format-version 1 --no-deps |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')
+readonly TARGET_DIR
+readonly WORK="$TARGET_DIR/mac-core"
 
 if command -v rustup >/dev/null 2>&1 || [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/rustup" ]; then
   PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" rustup target add "${TARGETS[@]}" >/dev/null
@@ -35,7 +40,7 @@ fi
 libraries=()
 for target in "${TARGETS[@]}"; do
   "$CARGO" build --locked -p qf-ffi --lib --profile "$PROFILE" --target "$target"
-  libraries+=("target/$target/$PROFILE/libqf_ffi.a")
+  libraries+=("$TARGET_DIR/$target/$PROFILE/libqf_ffi.a")
 done
 
 rm -rf "$WORK"
