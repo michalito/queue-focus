@@ -4,6 +4,11 @@
 # module generated from that very library. The Swift checks at first use that
 # it matches the library, so both always come from one run of this script.
 #
+# The app links the same library from lib/ and its C module from include/,
+# at paths that never change with the architectures built. Xcode copies an
+# XCFramework when it plans a build, before this script runs, so linking the
+# XCFramework there could link the library from the build before.
+#
 # Only the crates the app needs are built, by name: the GTK app cannot build
 # on macOS, so never the whole workspace.
 #
@@ -71,7 +76,8 @@ inputs() {
 }
 readonly INPUTS=$(inputs)
 if $if_changed && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$INPUTS" ] &&
-  [ -d "$PACKAGE/QfCoreFFI.xcframework" ] && [ -f "$PACKAGE/Sources/QfCore/QfCore.swift" ]; then
+  [ -d "$PACKAGE/QfCoreFFI.xcframework" ] && [ -f "$PACKAGE/lib/libqf_ffi.a" ] &&
+  [ -f "$PACKAGE/include/module.modulemap" ] && [ -f "$PACKAGE/Sources/QfCore/QfCore.swift" ]; then
   echo "build-mac-core: up to date"
   exit 0
 fi
@@ -99,10 +105,12 @@ bindgen "$WORK/swift" --swift-sources
 bindgen "$WORK/headers" --headers --modulemap \
   --module-name QfCoreFFI --modulemap-filename module.modulemap
 
-rm -rf "$PACKAGE/QfCoreFFI.xcframework"
+rm -rf "$PACKAGE/QfCoreFFI.xcframework" "$PACKAGE/lib" "$PACKAGE/include"
 xcodebuild -create-xcframework -library "$WORK/libqf_ffi.a" -headers "$WORK/headers" \
   -output "$PACKAGE/QfCoreFFI.xcframework" >/dev/null
-mkdir -p "$PACKAGE/Sources/QfCore"
+mkdir -p "$PACKAGE/lib" "$PACKAGE/include" "$PACKAGE/Sources/QfCore"
+cp "$WORK/libqf_ffi.a" "$PACKAGE/lib/"
+cp "$WORK/headers/QfCoreFFI.h" "$WORK/headers/module.modulemap" "$PACKAGE/include/"
 cp "$WORK/swift/QfCore.swift" "$PACKAGE/Sources/QfCore/QfCore.swift"
 
 echo "$INPUTS" >"$STAMP"

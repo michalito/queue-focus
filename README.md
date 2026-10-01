@@ -608,7 +608,7 @@ Makefile
 
 `macos/QfCore` is the Swift package holding the engine for Swift. `make mac-core` fills in its XCFramework and its generated Swift; its tests are checked in.
 
-`macos/QueueFocus` is the macOS app: a menu bar item with the current task, its popover, and the windows. It compiles the engine's generated Swift into itself and links the XCFramework. `macos/QueueFocus.xcodeproj` builds it; `macos/QueueFocusTests` and `macos/QueueFocusUITests` are its unit and UI tests.
+`macos/QueueFocus` is the macOS app: a menu bar item with the current task, its popover, and the windows. It compiles the engine's generated Swift into itself and links the engine's static library, which `make mac-core` also leaves in `macos/QfCore/lib` with its C module in `macos/QfCore/include`. `macos/QueueFocus.xcodeproj` builds it; `macos/QueueFocusTests` and `macos/QueueFocusUITests` are its unit and UI tests.
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 

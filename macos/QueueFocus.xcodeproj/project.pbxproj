@@ -20,10 +20,6 @@
 		};
 /* End PBXAggregateTarget section */
 
-/* Begin PBXBuildFile section */
-		B00000000000000000000010 /* QfCoreFFI.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* QfCoreFFI.xcframework */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		B00000000000000000000040 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -50,7 +46,6 @@
 
 /* Begin PBXFileReference section */
 		B00000000000000000000001 /* Queue Focus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Queue Focus.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		B00000000000000000000003 /* QfCoreFFI.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = QfCore/QfCoreFFI.xcframework; sourceTree = "<group>"; };
 		B00000000000000000000004 /* QueueFocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = QueueFocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000008 /* QueueFocusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = QueueFocusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -97,7 +92,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B00000000000000000000010 /* QfCoreFFI.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,7 +119,6 @@
 				B00000000000000000000006 /* QfCore */,
 				B00000000000000000000007 /* QueueFocusTests */,
 				B00000000000000000000009 /* QueueFocusUITests */,
-				B00000000000000000000003 /* QfCoreFFI.xcframework */,
 				B00000000000000000000102 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -276,10 +269,14 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/QfCore/lib/libqf_ffi.a",
+				"$(SRCROOT)/QfCore/include/QfCoreFFI.h",
+				"$(SRCROOT)/QfCore/include/module.modulemap",
+				"$(SRCROOT)/QfCore/Sources/QfCore/QfCore.swift",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Rebuilds the engine's XCFramework and Swift module when the Rust changed.\n# A fresh checkout needs `make mac-core` once first: Xcode lists the\n# generated files before any script runs.\nset -eu\ncd \"$SRCROOT/..\"\nexec scripts/build-mac-core.sh --archs \"$ARCHS\" --if-changed\n";
+			shellScript = "# Rebuilds the engine's library, C module and Swift module when the Rust\n# changed. The outputs are declared so the app's compile and link wait for them.\n# A fresh checkout needs `make mac-core` once first: Xcode lists the\n# generated files before any script runs.\nset -eu\ncd \"$SRCROOT/..\"\nexec scripts/build-mac-core.sh --archs \"$ARCHS\" --if-changed\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -407,6 +404,9 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© Michael Sinoplis. MIT licensed.";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/QfCore/lib";
+				OTHER_LDFLAGS = "-lqf_ffi";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/QfCore/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -428,6 +428,9 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© Michael Sinoplis. MIT licensed.";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/QfCore/lib";
+				OTHER_LDFLAGS = "-lqf_ffi";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/QfCore/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -445,6 +448,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = org.queuefocus.QueueFocusTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/QfCore/include";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Queue Focus.app/Contents/MacOS/Queue Focus";
 			};
 			name = Debug;
@@ -456,6 +460,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = org.queuefocus.QueueFocusTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/QfCore/include";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Queue Focus.app/Contents/MacOS/Queue Focus";
 			};
 			name = Release;

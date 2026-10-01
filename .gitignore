@@ -4,6 +4,8 @@
 # Built by `make mac-core`.
 /macos/QfCore/QfCoreFFI.xcframework
 /macos/QfCore/QfCoreFFI.inputs
+/macos/QfCore/lib
+/macos/QfCore/include
 /macos/QfCore/Sources/QfCore/QfCore.swift
 /macos/QfCore/.build
 /macos/QfCore/.swiftpm
