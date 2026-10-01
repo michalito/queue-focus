@@ -2,76 +2,7 @@ import XCTest
 
 /// The real status item and popover, on a data directory of the test's own.
 @MainActor
-final class MenuBarUITests: XCTestCase {
-    private var app: XCUIApplication!
-    private var dataHome: URL!
-
-    /// Launch the app on a fresh data directory, removed after the test,
-    /// holding `tasks` if given: `(title, bucket)` pairs.
-    private func launch(with tasks: [(String, String)] = [], restoringState: Bool = false) throws {
-        continueAfterFailure = false
-        let dataHome = FileManager.default.temporaryDirectory
-            .appendingPathComponent("qf-ui-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dataHome, withIntermediateDirectories: true)
-        if !tasks.isEmpty {
-            let dir = dataHome.appendingPathComponent("queue-focus")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let file: [String: Any] = [
-                "next_id": tasks.count + 1,
-                "tasks": tasks.enumerated().map { index, task in
-                    ["id": index + 1, "title": task.0, "bucket": task.1, "created_at": 0]
-                },
-            ]
-            try JSONSerialization.data(withJSONObject: file).write(to: dir.appendingPathComponent("tasks.json"))
-        }
-        let app = XCUIApplication()
-        app.launchEnvironment["XDG_DATA_HOME"] = dataHome.path
-        app.launchArguments += ["-allowSecondInstance", "YES"]
-        if restoringState {
-            // As for someone who keeps windows when quitting an app.
-            app.launchArguments += ["-ApplePersistenceIgnoreState", "NO", "-NSQuitAlwaysKeepsWindows", "YES"]
-        }
-        app.launch()
-        addTeardownBlock { @MainActor in
-            app.terminate()
-            try? FileManager.default.removeItem(at: dataHome)
-        }
-        self.app = app
-        self.dataHome = dataHome
-        XCTAssertTrue(statusItem.waitForExistence(timeout: 10), "the status item appears")
-        XCTAssertEqual(app.windows.count, 0, "a menu bar app opens no window at launch: \(app.windows.debugDescription)")
-    }
-
-    /// The saved queue, as the engine wrote it.
-    private func storedTitles() throws -> [String] {
-        let data = try Data(contentsOf: dataHome.appendingPathComponent("queue-focus/tasks.json"))
-        let file = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let tasks = file?["tasks"] as? [[String: Any]] ?? []
-        return tasks.compactMap { $0["title"] as? String }
-    }
-
-    private var statusItem: XCUIElement {
-        app.statusItems["queue-focus-status-item"]
-    }
-
-    private var statusTitle: String {
-        statusItem.title.isEmpty ? (statusItem.value as? String ?? "") : statusItem.title
-    }
-
-    private func openPopover() -> XCUIElement {
-        statusItem.click()
-        let field = app.textFields["add-field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "the popover opens with its add field")
-        return field
-    }
-
-    private func waitForTitle(containing text: String, file: StaticString = #filePath, line: UInt = #line) {
-        let predicate = NSPredicate { _, _ in MainActor.assumeIsolated { self.statusTitle.contains(text) } }
-        let found = XCTNSPredicateExpectation(predicate: predicate, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [found], timeout: 5), .completed,
-                       "status title \(statusTitle.debugDescription) never contained \(text)", file: file, line: line)
-    }
-
+final class MenuBarUITests: AppUITestCase {
     func testAddingCompletingAndUndoingFromThePopover() throws {
         try launch()
         waitForTitle(containing: "no task")
@@ -82,7 +13,7 @@ final class MenuBarUITests: XCTestCase {
         waitForTitle(containing: "first task")
 
         _ = openPopover()
-        app.buttons["done-current"].click()
+        click(app.buttons["done-current"])
         XCTAssertTrue(app.buttons["undo"].waitForExistence(timeout: 5), "Done offers Undo")
         waitForTitle(containing: "no task")
 
@@ -152,14 +83,14 @@ final class MenuBarUITests: XCTestCase {
     func testThePopoverOpensTheWindows() throws {
         try launch()
         _ = openPopover()
-        app.buttons["open-queue"].click()
+        click(app.buttons["open-queue"])
         XCTAssertTrue(app.windows["Queue"].waitForExistence(timeout: 5), "Queue opens from the popover")
         _ = openPopover()
-        app.buttons["open-board"].click()
+        click(app.buttons["open-board"])
         XCTAssertTrue(app.windows["Board"].waitForExistence(timeout: 5), "Board opens from the popover")
         _ = openPopover()
-        app.menuButtons["gear-menu"].click()
-        app.menuItems["gear-settings"].click()
+        click(app.menuButtons["gear-menu"])
+        click(app.menuItems["gear-settings"])
         XCTAssertTrue(app.windows["com_apple_SwiftUI_Settings_window"].waitForExistence(timeout: 5),
                       "Settings opens from the gear menu")
     }
@@ -170,11 +101,11 @@ final class MenuBarUITests: XCTestCase {
         // UI tests launch with state restoration off; this one needs it on.
         try launch(restoringState: true)
         _ = openPopover()
-        app.buttons["open-queue"].click()
+        click(app.buttons["open-queue"])
         XCTAssertTrue(app.windows["Queue"].waitForExistence(timeout: 5))
         _ = openPopover()
-        app.menuButtons["gear-menu"].click()
-        app.menuItems["gear-quit"].click()
+        click(app.menuButtons["gear-menu"])
+        click(app.menuItems["gear-quit"])
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 10), "Quit quits")
 
         app.launch()
@@ -185,8 +116,8 @@ final class MenuBarUITests: XCTestCase {
     func testASettingsChangeReachesTheFile() throws {
         try launch()
         _ = openPopover()
-        app.menuButtons["gear-menu"].click()
-        app.menuItems["gear-settings"].click()
+        click(app.menuButtons["gear-menu"])
+        click(app.menuItems["gear-settings"])
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.descendants(matching: .any)["setting-show-timer"].firstMatch.click()

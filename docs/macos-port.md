@@ -76,11 +76,17 @@ because this Mac cannot build the GTK crate.
 
 ## Phase 4. Windows
 
-- [ ] 1. Queue window: three bands, every shortcut, tag tint
-- [ ] 2. Board window: four quadrants, drag and drop with insertion line, Now promote and ring
-- [ ] 3. Settings scene: Flash, Quiet, Appearance, Menu bar, Adding, Shortcuts, General
-- [ ] 4. Quick add panel
-- [ ] 5. Shared row component with context menu
+- [x] 1. Queue window: three bands, every task key, tag tint, drags and drops
+      (banner, headings, "empty" lines, the Later shelf open or closed)
+- [x] 2. Board window: quadrants split three to two, drag and drop with the
+      insertion line, Now panel and heading promote and ring, the current
+      task can be dragged out of Now
+- [x] 3. Settings: Reminder (with Try it and Flash now), Quiet, Appearance,
+      Menu bar, Quick add, Keyboard, General
+- [x] 4. Quick add panel: floating, non-activating, opened with ⌘N for now;
+      Phase 6's global shortcut opens the same panel
+- [x] 5. Shared row component with context menu, inline rename and tooltips
+      only on cut titles
 - [ ] Review: GPT phase review green
 - [ ] Review: Fable approves the Phase 5 design
 
@@ -126,6 +132,24 @@ because this Mac cannot build the GTK crate.
 - [ ] Review: GPT phase review green
 
 ## Notes
+
+Deliberate differences from GNOME, so far:
+- Queue and Board are two windows, not two pages of one; `q` and `b` open
+  the other and keep this one open. Escape and ⌘W close a window; ⌘Q quits
+  the app. ⌘1 and ⌘2 open Queue and Board, ⌘, Settings, ⌘N quick add.
+- A task completed from a window can be undone from the popover.
+- Settings has a Menu bar section (the title's width in points) where GNOME
+  has Top bar; Mac-only settings live in UserDefaults.
+- The windows' controls sit beside the add field, not in a toolbar: a
+  toolbar rebuilt with every tick of the clock crashed AppKit's layout.
+
+Known gaps, to close later:
+- XCTest cannot type into the quick add panel: its accessibility does not
+  report the field as focused, though AppKit has given it the keyboard.
+  Opening and closing are tested; typing there is checked in Phase 6.
+- SwiftUI's accessibility folds a list's only row into the list, so that row
+  loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
+  accessibility.
 
 - `make test-extension-shell` fails in the container on `main` too: in the
   headless GNOME Shell 50 on arm64 the virtual pointer's x stays at 0, so the

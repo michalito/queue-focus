@@ -1,93 +1,88 @@
 import SwiftUI
 
-/// The Queue view: the current task in a banner, Side and Next in one
-/// scrolling card, and Later on a shelf at the bottom.
+/// The Queue view, in three bands: the current task in a banner, Side and
+/// Next in one scrolling card, and Later on a shelf pinned to the bottom.
 struct QueueWindow: View {
-    @Environment(QueueModel.self) private var model
-    @State private var laterOpen = false
-
     var body: some View {
-        let snapshot = model.snapshot
-        VStack(spacing: 0) {
-            NowBanner(current: snapshot.current)
-                .padding(12)
-            List {
-                Section("Side") {
-                    TaskRows(tasks: snapshot.side, empty: "Nothing on the side")
-                }
-                Section("Next") {
-                    TaskRows(tasks: snapshot.next, empty: "Nothing queued")
-                }
-            }
-            DisclosureGroup("Later (\(snapshot.later.count))", isExpanded: $laterOpen) {
-                List {
-                    TaskRows(tasks: snapshot.later, empty: "Nothing for later")
-                }
-                .frame(minHeight: 80, maxHeight: 220)
-            }
-            .padding(12)
+        TaskWindow(page: .queue) { focus in
+            QueueBands(focus: focus)
         }
         .frame(minWidth: 320, minHeight: 420)
         .navigationTitle("Queue")
     }
 }
 
-/// The current task, or the invitation to pick one.
-struct NowBanner: View {
+private struct QueueBands: View {
     @Environment(QueueModel.self) private var model
-    let current: QueueTask?
+    @Environment(WindowContext.self) private var context
+    var focus: FocusState<FocusTarget?>.Binding
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                SectionHeading("NOW")
-                if let tag = current?.tag {
-                    TagChip(tag: tag)
+        let snapshot = model.snapshot
+        VStack(spacing: 0) {
+            NowPanel(style: .banner, focus: focus)
+                .padding(.horizontal, 12)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        BucketHeader(bucket: .side, count: snapshot.side.count)
+                        BucketList(bucket: .side, tasks: snapshot.side, style: .queue, focus: focus)
+                        Divider().padding(.vertical, 4)
+                        BucketHeader(bucket: .next, count: snapshot.next.count)
+                        BucketList(bucket: .next, tasks: snapshot.next, style: .queue, focus: focus)
+                    }
+                    .padding(12)
                 }
-                Spacer()
-                if let current, let secs = model.elapsed(of: current) {
-                    Text(longElapsed(secs: secs))
-                        .font(.body.monospacedDigit())
-                        .foregroundStyle(current.pausedAt == nil ? .secondary : .tertiary)
+                .onChange(of: focus.wrappedValue) { _, target in
+                    if case .task(let id) = target { proxy.scrollTo(id) }
                 }
             }
-            if let current {
-                Text(current.title)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(2)
-                    .help(current.title)
-            } else {
-                Text("empty — promote one ↑")
-                    .foregroundStyle(.secondary)
-            }
+            LaterShelf(focus: focus)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(TagStyle.accent(current?.tag).opacity(current?.tag == nil ? 0.08 : 0.16),
-                    in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
-/// A bucket's tasks, one line each, or a word for an empty bucket.
-struct TaskRows: View {
-    let tasks: [QueueTask]
-    let empty: String
+/// Later, pinned below the scrolling card so it never pushes the queue
+/// around. It starts closed; `l` or its heading opens it. A drop on the
+/// heading lands at the end of Later, open or not.
+private struct LaterShelf: View {
+    @Environment(QueueModel.self) private var model
+    @Environment(DragState.self) private var drag
+    @Environment(WindowContext.self) private var context
+    var focus: FocusState<FocusTarget?>.Binding
 
     var body: some View {
-        if tasks.isEmpty {
-            Text(empty)
-                .foregroundStyle(.tertiary)
-        }
-        ForEach(tasks, id: \.id) { task in
-            HStack(spacing: 6) {
-                if let tag = task.tag {
-                    TagChip(tag: tag)
+        let later = model.snapshot.later
+        VStack(alignment: .leading, spacing: 4) {
+            Divider()
+            Button {
+                context.laterOpen.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Later").font(.headline)
+                    Text("\(later.count)").foregroundStyle(.secondary).monospacedDigit()
+                    Spacer()
+                    Image(systemName: context.laterOpen ? "chevron.down" : "chevron.right")
+                        .foregroundStyle(.secondary)
                 }
-                Text(task.title)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(task.title)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .dropRing(.laterShelf, in: drag, cornerRadius: 6)
+            .appendDrop(.later, empty: later.isEmpty || !context.laterOpen, ring: .laterShelf, drag: drag, model: model)
+            .accessibilityLabel("Later, \(later.count)")
+            .accessibilityValue(context.laterOpen ? "open" : "closed")
+            .accessibilityIdentifier("later-shelf")
+            if context.laterOpen {
+                ScrollView {
+                    BucketList(bucket: .later, tasks: later, style: .later, focus: focus)
+                }
+                .frame(maxHeight: 180)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding([.horizontal, .bottom], 12)
     }
 }

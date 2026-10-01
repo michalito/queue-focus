@@ -194,6 +194,72 @@ private final class Fixture {
         #expect(f.model.elapsed(of: current) != nil)
     }
 
+    @Test func theWindowsRequestsReachTheEngine() throws {
+        let f = try Fixture()
+        f.model.add("a")
+        f.model.add("b")
+        f.model.add("c @later")
+        let ids = f.model.snapshot.next.map(\.id)
+        let later = try #require(f.model.snapshot.later.first)
+
+        #expect(f.model.move(id: later.id, to: .next, before: ids[0]))
+        #expect(f.model.snapshot.next.map(\.title) == ["c", "a", "b"])
+        #expect(!f.model.move(id: ids[0], to: .side, before: ids[1]), "b is not in Side")
+        #expect(f.model.actionError == nil, "a stale row is no error")
+
+        f.model.shift(id: later.id, by: 1)
+        #expect(f.model.snapshot.next.map(\.title) == ["a", "c", "b"])
+        f.model.cycleTag(id: later.id)
+        #expect(f.model.task(later.id)?.tag == .work)
+        f.model.setTag(id: later.id, .personal)
+        #expect(f.model.task(later.id)?.tag == .personal)
+        f.model.move(id: later.id, to: .side)
+        #expect(f.model.snapshot.side.map(\.title) == ["c"])
+        f.model.promote(id: later.id)
+        #expect(f.model.snapshot.current?.title == "c")
+        f.model.remove(id: ids[1])
+        #expect(f.model.task(ids[1]) == nil)
+    }
+
+    @Test func aBlankRenameAsksNothingOfTheEngine() throws {
+        let f = try Fixture()
+        f.model.add("kept")
+        let id = try #require(f.model.snapshot.next.first?.id)
+        let revision = f.model.snapshot.revision
+        #expect(!f.model.rename(id: id, to: "   "))
+        #expect(f.model.actionError == nil)
+        #expect(f.model.snapshot.revision == revision)
+        #expect(f.model.rename(id: id, to: " renamed "))
+        #expect(f.model.task(id)?.title == "renamed")
+    }
+
+    /// A completion from a window can be undone from the popover, which the
+    /// GNOME windows do not offer.
+    @Test func aWindowCompletionOffersUndo() throws {
+        let f = try Fixture()
+        f.model.add("first", asCurrent: true)
+        let id = try #require(f.model.snapshot.current?.id)
+        f.model.complete(id: id)
+        #expect(f.model.snapshot.current == nil)
+        #expect(f.model.liveUndoOffer?.id == id)
+        f.model.complete(id: 999)
+        #expect(f.model.liveUndoOffer?.id == id, "nothing to complete changes nothing")
+    }
+
+    @Test func flashNowGoesThroughTheSamePathAsAScheduledFlash() throws {
+        let f = try Fixture()
+        #expect(!f.model.flashNow(), "nothing in Now")
+        #expect(f.flashes.isEmpty)
+        f.model.add("focus", asCurrent: true)
+        #expect(f.model.flashNow())
+        #expect(f.flashes.map(\.title) == ["focus"])
+        guard case .scheduled(let remaining)? = f.model.flashStatus() else {
+            Issue.record("expected a scheduled flash")
+            return
+        }
+        #expect(remaining == 15 * 60, "the wait started over")
+    }
+
     @Test func theFlashStatusFollowsTheQueue() throws {
         let f = try Fixture()
         #expect(f.model.flashStatus() == .held(reason: .noCurrentTask))
