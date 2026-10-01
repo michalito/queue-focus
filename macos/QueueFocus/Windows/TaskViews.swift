@@ -201,9 +201,13 @@ struct RenameField: View {
             }
             .onAppear {
                 // Once laid out, the field takes the keyboard, and a fresh
-                // rename selects the old title to type over it.
+                // rename selects the old title to type over it. Select All
+                // goes to the key window, so only when that is this one: a
+                // rename that moved with its task in a window behind keeps
+                // its caret, and another window's field keeps its text.
                 DispatchQueue.main.async {
                     focus.wrappedValue = .rename(task.id)
+                    guard activeState == .key else { return }
                     DispatchQueue.main.async {
                         NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
                     }
@@ -309,6 +313,7 @@ struct TaskRow: View {
 struct BucketList: View {
     @Environment(QueueModel.self) private var model
     @Environment(DragState.self) private var drag
+    @Environment(WindowContext.self) private var context
     let bucket: Bucket
     let tasks: [QueueTask]
     let style: RowStyle
@@ -327,8 +332,8 @@ struct BucketList: View {
                 .frame(maxWidth: .infinity, minHeight: max(minHeight, 28), alignment: style == .boardSide || style == .boardNext ? .center : .leading)
                 .padding(.horizontal, 8)
                 .contentShape(Rectangle())
-                .dropRing(.placeholder(bucket), in: drag)
-                .appendDrop(bucket, empty: true, ring: .placeholder(bucket), drag: drag, model: model)
+                .dropRing(.placeholder(bucket), in: drag, page: context.page)
+                .appendDrop(bucket, empty: true, ring: .placeholder(bucket), drag: drag, page: context.page, model: model)
                 .accessibilityIdentifier("empty-\(BucketName.of(bucket).lowercased())")
         } else {
             VStack(spacing: 0) {
@@ -337,12 +342,12 @@ struct BucketList: View {
                     TaskRow(task: task, style: style, focus: focus)
                         .rowFrame(task.id, in: space)
                         .overlay(alignment: .top) {
-                            if drag.mark == .before(task.id) {
+                            if drag.marks(.before(task.id), in: context.page) {
                                 InsertionLine().offset(y: -style.gap / 2 - 1)
                             }
                         }
                         .overlay(alignment: .bottom) {
-                            if drag.mark == .end(bucket), task.id == tasks.last?.id {
+                            if drag.marks(.end(bucket), in: context.page), task.id == tasks.last?.id {
                                 InsertionLine().offset(y: style.gap / 2 + 1)
                             }
                         }
@@ -359,7 +364,7 @@ struct BucketList: View {
             .coordinateSpace(name: space)
             .onPreferenceChange(RowFrames.self) { frames = $0 }
             .onDrop(of: [.queueFocusTask], delegate: ListDropDelegate(
-                bucket: bucket, rows: tasks.map(\.id), frames: frames, drag: drag, model: model
+                page: context.page, bucket: bucket, rows: tasks.map(\.id), frames: frames, drag: drag, model: model
             ))
         }
     }
@@ -370,6 +375,7 @@ struct BucketList: View {
 struct BucketHeader: View {
     @Environment(QueueModel.self) private var model
     @Environment(DragState.self) private var drag
+    @Environment(WindowContext.self) private var context
     let bucket: Bucket
     let count: Int
 
@@ -385,8 +391,8 @@ struct BucketHeader: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .dropRing(.heading(bucket), in: drag, cornerRadius: 6)
-        .appendDrop(bucket, empty: count == 0, ring: .heading(bucket), drag: drag, model: model)
+        .dropRing(.heading(bucket), in: drag, page: context.page, cornerRadius: 6)
+        .appendDrop(bucket, empty: count == 0, ring: .heading(bucket), drag: drag, page: context.page, model: model)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("heading-\(BucketName.of(bucket).lowercased())")
@@ -419,7 +425,7 @@ struct NowPanel: View {
                         .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
                 }
             }
-            .dropRing(.now, in: drag, cornerRadius: 10)
+            .dropRing(.now, in: drag, page: context.page, cornerRadius: 10)
             .onDrop(of: [.queueFocusTask], delegate: promoteDrop)
             .modifier(CurrentTaskFocus(current: current, renaming: context.renaming != nil && context.renaming == current?.id,
                                        focus: focus, drag: drag))
@@ -430,7 +436,7 @@ struct NowPanel: View {
 
     /// A task dropped on the panel takes over as the current task.
     private var promoteDrop: WholeDropDelegate {
-        WholeDropDelegate(mark: .ring(.now), drag: drag) { id in
+        WholeDropDelegate(page: context.page, mark: .ring(.now), drag: drag) { id in
             model.promote(id: id)
             return true
         }
@@ -546,7 +552,10 @@ private struct CurrentTaskFocus: ViewModifier {
                 .focusable(!renaming)
                 .focused(focus, equals: .task(current.id))
                 .focusEffectDisabled()
-                .simultaneousGesture(TapGesture().onEnded { focus.wrappedValue = .task(current.id) })
+                // A click in the rename field is someone placing the caret.
+                .simultaneousGesture(TapGesture().onEnded {
+                    if !renaming { focus.wrappedValue = .task(current.id) }
+                })
                 .contextMenu { TaskMenuItems(task: current, isCurrent: true) }
                 .onDrag { drag.provider(for: current.id) }
         } else {

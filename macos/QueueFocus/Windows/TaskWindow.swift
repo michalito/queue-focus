@@ -9,7 +9,7 @@ struct TaskWindow<Content: View>: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var context: WindowContext
     @FocusState private var focus: FocusTarget?
-    @State private var memory: FocusMemory?
+    @State private var keeper = FocusKeeper()
     private let content: (FocusState<FocusTarget?>.Binding) -> Content
 
     init(page: Page, @ViewBuilder content: @escaping (FocusState<FocusTarget?>.Binding) -> Content) {
@@ -41,49 +41,39 @@ struct TaskWindow<Content: View>: View {
         .onKeyPress(phases: .down, action: handle)
         .onAppear { settleFocus() }
         .onChange(of: model.snapshot) { _, _ in
-            if let id = context.renaming, model.task(id) == nil {
+            keepRenameInView()
+            settleFocus()
+        }
+        .onChange(of: context.laterOpen) { _, _ in
+            // Closing the shelf over a rename ends it.
+            if let id = context.renaming, !order.contains(id) {
                 context.renaming = nil
             }
-            settleFocus(reclaim: abandoned)
+            settleFocus()
         }
-        .onChange(of: context.laterOpen) { _, _ in settleFocus() }
         .onChange(of: focus) { _, now in
-            if case .task(let id) = now {
-                memory = FocusMemory(order: order, id: id)
-            } else if now == nil || abandoned {
-                settleFocus(reclaim: true)
+            if let target = keeper.moved(to: now, order: order, renaming: context.renaming) {
+                focus = target
             }
         }
     }
 
-    /// The add field holds the keyboard only because the task that had it
-    /// went: AppKit hands a vanished view's focus to the first field. That
-    /// is not someone choosing to type.
-    private var abandoned: Bool {
-        guard focus == .add, let memory else { return false }
-        return !order.contains(memory.id)
+    private func settleFocus() {
+        if let target = keeper.settle(focus, order: order, renaming: context.renaming) {
+            focus = target
+        }
     }
 
-    /// Focus is never nowhere: the keys act on the focused task, and with
-    /// nothing focused they would do nothing at all. It goes back to the task
-    /// it was on, or to whatever now sits where that was, or to the add field.
-    /// `reclaim` takes it back from the add field too.
-    private func settleFocus(reclaim: Bool = false) {
-        // A rename holds the keyboard until it ends.
-        guard context.renaming == nil else { return }
-        switch focus {
-        case .add where !reclaim, .rename:
+    /// A rename follows its task: it ends when the task goes, and when
+    /// something elsewhere moves the task to Later, the shelf opens on it.
+    private func keepRenameInView() {
+        guard let id = context.renaming else { return }
+        guard let task = model.task(id) else {
+            context.renaming = nil
             return
-        case .task(let id) where order.contains(id):
-            memory = FocusMemory(order: order, id: id)
-            return
-        default:
-            break
         }
-        if let id = memory?.restore(in: order) ?? order.first {
-            focus = .task(id)
-        } else {
-            focus = .add
+        if !order.contains(id), page == .queue, task.bucket == .later {
+            context.laterOpen = true
         }
     }
 

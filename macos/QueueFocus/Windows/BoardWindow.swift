@@ -31,7 +31,7 @@ private struct BoardQuadrants: View {
                             .padding(.horizontal, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                            .onDrop(of: [.queueFocusTask], delegate: WholeDropDelegate(mark: .ring(.now), drag: drag) { id in
+                            .onDrop(of: [.queueFocusTask], delegate: WholeDropDelegate(page: .board, mark: .ring(.now), drag: drag) { id in
                                 model.promote(id: id)
                                 return true
                             })

@@ -39,6 +39,62 @@ private func snapshot(current: UInt64? = 4, side: [UInt64] = [3], next: [UInt64]
         #expect(FocusMemory(order: old, id: 99) == nil)
     }
 
+    @Test func aChosenAddFieldKeepsTheKeyboardWhenItsTaskGoes() {
+        var keeper = FocusKeeper()
+        #expect(keeper.moved(to: .task(2), order: [1, 2, 3], renaming: nil) == nil)
+        // Someone clicks the add field while task 2 is still there…
+        #expect(keeper.moved(to: .add, order: [1, 2, 3], renaming: nil) == nil)
+        // …and then task 2 is done in the other window: they are still typing.
+        #expect(keeper.settle(.add, order: [1, 3], renaming: nil) == nil)
+        // Escape hands the keyboard back to a task; the next fall is not a choice.
+        #expect(keeper.moved(to: .task(3), order: [1, 3], renaming: nil) == nil)
+        #expect(keeper.settle(.add, order: [1], renaming: nil) == .task(1))
+    }
+
+    @Test func theAddFieldGivesBackWhatAVanishedTaskDroppedOnIt() {
+        // AppKit hands the focus of a row that went away to the first field,
+        // whether the window hears of the focus or of the new list first.
+        var heardFocusFirst = FocusKeeper()
+        _ = heardFocusFirst.moved(to: .task(2), order: [1, 2, 3], renaming: nil)
+        #expect(heardFocusFirst.moved(to: .add, order: [1, 3], renaming: nil) == .task(3))
+
+        var heardListFirst = FocusKeeper()
+        _ = heardListFirst.moved(to: .task(3), order: [1, 2, 3], renaming: nil)
+        #expect(heardListFirst.settle(.add, order: [1, 2], renaming: nil) == .task(2))
+        // Focus falling through to nothing comes back the same way.
+        var fellThrough = FocusKeeper()
+        _ = fellThrough.moved(to: .task(1), order: [1, 2], renaming: nil)
+        #expect(fellThrough.moved(to: nil, order: [2], renaming: nil) == .task(2))
+    }
+
+    @Test func withNothingToFocusTheAddFieldKeepsTheKeyboard() {
+        var keeper = FocusKeeper()
+        _ = keeper.moved(to: .task(1), order: [1], renaming: nil)
+        // The last task is done: the add field takes the keyboard…
+        #expect(keeper.settle(.task(1), order: [], renaming: nil) == .add)
+        #expect(keeper.moved(to: .add, order: [], renaming: nil) == nil)
+        // …and keeps it when the task typed there arrives.
+        #expect(keeper.settle(.add, order: [7], renaming: nil) == nil)
+        // A window that opens on an empty queue starts there too.
+        var fresh = FocusKeeper()
+        #expect(fresh.settle(nil, order: [], renaming: nil) == .add)
+        #expect(fresh.settle(nil, order: [5], renaming: nil) == .task(5))
+    }
+
+    @Test func aRenameHoldsTheKeyboardOnlyWhileItsTaskIsShown() {
+        var keeper = FocusKeeper()
+        _ = keeper.moved(to: .task(2), order: [1, 2, 3], renaming: nil)
+        #expect(keeper.moved(to: .rename(2), order: [1, 2, 3], renaming: 2) == nil)
+        // Focus passing through nothing on its way to the field changes nothing.
+        #expect(keeper.moved(to: nil, order: [1, 2, 3], renaming: 2) == nil)
+        #expect(keeper.settle(.rename(2), order: [1, 3, 2], renaming: 2) == nil)
+        // A rename that just ended gives the keyboard back to its task itself.
+        #expect(keeper.settle(.rename(2), order: [1, 3, 2], renaming: nil) == nil)
+        // One whose task is no longer shown leaves focus to find the task's place.
+        #expect(keeper.settle(.rename(2), order: [1, 3], renaming: nil) == .task(3))
+        #expect(keeper.settle(.rename(2), order: [1, 3], renaming: 2) == .task(3))
+    }
+
     @Test func jAndKStepThroughTheOrderAndStopAtTheEnds() {
         let order: [UInt64] = [4, 3, 1]
         #expect(Placement.step(from: 4, by: 1, in: order) == 3)

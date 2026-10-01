@@ -37,8 +37,10 @@ final class DragState {
     /// The task picked up. A drag that ends outside our windows says nothing,
     /// so this is only trusted while one of our targets is under the pointer.
     var pickedUp: UInt64?
-    /// The one mark on screen, as GTK keeps one.
-    private(set) var mark: DropMark?
+    /// The one mark on screen, as GTK keeps one, and the window it is in:
+    /// both windows can show the same task, and only the one under the
+    /// pointer draws it.
+    private var mark: (page: Page, mark: DropMark?)?
     /// One of our targets is under the pointer.
     private(set) var over = false
 
@@ -47,12 +49,20 @@ final class DragState {
         over && pickedUp == id
     }
 
-    func show(_ mark: DropMark?) {
-        over = true
-        self.mark = mark
+    /// Whether `page` draws `mark` now.
+    func marks(_ mark: DropMark, in page: Page) -> Bool {
+        self.mark?.page == page && self.mark?.mark == mark
     }
 
-    func clear() {
+    func show(_ mark: DropMark?, in page: Page) {
+        over = true
+        self.mark = (page, mark)
+    }
+
+    /// The pointer left a target in `page`, or dropped on it. A window it
+    /// has already entered keeps its mark.
+    func clear(in page: Page) {
+        guard mark == nil || mark?.page == page else { return }
         over = false
         mark = nil
     }
@@ -98,6 +108,7 @@ extension View {
 /// A drop on a bucket's rows: in front of the row under the pointer, or at
 /// the end of the bucket.
 struct ListDropDelegate: DropDelegate {
+    let page: Page
     let bucket: Bucket
     /// The rows' ids, top to bottom.
     let rows: [UInt64]
@@ -119,11 +130,11 @@ struct ListDropDelegate: DropDelegate {
     }
 
     func dropExited(info: DropInfo) {
-        drag.clear()
+        drag.clear(in: page)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { drag.clear() }
+        defer { drag.clear(in: page) }
         guard let id = drag.pickedUp else { return false }
         return model.move(id: id, to: bucket, before: anchor(info))
     }
@@ -135,18 +146,19 @@ struct ListDropDelegate: DropDelegate {
 
     private func update(_ info: DropInfo) {
         guard let anchor = anchor(info) else {
-            drag.show(.end(bucket))
+            drag.show(.end(bucket), in: page)
             return
         }
         // Over the row it came from a drop changes nothing: the row fades,
         // and no line promises otherwise.
-        drag.show(anchor == drag.pickedUp ? nil : .before(anchor))
+        drag.show(anchor == drag.pickedUp ? nil : .before(anchor), in: page)
     }
 }
 
 /// A drop on something that takes the task whole: the current task's panel,
 /// a heading, an "empty" line, the Later shelf.
 struct WholeDropDelegate: DropDelegate {
+    let page: Page
     /// What is drawn while the pointer is over it.
     let mark: DropMark
     let drag: DragState
@@ -158,20 +170,20 @@ struct WholeDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        drag.show(mark)
+        drag.show(mark, in: page)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        drag.show(mark)
+        drag.show(mark, in: page)
         return DropProposal(operation: .move)
     }
 
     func dropExited(info: DropInfo) {
-        drag.clear()
+        drag.clear(in: page)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { drag.clear() }
+        defer { drag.clear(in: page) }
         guard let id = drag.pickedUp else { return false }
         return perform(id)
     }
@@ -179,9 +191,9 @@ struct WholeDropDelegate: DropDelegate {
 
 extension View {
     /// A ring around this view while a drop on it would take the task.
-    func dropRing(_ ring: DropRing, in drag: DragState, cornerRadius: CGFloat = 8) -> some View {
+    func dropRing(_ ring: DropRing, in drag: DragState, page: Page, cornerRadius: CGFloat = 8) -> some View {
         overlay {
-            if drag.mark == .ring(ring) {
+            if drag.marks(.ring(ring), in: page) {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
                     .accessibilityHidden(true)
@@ -191,8 +203,9 @@ extension View {
 
     /// Take a dropped task to the end of `bucket`. The mark is a line after
     /// the last row while the bucket has rows, and `ring` while it has none.
-    func appendDrop(_ bucket: Bucket, empty: Bool, ring: DropRing, drag: DragState, model: QueueModel) -> some View {
+    func appendDrop(_ bucket: Bucket, empty: Bool, ring: DropRing, drag: DragState, page: Page, model: QueueModel) -> some View {
         onDrop(of: [.queueFocusTask], delegate: WholeDropDelegate(
+            page: page,
             mark: empty ? .ring(ring) : .end(bucket),
             drag: drag,
             perform: { model.move(id: $0, to: bucket, before: nil) }

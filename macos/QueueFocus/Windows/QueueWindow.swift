@@ -70,8 +70,8 @@ private struct LaterShelf: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .dropRing(.laterShelf, in: drag, cornerRadius: 6)
-            .appendDrop(.later, empty: later.isEmpty || !context.laterOpen, ring: .laterShelf, drag: drag, model: model)
+            .dropRing(.laterShelf, in: drag, page: .queue, cornerRadius: 6)
+            .appendDrop(.later, empty: later.isEmpty || !context.laterOpen, ring: .laterShelf, drag: drag, page: .queue, model: model)
             .accessibilityLabel("Later, \(later.count)")
             .accessibilityValue(context.laterOpen ? "open" : "closed")
             .accessibilityIdentifier("later-shelf")

@@ -68,6 +68,77 @@ struct FocusMemory: Equatable {
     }
 }
 
+/// Where the keyboard belongs in a task window. Focus is never nowhere: the
+/// keys act on the focused task, and with nothing focused they would do
+/// nothing at all. It goes back to the task it was on, or to whatever now
+/// sits where that was, or to the add field.
+struct FocusKeeper: Equatable {
+    /// The task that last had the keyboard, and where it was.
+    private(set) var memory: FocusMemory?
+    /// Someone chose the add field, so it keeps the keyboard whatever happens
+    /// to the tasks. Otherwise it holds the keyboard only because the task
+    /// that had it went: AppKit hands a vanished view's focus to the first
+    /// field, and that is not someone choosing to type.
+    private(set) var addChosen = false
+
+    /// Focus moved to `now`; where it belongs instead, if somewhere else.
+    /// `renaming` is the task being renamed, if any.
+    mutating func moved(to now: FocusTarget?, order: [UInt64], renaming: UInt64?) -> FocusTarget? {
+        switch now {
+        case .task(let id):
+            memory = FocusMemory(order: order, id: id)
+            addChosen = false
+            return nil
+        case .rename(let id):
+            memory = FocusMemory(order: order, id: id) ?? memory
+            return nil
+        case .add:
+            if lost(in: order) {
+                return settle(now, order: order, renaming: renaming)
+            }
+            addChosen = true
+            return nil
+        case nil:
+            return settle(nil, order: order, renaming: renaming)
+        }
+    }
+
+    /// The tasks shown changed, or focus fell through: where focus belongs
+    /// now, if it is not where it should be.
+    mutating func settle(_ focus: FocusTarget?, order: [UInt64], renaming: UInt64?) -> FocusTarget? {
+        // A rename holds the keyboard until it ends.
+        if let renaming, order.contains(renaming) {
+            return nil
+        }
+        switch focus {
+        case .add where addChosen || !lost(in: order):
+            return nil
+        case .task(let id) where order.contains(id):
+            memory = FocusMemory(order: order, id: id)
+            return nil
+        case .rename(let id) where order.contains(id):
+            // A rename just ended: its field hands the keyboard back to the
+            // task itself once the row is there to take it.
+            return nil
+        default:
+            break
+        }
+        if let id = memory?.restore(in: order) ?? order.first {
+            return .task(id)
+        }
+        // Nothing to focus: the add field is where the next task starts, so
+        // it keeps the keyboard when one arrives.
+        memory = nil
+        addChosen = true
+        return focus == .add ? nil : .add
+    }
+
+    /// The task that had the keyboard is no longer shown.
+    private func lost(in order: [UInt64]) -> Bool {
+        memory.map { !order.contains($0.id) } ?? false
+    }
+}
+
 // MARK: Keys
 
 /// A key press, as much of it as the task keys read.
