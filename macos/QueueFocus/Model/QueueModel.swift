@@ -117,10 +117,14 @@ final class QueueModel {
     }
 
     /// Take back the completion on offer.
+    /// Take back the completion on offer. The offer stays when the undo
+    /// could not be saved, so it can be tried again; the engine keeps its
+    /// record for the same reason.
     func undo() {
         guard let offer = undoOffer else { return }
+        guard let undone = perform({ try engine.undoComplete(id: offer.id) }) else { return }
         undoOffer = nil
-        if let undone = perform({ try engine.undoComplete(id: offer.id) }), !undone {
+        if !undone {
             actionError = "Nothing to undo: the queue changed since."
         }
     }

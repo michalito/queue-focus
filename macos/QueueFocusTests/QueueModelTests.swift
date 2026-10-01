@@ -109,6 +109,31 @@ private final class Fixture {
         #expect(f.model.snapshot.current?.title == "second")
     }
 
+    /// An undo that could not be saved can be tried again once the trouble
+    /// is gone: the offer stays, as the engine's record does.
+    @Test func anUndoThatCannotBeSavedCanBeTriedAgain() throws {
+        let f = try Fixture()
+        f.model.add("first", asCurrent: true)
+        f.model.offerUndo(for: try #require(f.model.completeCurrent()))
+        let tasks = f.dir.appendingPathComponent("tasks.json")
+        let saved = f.dir.appendingPathComponent("tasks.json.saved")
+        // A directory where the file belongs makes every save fail.
+        try FileManager.default.moveItem(at: tasks, to: saved)
+        try FileManager.default.createDirectory(at: tasks, withIntermediateDirectories: false)
+
+        f.model.undo()
+        #expect(f.model.actionError?.contains("could not save") == true)
+        #expect(f.model.snapshot.current == nil, "nothing was restored")
+        #expect(f.model.liveUndoOffer != nil, "the offer stays for another try")
+
+        try FileManager.default.removeItem(at: tasks)
+        try FileManager.default.moveItem(at: saved, to: tasks)
+        f.model.undo()
+        #expect(f.model.actionError == nil)
+        #expect(f.model.snapshot.current?.title == "first")
+        #expect(f.model.liveUndoOffer == nil)
+    }
+
     @Test func theOfferLastsEightSeconds() throws {
         let f = try Fixture()
         f.model.add("first", asCurrent: true)
