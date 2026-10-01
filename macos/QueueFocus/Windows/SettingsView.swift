@@ -10,6 +10,17 @@ struct SettingsView: View {
     private var titleWidth = Preferences.defaultMenuBarTitleWidth
 
     var body: some View {
+        VStack(spacing: 0) {
+            form
+            // A change that could not be saved says so here too: with only
+            // Settings open, nowhere else would.
+            MessageLine()
+        }
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var form: some View {
         Form {
             reminder
             quiet
@@ -67,8 +78,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: The reminder
@@ -140,10 +149,15 @@ struct SettingsView: View {
             LabeledContent("Flash only between") {
                 DatePicker("Flash from", selection: time(\.quietFrom), displayedComponents: .hourAndMinute)
                     .labelsHidden()
+                    .accessibilityIdentifier("setting-quiet-from")
                 Text("and")
                 DatePicker("Flash until", selection: time(\.quietTo), displayedComponents: .hourAndMinute)
                     .labelsHidden()
+                    .accessibilityIdentifier("setting-quiet-to")
             }
+            // A time of day, not a moment: shown in a zone whose clocks never
+            // change, so 02:30 is never skipped or doubled.
+            .environment(\.timeZone, TimeOfDay.zone)
             .disabled(!model.settings.quietHours)
         } header: {
             Text("Quiet")
@@ -166,17 +180,13 @@ struct SettingsView: View {
         )
     }
 
-    /// A time-of-day setting as the date a picker edits: today, at that time.
+    /// A time-of-day setting as the date a picker edits.
     private func time(_ key: WritableKeyPath<QueueSettings, TimeOfDay>) -> Binding<Date> {
         Binding(
-            get: {
-                let time = model.settings[keyPath: key]
-                return Calendar.current.date(bySettingHour: Int(time.hour), minute: Int(time.minute), second: 0, of: .now) ?? .now
-            },
+            get: { model.settings[keyPath: key].date },
             set: { date in
-                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
                 var settings = model.settings
-                settings[keyPath: key] = TimeOfDay(hour: UInt8(parts.hour ?? 0), minute: UInt8(parts.minute ?? 0))
+                settings[keyPath: key] = TimeOfDay(date)
                 model.setSettings(settings)
             }
         )

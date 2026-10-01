@@ -8,15 +8,18 @@ class AppUITestCase: XCTestCase {
     var dataHome: URL!
 
     /// Launch the app on a fresh data directory, removed after the test,
-    /// holding `tasks` if given: `(title, bucket)` pairs.
-    func launch(with tasks: [(String, String)] = [], restoringState: Bool = false) throws {
+    /// holding `tasks` if given: `(title, bucket)` pairs, and `settings`.
+    func launch(with tasks: [(String, String)] = [], settings: [String: Any] = [:], restoringState: Bool = false) throws {
         continueAfterFailure = false
         let dataHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("qf-ui-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dataHome, withIntermediateDirectories: true)
+        let dir = dataHome.appendingPathComponent("queue-focus")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if !settings.isEmpty {
+            try JSONSerialization.data(withJSONObject: settings).write(to: dir.appendingPathComponent("settings.json"))
+        }
         if !tasks.isEmpty {
-            let dir = dataHome.appendingPathComponent("queue-focus")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let file: [String: Any] = [
                 "next_id": tasks.count + 1,
                 "tasks": tasks.enumerated().map { index, task in
