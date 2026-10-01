@@ -56,7 +56,9 @@ TARGET_DIR=$("$CARGO" metadata --format-version 1 --no-deps |
   python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')
 readonly TARGET_DIR
 readonly WORK="$TARGET_DIR/mac-core"
-readonly STAMP="$TARGET_DIR/mac-core.inputs"
+# Beside what it vouches for: every build writes the same package, whichever
+# Cargo target directory it was made in.
+readonly STAMP="$PACKAGE/QfCoreFFI.inputs"
 
 # Everything the library and its bindings are made from, and the targets.
 inputs() {

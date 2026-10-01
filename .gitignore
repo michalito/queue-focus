@@ -3,6 +3,7 @@
 /extension/*/schemas/gschemas.compiled
 # Built by `make mac-core`.
 /macos/QfCore/QfCoreFFI.xcframework
+/macos/QfCore/QfCoreFFI.inputs
 /macos/QfCore/Sources/QfCore/QfCore.swift
 /macos/QfCore/.build
 /macos/QfCore/.swiftpm
