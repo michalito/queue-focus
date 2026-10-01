@@ -36,13 +36,18 @@ struct QueueFocusApp: App {
 
 /// A window's content with the app's model in its environment. The model
 /// exists from launch on; a window opened before then shows nothing.
+///
+/// None of the windows comes back when the app is opened again: a menu bar
+/// app opens nothing until asked, so they are kept out of state restoration.
 private struct WithModel<Content: View>: View {
     let delegate: AppDelegate
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         if let model = delegate.model {
-            content().environment(model)
+            content()
+                .environment(model)
+                .withWindow { $0.isRestorable = false }
         }
     }
 }

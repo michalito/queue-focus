@@ -8,7 +8,7 @@ final class MenuBarUITests: XCTestCase {
 
     /// Launch the app on a fresh data directory, removed after the test,
     /// holding `tasks` if given: `(title, bucket)` pairs.
-    private func launch(with tasks: [(String, String)] = []) throws {
+    private func launch(with tasks: [(String, String)] = [], restoringState: Bool = false) throws {
         continueAfterFailure = false
         let dataHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("qf-ui-\(UUID().uuidString)", isDirectory: true)
@@ -27,6 +27,10 @@ final class MenuBarUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["XDG_DATA_HOME"] = dataHome.path
         app.launchArguments += ["-allowSecondInstance", "YES"]
+        if restoringState {
+            // As for someone who keeps windows when quitting an app.
+            app.launchArguments += ["-ApplePersistenceIgnoreState", "NO", "-NSQuitAlwaysKeepsWindows", "YES"]
+        }
         app.launch()
         addTeardownBlock { @MainActor in
             app.terminate()
@@ -158,6 +162,24 @@ final class MenuBarUITests: XCTestCase {
         app.menuItems["gear-settings"].click()
         XCTAssertTrue(app.windows["com_apple_SwiftUI_Settings_window"].waitForExistence(timeout: 5),
                       "Settings opens from the gear menu")
+    }
+
+    /// Quitting with windows open and opening the app again opens none: a
+    /// menu bar app opens nothing until asked.
+    func testNoWindowComesBackAfterQuitting() throws {
+        // UI tests launch with state restoration off; this one needs it on.
+        try launch(restoringState: true)
+        _ = openPopover()
+        app.buttons["open-queue"].click()
+        XCTAssertTrue(app.windows["Queue"].waitForExistence(timeout: 5))
+        _ = openPopover()
+        app.menuButtons["gear-menu"].click()
+        app.menuItems["gear-quit"].click()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 10), "Quit quits")
+
+        app.launch()
+        XCTAssertTrue(statusItem.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.windows.count, 0, "no window came back: \(app.windows.debugDescription)")
     }
 
     func testASettingsChangeReachesTheFile() throws {
