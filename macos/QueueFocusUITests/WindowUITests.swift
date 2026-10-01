@@ -75,6 +75,32 @@ final class WindowUITests: AppUITestCase {
         XCTAssertTrue(board.staticTexts["empty — drop a task here"].waitForExistence(timeout: 5))
     }
 
+    /// A task the keys move to another list, or make current, keeps the
+    /// keyboard: the next key acts on it, and nothing is typed in the add
+    /// field.
+    func testTheBoardKeysFollowATaskTheyMove() throws {
+        try launch(with: seed)
+        let board = openWindow("open-board", title: "Board")
+        title("first next", in: board).click()
+        app.typeKey("4", modifierFlags: [])
+        waitForStore("4 moves it to Side") {
+            try self.stored("side") == ["a side", "first next"]
+        }
+        app.typeKey("3", modifierFlags: [])
+        waitForStore("3 moves it on to Later") {
+            try self.stored("later") == ["a later", "first next"]
+        }
+        app.typeKey("1", modifierFlags: [])
+        waitForStore("1 makes it current") {
+            try self.stored("now") == ["first next"]
+        }
+        app.typeKey("d", modifierFlags: [])
+        waitForStore("d completes it") {
+            try self.stored("now") == ["now task"]
+        }
+        XCTAssertEqual(board.textFields["window-add-field"].value as? String, "", "no key went to the add field")
+    }
+
     // MARK: Queue
 
     func testAQueueDropOnTheBannerMakesTheTaskCurrent() throws {

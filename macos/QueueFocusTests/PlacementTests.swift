@@ -81,6 +81,16 @@ private func snapshot(current: UInt64? = 4, side: [UInt64] = [3], next: [UInt64]
         #expect(fresh.settle(nil, order: [5], renaming: nil) == .task(5))
     }
 
+    @Test func aRenameStartedFromTheAddFieldEndsBackOnTheTasks() {
+        var keeper = FocusKeeper()
+        _ = keeper.moved(to: .task(1), order: [1, 2, 5], renaming: nil)
+        _ = keeper.moved(to: .add, order: [1, 2, 5], renaming: nil)
+        // Rename from Later's menu, while the add field has the keyboard.
+        #expect(keeper.moved(to: .rename(5), order: [1, 2, 5], renaming: 5) == nil)
+        // The shelf closes over it; AppKit drops the keyboard on the add field.
+        #expect(keeper.moved(to: .add, order: [1, 2], renaming: nil) == .task(2))
+    }
+
     @Test func aRenameHoldsTheKeyboardOnlyWhileItsTaskIsShown() {
         var keeper = FocusKeeper()
         _ = keeper.moved(to: .task(2), order: [1, 2, 3], renaming: nil)

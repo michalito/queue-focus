@@ -77,8 +77,10 @@ struct FocusKeeper: Equatable {
     private(set) var memory: FocusMemory?
     /// Someone chose the add field, so it keeps the keyboard whatever happens
     /// to the tasks. Otherwise it holds the keyboard only because the task
-    /// that had it went: AppKit hands a vanished view's focus to the first
-    /// field, and that is not someone choosing to type.
+    /// that had it is no longer shown: AppKit hands a vanished view's focus
+    /// to the first field, and that is not someone choosing to type. A task
+    /// that moves between lists still shown keeps the keyboard, since SwiftUI
+    /// hands it to the task's new row; the UI tests pin that on both windows.
     private(set) var addChosen = false
 
     /// Focus moved to `now`; where it belongs instead, if somewhere else.
@@ -91,6 +93,8 @@ struct FocusKeeper: Equatable {
             return nil
         case .rename(let id):
             memory = FocusMemory(order: order, id: id) ?? memory
+            // The keyboard left the add field for the rename.
+            addChosen = false
             return nil
         case .add:
             if lost(in: order) {

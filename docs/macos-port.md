@@ -321,3 +321,16 @@ While fixing these: the app had two View menus (the standard one and its
 own); its commands now sit in the standard one. Each fix has a test that
 fails without it, checked by undoing the fix; the picker test reads the
 screen, since the picker's accessibility value is a moment, not the text.
+
+Second pass, not green:
+1. A task moved between lists still shown, or made current, would leave the
+   keyboard in the add field if AppKit dropped it there. It does not: SwiftUI
+   hands focus to the task's new row. The Queue's key test already moved and
+   promoted a task and kept using the keys; a Board test now does the same
+   through Side, Later and Now, and checks nothing reached the add field.
+   The keeper says why it relies on this rather than guess at intent from
+   the mouse, which would take the field from VoiceOver.
+2. A rename begun while the add field had the keyboard kept that choice, so
+   closing the shelf over it left the keyboard in the add field. Starting a
+   rename clears it.
+
