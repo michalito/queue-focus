@@ -7,6 +7,7 @@ mod elapsed;
 mod model;
 mod reminder;
 mod settings;
+mod settings_store;
 mod store;
 mod tasks;
 
@@ -20,6 +21,7 @@ pub use settings::{
     pick_style, within_window, FlashColor, FlashStyle, Hold, Intensity, Palette, Settings, Theme,
     TimeOfDay, INTERVAL_MAX, INTERVAL_MIN,
 };
+pub use settings_store::SettingsStore;
 pub use store::{
     data_dir, data_path, load, load_settings, save, save_settings, settings_path, SaveError,
 };
