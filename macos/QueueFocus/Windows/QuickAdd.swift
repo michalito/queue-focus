@@ -49,15 +49,23 @@ final class QuickAddController: NSObject, NSWindowDelegate {
         }
         panel.makeKeyAndOrderFront(nil)
         // SwiftUI's focus does not reach a field in a panel that never
-        // activates the app, so hand it the keyboard the AppKit way.
-        DispatchQueue.main.async { [panel] in
-            if let field = panel.contentView?.firstDescendant(NSTextField.self), panel.makeFirstResponder(field) {
-                // VoiceOver, and anything else that follows the keyboard,
-                // hears where it went: a panel that never activates the app
-                // does not announce it by itself.
-                NSAccessibility.post(element: field, notification: .focusedUIElementChanged)
-            }
-        }
+        // activates the app, so hand it the keyboard the AppKit way. SwiftUI
+        // builds the field on the panel's first layout, so lay it out now;
+        // and SwiftUI may still move the keyboard as it settles, so hand it
+        // over again once it has.
+        panel.contentView?.layoutSubtreeIfNeeded()
+        focusField()
+        DispatchQueue.main.async { [weak self] in self?.focusField() }
+    }
+
+    private func focusField() {
+        guard panel.isKeyWindow, !(panel.firstResponder is NSText),
+              let field = panel.contentView?.firstDescendant(NSTextField.self), panel.makeFirstResponder(field)
+        else { return }
+        // VoiceOver, and anything else that follows the keyboard, hears
+        // where it went: a panel that never activates the app does not
+        // announce it by itself.
+        NSAccessibility.post(element: field, notification: .focusedUIElementChanged)
     }
 
     func close() {
