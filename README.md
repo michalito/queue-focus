@@ -579,9 +579,9 @@ scripts
 Makefile
 ```
 
-`crates/qf-core` contains the task model, add parser, settings model, JSON store, and unit tests. It has no GTK dependency, and no clock or randomness of its own: the reminder's decisions are ordinary functions that the caller supplies the time and a random number to.
+`crates/qf-core` contains the task model, add parser, settings, the reminder's schedule, the JSON store, and the engine that ties them together and saves every change. The engine's methods are the D Bus interface's. The core has no GTK dependency, and no clock or randomness of its own: the caller supplies the time, the local time of day, and a random number, so the reminder's decisions are ordinary functions with ordinary tests.
 
-`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, the reminder's schedule, and app styles. The reminder clock owns quiet rules, deadlines, preview behavior, and event creation. Its private runtime adapter provides a single task/settings/time snapshot per decision, randomness, and timer callbacks; tests exercise complete reminder sequences through those callbacks. The settings view reads the hold reason and countdown together.
+`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, and app styles. One engine serves the whole process. The app tells the windows and the bus what each request changed, and ticks the engine once a second with GLib's clock and randomness, which writes changed settings and sends any flash that is due. The settings view reads the hold reason and countdown together.
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 
