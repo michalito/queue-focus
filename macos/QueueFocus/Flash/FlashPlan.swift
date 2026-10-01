@@ -274,8 +274,9 @@ func safeTitle(_ value: String) -> String {
             break
         }
         inspected += 1
-        // JavaScript's `\s`: Unicode's white space, and the byte order mark.
-        if scalar.properties.isWhitespace || scalar == "\u{FEFF}" {
+        // JavaScript's `\s`: Unicode's white space but the next-line
+        // control, and the byte order mark.
+        if scalar.properties.isWhitespace && scalar != "\u{0085}" || scalar == "\u{FEFF}" {
             pendingSpace = !title.isEmpty
             continue
         }

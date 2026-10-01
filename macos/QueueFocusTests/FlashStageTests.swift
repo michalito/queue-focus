@@ -43,6 +43,37 @@ private struct Picture {
     }
 }
 
+/// Clutter's ease-in-out-quad.
+private func quad(_ t: Double) -> Double {
+    t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t)
+}
+
+/// How far along a cubic timing curve is at `x`, as Core Animation solves it.
+private func progress(_ function: CAMediaTimingFunction, at x: Double) -> Double {
+    var point = [Float](repeating: 0, count: 2)
+    function.getControlPoint(at: 1, values: &point)
+    let (x1, y1) = (Double(point[0]), Double(point[1]))
+    function.getControlPoint(at: 2, values: &point)
+    let (x2, y2) = (Double(point[0]), Double(point[1]))
+    let bezier = { (s: Double, a: Double, b: Double) in 3 * (1 - s) * (1 - s) * s * a + 3 * (1 - s) * s * s * b + s * s * s }
+    var low = 0.0, high = 1.0
+    for _ in 0..<60 {
+        let middle = (low + high) / 2
+        if bezier(middle, x1, x2) < x { low = middle } else { high = middle }
+    }
+    return bezier((low + high) / 2, y1, y2)
+}
+
+/// A keyframe animation's value at fraction `t` of its run.
+private func value(of animation: CAKeyframeAnimation, at t: Double) -> Double {
+    let times = animation.keyTimes?.map(\.doubleValue) ?? []
+    let values = animation.values as? [Double] ?? []
+    let i = min(times.lastIndex { $0 <= t } ?? 0, times.count - 2)
+    guard times[i + 1] > times[i] else { return values[i + 1] }
+    let u = (t - times[i]) / (times[i + 1] - times[i])
+    return values[i] + (values[i + 1] - values[i]) * progress(animation.timingFunctions![i], at: u)
+}
+
 /// A card picture red in its top half and blue in its bottom half.
 private func twoToneCard() -> CGImage {
     let context = CGContext(data: nil, width: 100, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
@@ -65,7 +96,10 @@ private func twoToneCard() -> CGImage {
         #expect(layers.count == plan.layers.count)
         for (layer, spec) in zip(layers, plan.layers) {
             #expect(layer.frame == spec.frame)
-            #expect(layer.opacity == 0, "left where its run ends, so nothing jumps when it is over")
+            #expect(layer.opacity == 1, "a layer moves as one")
+            #expect((layer.sublayers ?? []).count == spec.parts.count)
+            #expect((layer.sublayers ?? []).allSatisfy { $0.opacity == 0 },
+                    "each part left where its run ends, so nothing jumps when it is over")
         }
         #expect(layers[1].anchorPoint == CGPoint(x: 0.5, y: 0), "the beam grows from its top")
     }
@@ -73,31 +107,59 @@ private func twoToneCard() -> CGImage {
     @Test func aStillFlashIsAtItsPeakWithEverythingInPlace() {
         let (_, stage) = stage(.topbarBeam, still: true)
         let layers = stage.sublayers ?? []
-        #expect(layers.allSatisfy { $0.opacity == 1 })
+        #expect(layers.flatMap { $0.sublayers ?? [] }.allSatisfy { $0.opacity == 1 })
         #expect(layers[1].value(forKeyPath: "transform.scale.y") as? Double == 1, "the beam drawn, not scaled away")
         #expect(layers[2].value(forKeyPath: "transform.translation.y") as? Double == 0, "the card has landed")
     }
 
-    @Test func eachLayerPlaysItsEnvelopeWithFlashJsEase() throws {
+    @Test func eachLayerPlaysItsEnvelopeEasedExactlyAsClutterEasesIt() throws {
         let (plan, _) = stage(.topbarBeam, still: false)
         for spec in plan.layers {
             let run = FlashStage.animations(for: spec)
-            let fade = try #require(run.first { $0.key == "fade" }?.animation as? CAKeyframeAnimation)
+            let fade = run.fade
             #expect(fade.keyPath == "opacity")
-            #expect(fade.values as? [Double] == spec.envelope.values)
-            #expect(fade.keyTimes?.map(\.doubleValue) == spec.envelope.keyTimes)
             #expect(fade.duration == spec.envelope.duration)
-            #expect(fade.timingFunctions?.count == spec.envelope.steps.count, "one ease per step")
-            var points = [Float](repeating: 0, count: 2)
-            fade.timingFunctions?.first?.getControlPoint(at: 1, values: &points)
-            #expect(points == [0.455, 0.03], "ease-in-out-quad, not Core Animation's own curve")
-            let move = run.first { $0.key == "motion" }?.animation as? CABasicAnimation
+            // Every step of the envelope, sampled across its run.
+            let values = spec.envelope.values
+            let times = spec.envelope.keyTimes
+            for i in 1..<values.count {
+                for t in stride(from: 0.0, through: 1, by: 0.05) {
+                    let at = times[i - 1] + t * (times[i] - times[i - 1])
+                    let expected = values[i - 1] + (values[i] - values[i - 1]) * quad(t)
+                    #expect(abs(value(of: fade, at: at) - expected) < 1e-4, "step \(i) at \(t)")
+                }
+            }
+            let move = run.motion
             #expect((move == nil) == (spec.motion == nil))
             if let move, let motion = spec.motion {
-                #expect(move.fromValue as? Double == motion.from && move.toValue as? Double == motion.to)
                 #expect(move.duration == motion.fraction * spec.envelope.duration)
+                for t in stride(from: 0.0, through: 1, by: 0.05) {
+                    let expected = motion.from + (motion.to - motion.from) * quad(t)
+                    #expect(abs(value(of: move, at: t) - expected) < 1e-4, "motion at \(t)")
+                }
             }
         }
+    }
+
+    @Test func playingFadesEachPartAndMovesTheLayer() {
+        let (plan, stage) = stage(.topbarBeam, still: false)
+        FlashStage.play(stage, plan) {}
+        for (layer, spec) in zip(stage.sublayers ?? [], plan.layers) {
+            #expect(layer.animation(forKey: "fade") == nil, "the layer itself never fades")
+            #expect((layer.sublayers ?? []).allSatisfy { $0.animation(forKey: "fade") != nil })
+            #expect((layer.animation(forKey: "motion") != nil) == (spec.motion != nil))
+        }
+    }
+
+    @Test func overlappingGlowAddsUpAsInClutter() throws {
+        let (_, stage) = stage(.edgesSoft, still: true)
+        // Halfway through a fade. Clutter dims each strip on its own, so a
+        // corner where two overlap is 1 − (1 − ½a)², not ½(1 − (1 − a)²).
+        for strip in try #require(stage.sublayers?.first?.sublayers) {
+            strip.opacity = 0.5
+        }
+        let corner = Picture(stage).at(1, 1).a
+        #expect(corner > 130, "about 142 of 255, not 114: \(corner)")
     }
 
     @Test func theTopBarIsAtTheTopAndTheBeamDropsFromIt() {

@@ -386,3 +386,19 @@ and level; controller tests for replacing, holding still and clearing; UI
 tests that the preview and Flash now draw a flash that goes, and that the
 keyboard stays where it was. Each style was looked at by capturing the
 flash's own window, never the screen.
+
+### Phase 5, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. Where two glow strips overlap, Clutter dims each on its own as the glow
+   fades, while Core Animation dimmed the pair as a group, so the corners
+   came out darker mid-fade (0.45 against 0.56 at half way). Each part now
+   fades on its own and the layer only moves, which also spares an
+   offscreen pass. (Turning group opacity off was tried first; the off
+   screen renderer ignores that flag, so the test could not see it.)
+2. The ease was the usual cubic stand-in for Clutter's quadratic, 1.5%
+   off at the middle of each step. Each step is now split at its middle
+   into the two quadratics, which cubics draw exactly; the test samples
+   every step against Clutter's formula.
+3. `safeTitle` folded U+0085, which JavaScript's `\s` leaves alone.
+

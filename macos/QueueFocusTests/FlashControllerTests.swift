@@ -84,7 +84,7 @@ private final class Clock {
         let (flash, surfaces) = controller(still: true)
         flash.show(flashEvent(.topbarBeam))
         let stage = try #require(surfaces().first?.presented.first?.stage)
-        #expect(stage.sublayers?.allSatisfy { $0.opacity == 1 } == true)
+        #expect(stage.sublayers?.flatMap { $0.sublayers ?? [] }.allSatisfy { $0.opacity == 1 } == true)
         #expect(clock.plays.isEmpty)
         #expect(clock.holds.map(\.seconds) == [1.5])
         clock.holds[0].done()

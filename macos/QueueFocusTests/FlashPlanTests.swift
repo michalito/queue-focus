@@ -63,7 +63,8 @@ private func strips(_ layer: FlashLayer) -> [(frame: CGRect, start: RGBA, end: R
 
     @Test func aTitleThatFitsIsOnlyTidied() {
         #expect(safeTitle("  ship \t\n v0.1  ") == "ship v0.1")
-        #expect(safeTitle("\u{FEFF}a\u{00A0}b") == "a b", "JavaScript's white space")
+        #expect(safeTitle("\u{FEFF}a\u{00A0}b\u{2028}c\u{3000}d") == "a b c d", "JavaScript's white space")
+        #expect(safeTitle("a\u{0085}b") == "a\u{0085}b", "which leaves out the next-line control")
         #expect(safeTitle("") == "")
         let longest = String(repeating: "x", count: 255)
         #expect(safeTitle(longest) == longest)
