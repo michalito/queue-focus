@@ -87,7 +87,7 @@ because this Mac cannot build the GTK crate.
       Phase 6's global shortcut opens the same panel
 - [x] 5. Shared row component with context menu, inline rename and tooltips
       only on cut titles
-- [ ] Review: GPT phase review green
+- [x] Review: GPT phase review green (third pass)
 - [ ] Review: Fable approves the Phase 5 design
 
 ## Phase 5. Flash overlay
@@ -334,3 +334,5 @@ Second pass, not green:
    closing the shelf over it left the keyboard in the add field. Starting a
    rename clears it.
 
+Third pass: green. The answer to the first finding was accepted; no
+further findings.
