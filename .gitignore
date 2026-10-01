@@ -6,3 +6,6 @@
 /macos/QfCore/Sources/QfCore/QfCore.swift
 /macos/QfCore/.build
 /macos/QfCore/.swiftpm
+# Xcode's per-user and per-workspace state.
+/macos/QueueFocus.xcodeproj/project.xcworkspace/
+/macos/QueueFocus.xcodeproj/xcuserdata/
