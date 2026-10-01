@@ -70,9 +70,12 @@ mac-core:        ## build the engine's XCFramework and Swift module for the macO
 
 # The macOS app, built and tested in Debug for this Mac's architecture, as
 # Xcode's own Debug build does, so the two share one build of the engine.
+# Swift packages come at the versions in Package.resolved and are not looked
+# up again once fetched.
 MAC_ARCH := $(shell uname -m)
 XCODEBUILD = xcodebuild -project macos/QueueFocus.xcodeproj -scheme QueueFocus \
-	-configuration Debug -derivedDataPath target/xcode
+	-configuration Debug -derivedDataPath target/xcode \
+	-onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates
 
 mac-app:         ## build the macOS app into target/xcode/Build/Products/Debug
 	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
