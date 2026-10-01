@@ -42,7 +42,8 @@ private struct AppCommands: Commands {
     let delegate: AppDelegate
 
     var body: some Commands {
-        CommandMenu("View") {
+        // In the standard View menu: a menu of their own would be a second one.
+        CommandGroup(before: .toolbar) {
             Button("Queue") { openWindow(id: WindowID.queue) }
                 .keyboardShortcut("1")
             Button("Board") { openWindow(id: WindowID.board) }
@@ -50,6 +51,7 @@ private struct AppCommands: Commands {
             Divider()
             Button("Quick Add…") { delegate.quickAdd?.show() }
                 .keyboardShortcut("n")
+            Divider()
         }
     }
 }
