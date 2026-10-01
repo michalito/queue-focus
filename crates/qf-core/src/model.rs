@@ -461,7 +461,10 @@ impl Store {
             return false;
         };
         match task.paused_at.take() {
-            Some(paused) => task.started_at = Some(started + now.saturating_sub(paused)),
+            // Saturating: a hand-edited file can hold any start time.
+            Some(paused) => {
+                task.started_at = Some(started.saturating_add(now.saturating_sub(paused)))
+            }
             None => task.paused_at = Some(now.max(started)),
         }
         true
@@ -942,6 +945,18 @@ mod tests {
         assert!(!s.get(a).unwrap().is_paused());
         assert!(s.get(a).unwrap().started_at.is_none());
         assert!(!s.get(b).unwrap().is_paused());
+    }
+
+    /// A hand-edited file can hold any start time; resuming must not overflow.
+    #[test]
+    fn resuming_a_clock_with_an_absurd_start_saturates() {
+        let mut s = Store::new();
+        s.add("a", Bucket::Now, None);
+        s.tasks[0].started_at = Some(u64::MAX);
+        s.tasks[0].paused_at = Some(1);
+        assert!(s.toggle_pause());
+        assert_eq!(s.current().unwrap().started_at, Some(u64::MAX));
+        assert!(!s.current().unwrap().is_paused());
     }
 
     /// `paused_at` is the contract with the shell extension, which freezes its
