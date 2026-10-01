@@ -266,7 +266,7 @@ fn run_command(
 
 fn command_update<R>(
     cmd: &gio::ApplicationCommandLine,
-    result: std::io::Result<state::UpdateOutcome<R>>,
+    result: std::io::Result<qf_core::Outcome<R>>,
 ) -> std::io::Result<R> {
     result.map(|outcome| {
         let (value, warning) = outcome.into_parts();

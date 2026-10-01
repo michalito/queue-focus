@@ -3,11 +3,11 @@
 
 use crate::flash::SharedFlash;
 use crate::settings::SharedSettings;
-use crate::state::{DurabilityWarning, SharedState, UpdateOutcome};
+use crate::state::SharedState;
 use crate::ui::{Page, Ui};
 use adw::prelude::*;
 use gtk::{gio, glib};
-use qf_core::{Bucket, Tag, MAX_QUICK_ADD_BYTES};
+use qf_core::{Bucket, DurabilityWarning, Outcome, Tag, MAX_QUICK_ADD_BYTES};
 use std::io;
 use std::rc::Rc;
 
@@ -274,7 +274,7 @@ fn handle(
 fn reply<R>(
     conn: &gio::DBusConnection,
     inv: gio::DBusMethodInvocation,
-    result: io::Result<UpdateOutcome<R>>,
+    result: io::Result<Outcome<R>>,
     to_reply: impl FnOnce(R) -> Result<Option<glib::Variant>, &'static str>,
 ) {
     let outcome = match result {

@@ -8,6 +8,7 @@ mod model;
 mod reminder;
 mod settings;
 mod store;
+mod tasks;
 
 pub use elapsed::{long_elapsed, short_elapsed};
 
@@ -22,3 +23,4 @@ pub use settings::{
 pub use store::{
     data_dir, data_path, load, load_settings, save, save_settings, settings_path, SaveError,
 };
+pub use tasks::{DurabilityWarning, Outcome, Tasks};

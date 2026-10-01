@@ -8,12 +8,12 @@
 
 use crate::flash::SharedFlash;
 use crate::settings::SharedSettings;
-use crate::state::{SharedState, UpdateOutcome};
+use crate::state::SharedState;
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
 use qf_core::{
-    long_elapsed, Bucket, FlashColor, Intensity, Settings, Store, Tag, Task, Theme, INTERVAL_MAX,
-    INTERVAL_MIN, MAX_TITLE_CHARS,
+    long_elapsed, Bucket, FlashColor, Intensity, Outcome, Settings, Store, Tag, Task, Theme,
+    INTERVAL_MAX, INTERVAL_MIN, MAX_TITLE_CHARS,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -385,10 +385,7 @@ impl Ui {
     /// A failure to commit is an error the user must see; a change that
     /// committed but may not be crash-safe is a warning. Both go to the
     /// window the user is looking at, and always to stderr.
-    fn report<R>(
-        &self,
-        result: Result<UpdateOutcome<R>, std::io::Error>,
-    ) -> Result<R, std::io::Error> {
+    fn report<R>(&self, result: Result<Outcome<R>, std::io::Error>) -> Result<R, std::io::Error> {
         match result {
             Ok(outcome) => {
                 let (value, warning) = outcome.into_parts();
