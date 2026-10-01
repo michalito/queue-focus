@@ -33,8 +33,8 @@ because this Mac cannot build the GTK crate.
       the new one, and fails on a deliberately broken one
 - [x] 7. Full Linux suite green except `make test-extension-shell` (see notes);
       version 0.5.1 committed. Publishing is yours: merge, then `make install`
-- [ ] Review: GPT phase review green
-- [ ] Review: Fable approves the Phase 2 design
+- [x] Review: GPT phase review green (third pass)
+- [x] Review: Fable approves the Phase 2 design (with changes, all taken)
 
 ## Phase 2. FFI crate
 
@@ -122,3 +122,45 @@ because this Mac cannot build the GTK crate.
 ## Review log
 
 Findings from each review and what was done about them.
+
+### Phase 1, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. The first flash's wait was timed before the files loaded. `Engine::open`
+   now takes a clock and reads it after loading; a test pins the order
+   through the permissions loading repairs.
+2. `make test-service` skipped `Show`, `Hide`, `Flash` and
+   `DurabilityWarning`. It now calls the windows, waits for a real flash, and
+   preloads a library that fails one directory sync. Removing either emission
+   fails the test.
+3. Real-clock tests could fail across a second boundary. They now bound the
+   countdown by the seconds seen to pass.
+4. `exec` skipped the test's cleanup trap. Fixed.
+5. The docs called the whole core clock-free. Only the reminder is.
+
+Second pass, not green: the failed-save check looked for the rolled-back
+task in the wrong bucket. It looks everywhere now, and fails when the
+rollback is removed.
+
+Third pass: green, no findings.
+
+### Phase 2 design, Fable
+
+Approved with changes, all taken:
+1. Records renamed so they never shadow Swift: `QueueTask`, `QueueSettings`,
+   `TaskTag`, `QueueSnapshot`.
+2. `TimeOfDay` is a record of hour and minute, not a string, and an invalid
+   one is an `InvalidArgument`.
+3. `tick` and `flashStatus` refuse an invalid local time instead of assuming
+   noon.
+4. Durability warnings and settings write failures share one channel: the
+   problems `tick` and `flush` return.
+5. `rename`, `shift`, `cycle_tag` and `move_before` belong to the core engine,
+   and the Board's drop by row moved from the GTK crate into
+   `Store::move_before`.
+6. A `release-ffi` profile that unwinds panics and keeps symbols.
+7. Build plumbing: a separate `uniffi-bindgen` crate, the Swift bindgen
+   without `--xcframework`, `module.modulemap`, Swift written into the
+   `macos/QfCore` package, `scripts/cargo` usable on macOS.
+8. Mac-only presentation settings live in `UserDefaults`, never in the shared
+   `settings.json`, which the GNOME app rewrites whole.
