@@ -2,8 +2,8 @@
 //! and the reminder, behind the method set the D-Bus interface defines.
 //!
 //! Each host maps its own surface onto this one to one: the GNOME service
-//! onto D-Bus, the macOS app onto Swift. The host owns the clock, the
-//! calendar and the entropy, and calls `tick` once a second.
+//! onto D-Bus, the macOS app onto Swift. The host calls `tick` once a second
+//! and owns the reminder's clock, calendar and entropy.
 
 use crate::reminder::Reminder;
 use crate::settings_store::SettingsStore;
@@ -79,17 +79,18 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Open the task and settings files in `dir`; the first flash is due a
-    /// full wait after `now`.
+    /// Open the task and settings files in `dir`. The first flash is due a
+    /// full wait after `now`, which is read once both files are loaded, so a
+    /// slow disk does not eat into the wait.
     ///
     /// A task file that cannot be read is an error, so the host can refuse to
     /// start rather than replace it. A settings file that cannot be read is
     /// only a warning: the defaults apply and the file is left alone until a
     /// setting changes.
-    pub fn open(dir: &Path, now: u64) -> io::Result<(Engine, Option<String>)> {
+    pub fn open(dir: &Path, now: impl FnOnce() -> u64) -> io::Result<(Engine, Option<String>)> {
         let tasks = Tasks::load(dir.join(TASKS_FILE))?;
         let (settings, warning) = SettingsStore::load(dir.join(SETTINGS_FILE));
-        let reminder = Reminder::new(now, settings.get());
+        let reminder = Reminder::new(now(), settings.get());
         Ok((
             Engine {
                 tasks,
@@ -314,7 +315,7 @@ mod tests {
     }
 
     fn open(dir: &Path) -> Engine {
-        let (engine, warning) = Engine::open(dir, NOON).unwrap();
+        let (engine, warning) = Engine::open(dir, || NOON).unwrap();
         assert!(warning.is_none());
         engine
     }
@@ -346,11 +347,34 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The wait for the first flash starts once the files are loaded. Loading
+    /// makes both files private, so the clock can see whether it came first.
+    #[test]
+    fn the_first_wait_is_timed_after_loading() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("first-wait");
+        let mode = |name: &str| fs::metadata(dir.join(name)).unwrap().permissions().mode() & 0o777;
+        fs::write(dir.join("tasks.json"), br#"{"next_id":1,"tasks":[]}"#).unwrap();
+        fs::write(dir.join("settings.json"), br#"{"interval_min":1}"#).unwrap();
+        for name in ["tasks.json", "settings.json"] {
+            fs::set_permissions(dir.join(name), fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let (mut engine, _) = Engine::open(&dir, || {
+            assert_eq!(mode("tasks.json"), 0o600, "the clock was read first");
+            assert_eq!(mode("settings.json"), 0o600, "the clock was read first");
+            NOON
+        })
+        .unwrap();
+        engine.add("now", Some(Bucket::Now)).unwrap();
+        assert_eq!(engine.flash_status(NOON, noon()).remaining, Some(60));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn an_unreadable_task_file_refuses_to_open_and_is_left_alone() {
         let dir = temp_dir("bad-tasks");
         fs::write(dir.join("tasks.json"), b"{ broken").unwrap();
-        let error = Engine::open(&dir, NOON).unwrap_err();
+        let error = Engine::open(&dir, || NOON).unwrap_err();
         assert!(error.to_string().contains("tasks.json"), "{error}");
         assert_eq!(fs::read(dir.join("tasks.json")).unwrap(), b"{ broken");
         fs::remove_dir_all(dir).unwrap();
@@ -360,7 +384,7 @@ mod tests {
     fn an_unreadable_settings_file_opens_with_the_defaults_and_a_warning() {
         let dir = temp_dir("bad-settings");
         fs::write(dir.join("settings.json"), b"[]").unwrap();
-        let (engine, warning) = Engine::open(&dir, NOON).unwrap();
+        let (engine, warning) = Engine::open(&dir, || NOON).unwrap();
         assert!(warning.unwrap().contains("settings.json"));
         assert_eq!(*engine.settings(), Settings::default());
         fs::remove_dir_all(dir).unwrap();

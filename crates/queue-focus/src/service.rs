@@ -43,11 +43,14 @@ impl Service {
     }
 
     pub(crate) fn open_in(dir: &Path) -> io::Result<(SharedService, Option<String>)> {
-        Self::open_at(dir, qf_core::unix_now())
+        Self::open_at(dir, qf_core::unix_now)
     }
 
-    /// Open with the first flash due a full wait after `now`.
-    fn open_at(dir: &Path, now: u64) -> io::Result<(SharedService, Option<String>)> {
+    /// Open with the first flash due a full wait after `now()`.
+    fn open_at(
+        dir: &Path,
+        now: impl FnOnce() -> u64,
+    ) -> io::Result<(SharedService, Option<String>)> {
         let (engine, warning) = Engine::open(dir, now)?;
         let service = Rc::new(Service {
             engine: RefCell::new(engine),
@@ -270,6 +273,18 @@ mod tests {
         count
     }
 
+    /// A fresh full wait, as the real clock reads it. The flash and the look
+    /// at the countdown may fall either side of a second boundary, so allow
+    /// for the seconds that have passed since `since`.
+    fn assert_full_wait(remaining: Option<u64>, since: u64) {
+        let remaining = remaining.expect("a flash is scheduled");
+        let passed = qf_core::unix_now() - since;
+        assert!(
+            remaining <= 15 * 60 && remaining + passed >= 15 * 60,
+            "{remaining}s left, {passed}s after the flash was asked for"
+        );
+    }
+
     fn record(service: &Service) -> Rc<RefCell<Vec<FlashEvent>>> {
         let events = Rc::new(RefCell::new(Vec::new()));
         let recorded = events.clone();
@@ -390,6 +405,7 @@ mod tests {
             s.color = FlashColor::Blue;
             s.intensity = Intensity::Strong;
         });
+        let since = qf_core::unix_now();
         assert!(service.flash_now());
         let event = events.borrow()[0].clone();
         assert_eq!(event.title, "real stores");
@@ -399,11 +415,7 @@ mod tests {
         assert_eq!(event.timer, "0m");
         let status = service.flash_status();
         assert_eq!(status.hold, Hold::None);
-        assert_eq!(
-            status.remaining,
-            Some(15 * 60),
-            "the preview restarted the wait"
-        );
+        assert_full_wait(status.remaining, since);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -413,13 +425,14 @@ mod tests {
     #[test]
     fn the_timer_delivers_a_flash_that_is_due() {
         let dir = temp_dir("timer");
-        let (service, _) = Service::open_at(&dir, qf_core::unix_now() - 3_600).unwrap();
+        let (service, _) = Service::open_at(&dir, || qf_core::unix_now() - 3_600).unwrap();
         service
             .request(|e| e.add("due", Some(Bucket::Now)))
             .unwrap();
         let events = record(&service);
         let context = glib::MainContext::default();
         let _guard = context.acquire().unwrap();
+        let since = qf_core::unix_now();
         service.run_on_main_loop();
 
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -430,7 +443,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
         assert_eq!(events.borrow().len(), 1, "the timer delivered no flash");
         assert_eq!(events.borrow()[0].title, "due");
-        assert_eq!(service.flash_status().remaining, Some(15 * 60));
+        assert_full_wait(service.flash_status().remaining, since);
     }
 
     #[test]
@@ -464,8 +477,9 @@ mod tests {
             assert!(service.store().current().is_some());
             observed.set(service.flash_status().remaining);
         });
+        let since = qf_core::unix_now();
         assert!(service.flash_now());
-        assert_eq!(seen.get(), Some(15 * 60));
+        assert_full_wait(seen.get(), since);
 
         fs::remove_dir_all(dir).unwrap();
     }
