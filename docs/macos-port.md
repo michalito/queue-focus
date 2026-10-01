@@ -71,8 +71,8 @@ because this Mac cannot build the GTK crate.
       popover and windows; a universal Release build launches under the
       hardened runtime. Queue, Board and Settings windows hold minimal real
       content until Phase 4
-- [ ] Review: GPT phase review green
-- [ ] Review: Fable approves the Phase 4 design
+- [x] Review: GPT phase review green (fourth pass)
+- [x] Review: Fable approves the Phase 4 design (with changes, all taken)
 
 ## Phase 4. Windows
 
@@ -221,4 +221,50 @@ project it built, tested and launched:
    card's actions), and a completion's undo offer is made explicitly.
 7. The title cap is in points, measured in the menu bar font; App Nap is off;
    a second copy of the app quits; controls carry accessibility identifiers.
+
+### Phase 3, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. A failed Undo dropped the offer, so it could not be tried again. The
+   offer now goes only once the undo is done or refused.
+2. The build stamp lived per Cargo target directory while every build
+   writes one package. It now lives beside the package.
+3. Windows could come back through state restoration. They are kept out of
+   it. The scenario could not be reproduced here; the fix is defensive and a
+   UI test guards it.
+
+Second pass, not green: Xcode copied the XCFramework before the Rust build
+ran, so the first universal Release build after a Debug one linked the old
+arm64-only library. The app now links the library and its C module from
+fixed paths that the Rust phase declares as outputs; Debug and Release
+alternated from clean all build first time.
+
+Third pass, not green: the gear menu and Settings kept separate copies of
+Launch at Login. One shared, observable state serves both.
+
+Fourth pass: green, no findings.
+
+### Phase 4 design, Fable
+
+Approved with changes, all taken:
+1. The Queue window takes drags and drops too: rows, banner, headings, the
+   "empty" lines and the Later shelf, open or closed.
+2. Focus is never nil: the keys need a focused view to arrive at all.
+   Focus comes back to the same task, or to whatever sits where it was, as
+   GTK's `Focus` does, and the current task's panel is a focus stop only
+   while it holds a task.
+3. Drags record the task at pickup, with an item provider that never leaves
+   the app; one mark at a time, cleared on exit or drop, under GTK's rules
+   for lines and rings.
+4. The Board's current task can be dragged out of Now.
+5. Tooltips only on titles that were cut.
+6. The Queue banner and the Board card are dressed as in GTK.
+7. Rename covers the current task, opens the Later shelf, selects the old
+   title, survives changes from elsewhere, and saves no blank title.
+8. The windows and the quick add panel show the same message line as the
+   popover.
+9. The Board splits three to two.
+10. Quick add is a non-activating panel an AppKit controller owns.
+11. Flash now goes through the same path as a scheduled flash.
+12. Accessibility identifiers on every row, list, heading and field.
 
