@@ -12,8 +12,8 @@ use crate::state::{SharedState, UpdateOutcome};
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
 use qf_core::{
-    Bucket, FlashColor, Intensity, Settings, Store, Tag, Task, Theme, INTERVAL_MAX, INTERVAL_MIN,
-    MAX_TITLE_CHARS,
+    long_elapsed, Bucket, FlashColor, Intensity, Settings, Store, Tag, Task, Theme, INTERVAL_MAX,
+    INTERVAL_MIN, MAX_TITLE_CHARS,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -1474,7 +1474,7 @@ impl Ui {
         };
         let status = self.flash.status();
         match status.remaining {
-            Some(secs) => label.set_label(&format!("Next flash in {}", fmt_elapsed(secs))),
+            Some(secs) => label.set_label(&format!("Next flash in {}", long_elapsed(secs))),
             None => label.set_label(&format!("No flash: {}", status.hold.reason())),
         }
         // Nothing in Now is the one hold a flash cannot be asked for either.
@@ -2194,7 +2194,7 @@ impl Ui {
             .store()
             .current()
             .and_then(|t| t.elapsed_secs(now))
-            .map(fmt_elapsed)
+            .map(long_elapsed)
             .unwrap_or_default();
         for label in timers.iter() {
             label.set_label(&elapsed);
@@ -2761,15 +2761,6 @@ fn drop_target(
     target
 }
 
-fn fmt_elapsed(secs: u64) -> String {
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2831,14 +2822,5 @@ mod tests {
                 "{class} is shared"
             );
         }
-    }
-
-    #[test]
-    fn elapsed_format() {
-        assert_eq!(fmt_elapsed(0), "00:00");
-        assert_eq!(fmt_elapsed(65), "01:05");
-        assert_eq!(fmt_elapsed(762), "12:42");
-        assert_eq!(fmt_elapsed(3600), "1:00:00");
-        assert_eq!(fmt_elapsed(3725), "1:02:05");
     }
 }

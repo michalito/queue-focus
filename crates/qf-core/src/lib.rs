@@ -3,13 +3,18 @@
 //! ordered by position, no history. Plus the user
 //! settings both the app and the shell extension read.
 
+mod elapsed;
 mod model;
+mod reminder;
 mod settings;
 mod store;
+
+pub use elapsed::{long_elapsed, short_elapsed};
 
 pub use model::{
     unix_now, Bucket, Completed, QuickAdd, Store, Tag, Task, MAX_QUICK_ADD_BYTES, MAX_TITLE_CHARS,
 };
+pub use reminder::FlashEvent;
 pub use settings::{
     pick_style, within_window, FlashColor, FlashStyle, Hold, Intensity, Palette, Settings, Theme,
     TimeOfDay, INTERVAL_MAX, INTERVAL_MIN,

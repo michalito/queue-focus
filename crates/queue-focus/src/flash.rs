@@ -10,7 +10,7 @@
 use crate::settings::SharedSettings;
 use crate::state::SharedState;
 use gtk::glib;
-use qf_core::{pick_style, FlashStyle, Hold, Intensity, Palette, Settings, Task, TimeOfDay};
+use qf_core::{pick_style, short_elapsed, FlashEvent, FlashStyle, Hold, Settings, Task, TimeOfDay};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -18,30 +18,6 @@ pub type SharedFlash = Rc<FlashClock>;
 
 /// Puts one flash on the bus.
 type Emitter = Rc<dyn Fn(&FlashEvent)>;
-
-/// One flash, as the extension receives it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlashEvent {
-    pub style: FlashStyle,
-    pub intensity: Intensity,
-    pub palette: Palette,
-    pub title: String,
-    /// Already formatted, so the flash and the top bar always read the same.
-    pub timer: String,
-}
-
-impl FlashEvent {
-    pub fn to_json(&self) -> String {
-        serde_json::json!({
-            "style": self.style.as_str(),
-            "intensity": self.intensity.as_str(),
-            "palette": self.palette.as_str(),
-            "title": self.title,
-            "timer": self.timer,
-        })
-        .to_string()
-    }
-}
 
 /// One observation for the settings view. Both values describe the same instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,24 +193,10 @@ impl FlashClock {
     }
 }
 
-/// The top bar's clock: `"12m"`, `"1h02"`, and `" ⏸"` while paused.
-pub fn short_elapsed(secs: u64, paused: bool) -> String {
-    let (h, m) = (secs / 3600, (secs % 3600) / 60);
-    let t = if h > 0 {
-        format!("{h}h{m:02}")
-    } else {
-        format!("{m}m")
-    };
-    if paused {
-        format!("{t} ⏸")
-    } else {
-        t
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qf_core::{Intensity, Palette};
 
     const MIN: u64 = 60;
 
@@ -601,16 +563,6 @@ mod tests {
             fired.get(),
             "GNOME runtime did not invoke its scheduled callback"
         );
-    }
-
-    #[test]
-    fn the_flash_clock_reads_like_the_top_bar() {
-        assert_eq!(short_elapsed(0, false), "0m");
-        assert_eq!(short_elapsed(59, false), "0m");
-        assert_eq!(short_elapsed(12 * MIN, false), "12m");
-        assert_eq!(short_elapsed(3600, false), "1h00");
-        assert_eq!(short_elapsed(3600 + 2 * MIN, false), "1h02");
-        assert_eq!(short_elapsed(12 * MIN, true), "12m ⏸");
     }
 
     #[test]
