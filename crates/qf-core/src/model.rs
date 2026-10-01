@@ -370,6 +370,29 @@ impl Store {
         moved
     }
 
+    /// Move a task to just before `before` in `bucket`, or to the end of the
+    /// bucket without one: a drop on a row of a list. An anchor that is no
+    /// longer in `bucket` is refused rather than turned into a different
+    /// place, and a task dropped before itself stays where it is. Into Now,
+    /// it is a promotion like any other move there.
+    pub fn move_before(&mut self, id: u64, bucket: Bucket, before: Option<u64>) -> bool {
+        let index = match before {
+            None => None,
+            Some(anchor) => {
+                if !self.get(anchor).is_some_and(|t| t.bucket == bucket) {
+                    return false;
+                }
+                if anchor == id {
+                    return true;
+                }
+                self.in_bucket(bucket)
+                    .filter(|t| t.id != id)
+                    .position(|t| t.id == anchor)
+            }
+        };
+        self.move_to(id, bucket, index)
+    }
+
     /// Reposition a task without settling the store; callers normalize.
     fn place(&mut self, id: u64, bucket: Bucket, index: Option<usize>) -> bool {
         let Some(pos) = self.tasks.iter().position(|t| t.id == id) else {
@@ -734,6 +757,67 @@ mod tests {
         assert_eq!(ids(&s, Bucket::Next), vec![c, b, a]);
         s.move_to(b, Bucket::Next, Some(99));
         assert_eq!(ids(&s, Bucket::Next), vec![c, a, b]);
+    }
+
+    /// Every drag a user can start, dropped before every row of every list
+    /// and after its last one.
+    #[test]
+    fn move_before_covers_every_source_and_destination_pair() {
+        const LISTED: [Bucket; 3] = [Bucket::Side, Bucket::Next, Bucket::Later];
+        let fixture = || {
+            let mut store = Store::new();
+            for bucket in LISTED {
+                for _ in 0..3 {
+                    store.add("task", bucket, None);
+                }
+            }
+            store.add("current", Bucket::Now, None);
+            store
+        };
+        for source in Bucket::ALL {
+            for destination in LISTED {
+                let rows = ids(&fixture(), source).len();
+                assert_eq!(rows, if source == Bucket::Now { 1 } else { 3 });
+                for source_index in 0..rows {
+                    for target_index in 0..=3 {
+                        let mut store = fixture();
+                        let id = ids(&store, source)[source_index];
+                        let anchor = ids(&store, destination).get(target_index).copied();
+                        let mut expected = ids(&store, destination);
+                        if anchor != Some(id) {
+                            expected.retain(|candidate| *candidate != id);
+                            let index = anchor
+                                .and_then(|a| expected.iter().position(|candidate| *candidate == a))
+                                .unwrap_or(expected.len());
+                            expected.insert(index, id);
+                        }
+                        assert!(store.move_before(id, destination, anchor));
+                        assert_eq!(ids(&store, destination), expected);
+                        assert_eq!(store.tasks.len(), 10);
+                        assert!(store.in_bucket(Bucket::Now).count() <= 1);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn move_before_refuses_a_stale_anchor_and_leaves_the_task_alone() {
+        let mut s = Store::new();
+        let current = s.add("current", Bucket::Now, None);
+        let source = s.add("source", Bucket::Later, None);
+        let next = s.add("next", Bucket::Next, None);
+        // The current task is not a row of Next; 999 is nobody's.
+        for anchor in [current, 999] {
+            assert!(!s.move_before(source, Bucket::Next, Some(anchor)));
+            assert_eq!(s.get(source).unwrap().bucket, Bucket::Later);
+        }
+        assert!(!s.move_before(999, Bucket::Next, Some(next)));
+        assert!(!s.move_before(999, Bucket::Next, None));
+        // Into Now is a promotion, whatever the anchor says.
+        assert!(s.move_before(source, Bucket::Now, None));
+        assert_eq!(s.current().unwrap().id, source);
+        assert_eq!(ids(&s, Bucket::Next), vec![current, next]);
     }
 
     #[test]
