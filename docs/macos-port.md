@@ -150,6 +150,10 @@ Known gaps, to close later:
 - SwiftUI's accessibility folds a list's only row into the list, so that row
   loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
   accessibility.
+- ⌘1 never reaches the app on the Mac these tests were written on: something
+  outside the app takes it (the same menu item on ⌘3 fires at once, and ⌘2
+  and ⌘N work). The UI tests go back to the Queue by its button; check ⌘1 by
+  hand on a clean Mac in Phase 7.
 
 - `make test-extension-shell` fails in the container on `main` too: in the
   headless GNOME Shell 50 on arm64 the virtual pointer's x stays at 0, so the
@@ -292,3 +296,28 @@ Approved with changes, all taken:
 11. Flash now goes through the same path as a scheduled flash.
 12. Accessibility identifiers on every row, list, heading and field.
 
+### Phase 4, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. Focus recovery could take the add field from someone typing in it: with
+   the add field chosen, a task the keyboard had been on before going
+   elsewhere sent focus back to the tasks, and the next `d` completed one.
+   The rules moved into a pure `FocusKeeper` that tells a chosen add field
+   from AppKit's fallback to it.
+2. A click in the current task's rename field took focus to the panel and
+   ended the rename. The panel's click leaves a rename alone.
+3. Closing the Later shelf over a rename there left the rename open and
+   focus nowhere. Closing the shelf ends the rename; a task moved to Later
+   from the other window while renamed opens the shelf instead, and keeps
+   the edit.
+4. Settings had no message line, so a setting that could not be saved said
+   nothing with only Settings open. It has the shared one.
+5. The quiet hours pickers showed today's moment, so on a day the clocks
+   change 02:30 showed as 03:00 and could be saved so. They now show the
+   time in a zone that never changes its clocks.
+6. A drop mark showed in both windows. Marks carry their window.
+
+While fixing these: the app had two View menus (the standard one and its
+own); its commands now sit in the standard one. Each fix has a test that
+fails without it, checked by undoing the fix; the picker test reads the
+screen, since the picker's accessibility value is a moment, not the text.
