@@ -1,3 +1,4 @@
+import KeyboardShortcuts
 import SwiftUI
 
 /// Settings: the reminder first, then the rules that keep it quiet, then the
@@ -58,6 +59,7 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("setting-default-bucket")
             }
+            globalShortcuts
             Section("Keyboard") {
                 LabeledContent("In the Queue and the Board") {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
@@ -131,6 +133,30 @@ struct SettingsView: View {
                 model.setSettings(settings)
             }
         )
+    }
+
+    // MARK: Global shortcuts
+
+    private var globalShortcuts: some View {
+        Section {
+            ForEach(Hotkey.allCases, id: \.self) { hotkey in
+                KeyboardShortcuts.Recorder(hotkey.title, name: hotkey.name)
+                    .shortcutValidation { shortcut in
+                        let others = Hotkey.allCases.filter { $0 != hotkey }
+                        if let other = others.first(where: { KeyboardShortcuts.getShortcut(for: $0.name) == shortcut }) {
+                            return .disallow(reason: "“\(other.title)” uses it already.")
+                        }
+                        return .allow
+                    }
+            }
+            Button("Restore Defaults") {
+                KeyboardShortcuts.reset(Hotkey.allCases.map(\.name))
+            }
+        } header: {
+            Text("Global shortcuts")
+        } footer: {
+            Text("They work whatever app is in front. If one does nothing, another app may be using it.")
+        }
     }
 
     // MARK: Quiet

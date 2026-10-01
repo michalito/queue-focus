@@ -9,10 +9,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let loginItem = LoginItem()
     /// The one drag in progress, shared by the windows.
     let drag = DragState()
+    /// The Queue and Board windows, for the global shortcuts and links.
+    let windows = AppWindows()
     private var statusItem: StatusItemController?
-    /// The floating add field; Phase 6's global shortcut opens it too.
+    /// The floating add field, which ⌘N and the global shortcut open.
     private(set) var quickAdd: QuickAddController?
     private var flash: FlashController?
+    private var notices: Notices?
+    private lazy var links = Links { [log] url in
+        log.notice("ignored a link it does not know: \(url.absoluteString, privacy: .public)")
+    }
     private var ticker: Timer?
     private var theme: Theme?
     private let log = Logger(subsystem: "org.queuefocus.QueueFocus", category: "app")
@@ -44,15 +50,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let model = QueueModel(engine: engine)
         self.model = model
-        statusItem = StatusItemController(model: model, loginItem: loginItem, defaults: .standard, quit: {
+        IntentHost.model = model
+        let statusItem = StatusItemController(model: model, loginItem: loginItem, windows: windows, defaults: .standard, quit: {
             NSApp.terminate(nil)
         })
+        self.statusItem = statusItem
         quickAdd = QuickAddController(model: model)
         let flash = FlashController()
         self.flash = flash
         model.presentFlash = { [weak flash] event in flash?.show(event) }
         NotificationCenter.default.addObserver(self, selector: #selector(screensDidChange),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        let notices = Notices(model: model, notifier: makeNotifier(), popoverIsShown: { statusItem.isPopoverShown },
+                              showPopover: { statusItem.showPopover() })
+        self.notices = notices
+        // The record a Done note from before could undo went with the app.
+        notices.withdrawDone()
+        model.didReport = { problems in
+            Task { await notices.report(problems) }
+        }
+        Hotkey.install { [weak self] in self?.perform($0) }
         model.didChange = { [weak self] in self?.modelDidChange() }
         modelDidChange()
         startTicking(model)
@@ -61,6 +78,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Alerts.show("Queue Focus could not read its settings", warning, style: .warning)
         }
         FlashPreview.schedule(FlashPreview.events(.standard), on: flash)
+        links.open { [weak self] in self?.follow($0) }
+    }
+
+    /// Notification Center's, unless `-notifications off` asks for none.
+    private func makeNotifier() -> Notifier {
+        guard UserDefaults.standard.string(forKey: "notifications") != "off" else { return SilentNotifier() }
+        let notifier = SystemNotifier()
+        notifier.onUndo = { [weak self] id in
+            guard let notices = self?.notices else { return }
+            Task { await notices.undo(id: id) }
+        }
+        return notifier
+    }
+
+    private func perform(_ hotkey: Hotkey) {
+        switch hotkey {
+        case .toggleQueue:
+            windows.toggle(WindowID.queue)
+        case .showBoard:
+            windows.show(WindowID.board)
+        case .quickAdd:
+            quickAdd?.show()
+        case .completeCurrent:
+            guard let notices else { return }
+            Task { await notices.completeCurrent() }
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        links.receive(urls)
+    }
+
+    private func follow(_ link: AppURL) {
+        guard let model else { return }
+        switch link {
+        case .add(let text, let asCurrent):
+            if !model.add(text, asCurrent: asCurrent), let notices {
+                Task { await notices.failed("Could not add the task", model.actionError) }
+            }
+        case .show(.queue):
+            windows.show(WindowID.queue)
+        case .show(.board):
+            windows.show(WindowID.board)
+        case .show(.quickAdd):
+            quickAdd?.show()
+        }
     }
 
     /// A flash drawn for a screen that has since changed goes at once.
@@ -75,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         ticker?.invalidate()
+        notices?.withdrawDone()
         // Settings are written a moment after they change; this is the one
         // time that wait cannot be afforded.
         for problem in model?.flush() ?? [] {
@@ -96,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func modelDidChange() {
         statusItem?.update()
+        notices?.modelDidChange()
         guard let model, model.settings.theme != theme else { return }
         theme = model.settings.theme
         NSApp.appearance = switch model.settings.theme {

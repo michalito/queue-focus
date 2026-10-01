@@ -43,7 +43,7 @@ private struct FocusColumn: View {
             if let current = model.snapshot.current {
                 HStack(spacing: 8) {
                     Button {
-                        if let done = model.completeCurrent() {
+                        if let done = model.completeCurrent().task {
                             model.offerUndo(for: done)
                         }
                     } label: {

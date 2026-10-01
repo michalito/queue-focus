@@ -51,6 +51,51 @@ private final class Fixture {
         #expect(f.changes >= 2)
     }
 
+    @Test func completingTheCurrentTaskSaysWhatCameOfIt() throws {
+        let f = try Fixture()
+        #expect(f.model.completeCurrent() == .empty, "Now is empty")
+        f.model.add("ship", asCurrent: true)
+        let task = try #require(f.model.snapshot.current)
+        #expect(f.model.completeCurrent() == .done(task))
+        f.model.add("write", asCurrent: true)
+        // A folder where the task file goes: the save cannot happen.
+        let file = f.dir.appendingPathComponent("tasks.json")
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file.appendingPathComponent("in-the-way"), withIntermediateDirectories: true)
+        guard case .failed(let message) = f.model.completeCurrent() else {
+            Issue.record("a failed save is not an empty Now")
+            return
+        }
+        #expect(message.contains("could not save"))
+        #expect(f.model.snapshot.current?.title == "write")
+    }
+
+    @Test func anUndoByIdSaysWhatCameOfIt() throws {
+        let f = try Fixture()
+        f.model.add("ship", asCurrent: true)
+        let task = try #require(f.model.completeCurrent().task)
+        f.model.offerUndo(for: task)
+        f.model.add("other")
+        #expect(f.model.undo(id: task.id) == .stale)
+        #expect(f.model.undoOffer == nil, "an offer that cannot work goes")
+        f.model.add("again", asCurrent: true)
+        let again = try #require(f.model.completeCurrent().task)
+        f.model.offerUndo(for: again)
+        #expect(f.model.undo(id: again.id) == .undone)
+        #expect(f.model.undoOffer == nil)
+        #expect(f.model.snapshot.current?.title == "again")
+    }
+
+    @Test func problemsReachTheMessageLineAndWhoeverListens() throws {
+        let f = try Fixture()
+        var heard: [[String]] = []
+        f.model.didReport = { heard.append($0) }
+        f.model.report(["could not save"])
+        f.model.report([])
+        #expect(f.model.problems == ["could not save"])
+        #expect(heard == [["could not save"]], "once, and not for nothing")
+    }
+
     @Test func blankTextAddsNothingAndSaysNothing() throws {
         let f = try Fixture()
         #expect(!f.model.add("   "))
@@ -71,7 +116,7 @@ private final class Fixture {
         let f = try Fixture()
         f.model.add("first", asCurrent: true)
         f.model.add("second")
-        let done = try #require(f.model.completeCurrent())
+        let done = try #require(f.model.completeCurrent().task)
         f.model.offerUndo(for: done)
         #expect(f.model.snapshot.current?.title == "second")
         #expect(f.model.liveUndoOffer?.title == "first")
@@ -98,7 +143,7 @@ private final class Fixture {
         let f = try Fixture()
         f.model.add("first", asCurrent: true)
         f.model.add("second")
-        let done = try #require(f.model.completeCurrent())
+        let done = try #require(f.model.completeCurrent().task)
         f.model.offerUndo(for: done)
         f.model.togglePause()
         #expect(f.model.liveUndoOffer == nil)
@@ -114,7 +159,7 @@ private final class Fixture {
     @Test func anUndoThatCannotBeSavedCanBeTriedAgain() throws {
         let f = try Fixture()
         f.model.add("first", asCurrent: true)
-        f.model.offerUndo(for: try #require(f.model.completeCurrent()))
+        f.model.offerUndo(for: try #require(f.model.completeCurrent().task))
         let tasks = f.dir.appendingPathComponent("tasks.json")
         let saved = f.dir.appendingPathComponent("tasks.json.saved")
         // A directory where the file belongs makes every save fail.
@@ -137,7 +182,7 @@ private final class Fixture {
     @Test func theOfferLastsEightSeconds() throws {
         let f = try Fixture()
         f.model.add("first", asCurrent: true)
-        f.model.offerUndo(for: try #require(f.model.completeCurrent()))
+        f.model.offerUndo(for: try #require(f.model.completeCurrent().task))
         f.clock.advance(7.9)
         f.model.tick()
         #expect(f.model.liveUndoOffer != nil)
