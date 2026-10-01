@@ -22,6 +22,12 @@ fail() {
 mkdir -p "$FIXTURE/scripts" \
   "$FIXTURE/extension/queue-focus@queuefocus.org"
 cp "$SOURCE_ROOT/Cargo.toml" "$SOURCE_ROOT/Cargo.lock" "$FIXTURE/"
+# Every workspace member's manifest: the version command reads their names.
+(cd "$SOURCE_ROOT" && find crates -mindepth 2 -maxdepth 2 -name Cargo.toml) |
+  while read -r manifest; do
+    mkdir -p "$FIXTURE/$(dirname "$manifest")"
+    cp "$SOURCE_ROOT/$manifest" "$FIXTURE/$manifest"
+  done
 cp "$SOURCE_ROOT/Makefile" "$FIXTURE/"
 cp "$SOURCE_ROOT/scripts/set-version" "$FIXTURE/scripts/"
 cp "$SOURCE_ROOT/extension/queue-focus@queuefocus.org/metadata.json" \
@@ -73,15 +79,16 @@ metadata = json.loads(
     (root / "extension/queue-focus@queuefocus.org/metadata.json").read_text()
 )
 assert cargo["workspace"]["package"]["version"] == expected_version
+# Every package of the workspace moves together; nothing else does.
 workspace = {
     package["name"]: package["version"]
     for package in lock["package"]
-    if package["name"] in {"qf-core", "queue-focus"} and "source" not in package
+    if "source" not in package
 }
 assert workspace == {
-    "qf-core": expected_version,
-    "queue-focus": expected_version,
-}
+    name: expected_version
+    for name in ("qf-core", "qf-ffi", "queue-focus", "uniffi-bindgen")
+}, workspace
 assert metadata["version"] == expected_extension_version
 PY
 
@@ -156,11 +163,8 @@ version = sys.argv[2]
 extension_version = int(sys.argv[3])
 assert tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["version"] == version
 lock = tomllib.loads((root / "Cargo.lock").read_text())
-assert all(
-    package["version"] == version
-    for package in lock["package"]
-    if package["name"] in {"qf-core", "queue-focus"} and "source" not in package
-)
+local = [package for package in lock["package"] if "source" not in package]
+assert len(local) == 4 and all(package["version"] == version for package in local), local
 metadata = json.loads(
     (root / "extension/queue-focus@queuefocus.org/metadata.json").read_text()
 )
