@@ -8,7 +8,7 @@ REQUESTED_VERSION           := $(if $(filter command line,$(origin VERSION)),$(V
 REQUESTED_EXTENSION_VERSION := $(if $(filter command line,$(origin EXTENSION_VERSION)),$(EXTENSION_VERSION),)
 export REQUESTED_VERSION REQUESTED_EXTENSION_VERSION
 
-.PHONY: help build test test-ui test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
+.PHONY: help build test test-ui test-service test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -28,6 +28,9 @@ test:            ## unit + isolated integration tests
 
 test-ui:         ## real GTK placement/drop/focus test (needs Xvfb)
 	scripts/test-ui.sh
+
+test-service:    ## the real service over D-Bus and the command line (needs Xvfb)
+	scripts/test-service.sh
 
 test-install:    ## isolated local installer integration tests
 	scripts/test-install-local.sh

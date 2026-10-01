@@ -526,6 +526,7 @@ make test-extension
 make test-extension-dbus
 make test-extension-shell
 make test-ui
+make test-service
 make deb
 make clean
 ```
@@ -550,6 +551,8 @@ make run
 `make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
 
 The extension tests need Node.js. Connection tests drive owner changes, delayed replies, retries, and interrupted requests with a deterministic D-Bus and timer stand-in. Retry delays increase from 1.5 seconds to a 60-second cap and reset only once both task state and settings recover. The fast flash-overlay tests stub the GNOME toolkit and load the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
+
+`make test-service` builds the app and runs its service on a private D-Bus and X display, with temporary task and settings files. It calls every D-Bus method and checks the replies, the error names and the signals, then drives `add`, `done`, `status` and `quit` from the command line. It also checks that the service refuses a malformed task file without changing it, starts with defaults over an unreadable settings file, reports a change it cannot save without keeping it, and writes the queue before it stops. It needs `Xvfb`, `xvfb-run`, `dbus-run-session` and `gdbus`.
 
 `make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
 
