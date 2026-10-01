@@ -38,12 +38,19 @@ because this Mac cannot build the GTK crate.
 
 ## Phase 2. FFI crate
 
-- [ ] 1. `crates/qf-ffi` static library with UniFFI proc macros
-- [ ] 2. Engine object, records, enums, `HH:MM` custom type, error enum
-- [ ] 3. Constructor takes a directory; `tick` returns `TickResult`
-- [ ] 4. `uniffi.toml` (module `QfCore`) and an in-crate bindgen binary
-- [ ] 5. `scripts/build-mac-core.sh` and `make mac-core` (XCFramework)
-- [ ] 6. FFI tests through the exported API; `make test-core`
+- [x] 1. `crates/qf-ffi` static library with UniFFI proc macros
+- [x] 2. Engine object, records, enums, error enum. Per the design review,
+      a time of day is an hour-and-minute record rather than an `HH:MM`
+      string, and records are named so they never shadow Swift
+- [x] 3. Constructor takes a directory; `tick` returns `TickResult` with the
+      flash and every problem to report
+- [x] 4. `uniffi.toml` (module `QfCore`) and a bindgen binary, in its own
+      `crates/uniffi-bindgen` crate per the design review
+- [x] 5. `scripts/build-mac-core.sh` and `make mac-core`: XCFramework and
+      generated Swift inside the `macos/QfCore` package
+- [x] 6. FFI tests through the exported API (20); `make test-core` and
+      `make check-core` on either OS; `make test-mac-core` runs Swift tests
+      of the bindings against the real library
 - [ ] Review: GPT phase review green
 - [ ] Review: Fable approves the Phase 3 design
 
