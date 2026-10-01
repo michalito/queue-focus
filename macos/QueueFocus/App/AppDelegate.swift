@@ -5,6 +5,8 @@ import os
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var model: QueueModel?
+    /// Launch at login, as the gear menu and Settings both show it.
+    let loginItem = LoginItem()
     private var statusItem: StatusItemController?
     private var ticker: Timer?
     private var theme: Theme?
@@ -37,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let model = QueueModel(engine: engine)
         self.model = model
-        statusItem = StatusItemController(model: model, defaults: .standard, quit: {
+        statusItem = StatusItemController(model: model, loginItem: loginItem, defaults: .standard, quit: {
             NSApp.terminate(nil)
         })
         model.didChange = { [weak self] in self?.modelDidChange() }
@@ -47,6 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let warning = engine.openWarning() {
             Alerts.show("Queue Focus could not read its settings", warning, style: .warning)
         }
+    }
+
+    /// System Settings can change the login item while the app is away.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        loginItem.refresh()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

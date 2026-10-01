@@ -6,7 +6,7 @@ struct SettingsView: View {
     @Environment(QueueModel.self) private var model
     @AppStorage(Preferences.menuBarTitleWidthKey)
     private var titleWidth = Preferences.defaultMenuBarTitleWidth
-    @State private var launchAtLogin = LoginItem.isEnabled
+    @Environment(LoginItem.self) private var loginItem
 
     var body: some View {
         Form {
@@ -37,24 +37,15 @@ struct SettingsView: View {
                 }
             }
             Section("General") {
-                Toggle("Launch at login", isOn: Binding(
-                    get: { launchAtLogin },
-                    set: { on in
-                        LoginItem.set(on)
-                        launchAtLogin = LoginItem.isEnabled
-                    }
-                ))
-                if LoginItem.needsApproval {
-                    Button("Allow in System Settings…") {
-                        LoginItem.openSystemSettings()
-                    }
+                Toggle("Launch at login", isOn: Binding(get: { loginItem.isEnabled }, set: loginItem.set))
+                if loginItem.needsApproval {
+                    Button("Allow in System Settings…", action: loginItem.openSystemSettings)
                 }
             }
         }
         .formStyle(.grouped)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { launchAtLogin = LoginItem.isEnabled }
     }
 
     /// A binding to one shared setting, written through the engine.

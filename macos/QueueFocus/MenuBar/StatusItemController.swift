@@ -16,7 +16,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// keyboard back to when it closes.
     private var previousApp: NSRunningApplication?
 
-    init(model: QueueModel, defaults: UserDefaults, quit: @escaping () -> Void) {
+    init(model: QueueModel, loginItem: LoginItem, defaults: UserDefaults, quit: @escaping () -> Void) {
         self.model = model
         self.defaults = defaults
         super.init()
@@ -33,7 +33,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             close: { [weak self] in self?.closePopover() },
             quit: quit
         )
-        let host = NSHostingController(rootView: PopoverView(actions: actions).environment(model))
+        let host = NSHostingController(rootView: PopoverView(actions: actions)
+            .environment(model)
+            .environment(loginItem))
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.behavior = .transient

@@ -180,25 +180,17 @@ private struct UndoRow: View {
 }
 
 private struct GearMenu: View {
+    @Environment(LoginItem.self) private var loginItem
     let actions: PopoverActions
     let openSettings: () -> Void
-    @State private var launchAtLogin = LoginItem.isEnabled
 
     var body: some View {
         Menu {
             Button("Settings…", action: openSettings)
                 .accessibilityIdentifier("gear-settings")
-            Toggle("Launch at Login", isOn: Binding(
-                get: { launchAtLogin },
-                set: { on in
-                    LoginItem.set(on)
-                    launchAtLogin = LoginItem.isEnabled
-                }
-            ))
-            if LoginItem.needsApproval {
-                Button("Allow in Login Items…") {
-                    LoginItem.openSystemSettings()
-                }
+            Toggle("Launch at Login", isOn: Binding(get: { loginItem.isEnabled }, set: loginItem.set))
+            if loginItem.needsApproval {
+                Button("Allow in Login Items…", action: loginItem.openSystemSettings)
             }
             Divider()
             Button("Quit Queue Focus", action: actions.quit)
@@ -211,9 +203,6 @@ private struct GearMenu: View {
         .fixedSize()
         .accessibilityLabel("Settings and more")
         .accessibilityIdentifier("gear-menu")
-        .onAppear {
-            launchAtLogin = LoginItem.isEnabled
-        }
     }
 }
 

@@ -47,6 +47,7 @@ private struct WithModel<Content: View>: View {
         if let model = delegate.model {
             content()
                 .environment(model)
+                .environment(delegate.loginItem)
                 .withWindow { $0.isRestorable = false }
         }
     }
