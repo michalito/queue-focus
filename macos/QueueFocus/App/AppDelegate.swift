@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     /// The floating add field; Phase 6's global shortcut opens it too.
     private(set) var quickAdd: QuickAddController?
+    private var flash: FlashController?
     private var ticker: Timer?
     private var theme: Theme?
     private let log = Logger(subsystem: "org.queuefocus.QueueFocus", category: "app")
@@ -47,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         })
         quickAdd = QuickAddController(model: model)
+        let flash = FlashController()
+        self.flash = flash
+        model.presentFlash = { [weak flash] event in flash?.show(event) }
+        NotificationCenter.default.addObserver(self, selector: #selector(screensDidChange),
+                                               name: NSApplication.didChangeScreenParametersNotification, object: nil)
         model.didChange = { [weak self] in self?.modelDidChange() }
         modelDidChange()
         startTicking(model)
@@ -54,6 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let warning = engine.openWarning() {
             Alerts.show("Queue Focus could not read its settings", warning, style: .warning)
         }
+        FlashPreview.schedule(FlashPreview.events(.standard), on: flash)
+    }
+
+    /// A flash drawn for a screen that has since changed goes at once.
+    @objc private func screensDidChange(_ notification: Notification) {
+        flash?.clear()
     }
 
     /// System Settings can change the login item while the app is away.

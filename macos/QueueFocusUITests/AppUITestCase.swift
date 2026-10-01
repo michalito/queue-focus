@@ -9,7 +9,8 @@ class AppUITestCase: XCTestCase {
 
     /// Launch the app on a fresh data directory, removed after the test,
     /// holding `tasks` if given: `(title, bucket)` pairs, and `settings`.
-    func launch(with tasks: [(String, String)] = [], settings: [String: Any] = [:], restoringState: Bool = false) throws {
+    func launch(with tasks: [(String, String)] = [], settings: [String: Any] = [:], arguments: [String] = [],
+                restoringState: Bool = false) throws {
         continueAfterFailure = false
         let dataHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("qf-ui-\(UUID().uuidString)", isDirectory: true)
@@ -30,7 +31,7 @@ class AppUITestCase: XCTestCase {
         }
         let app = XCUIApplication()
         app.launchEnvironment["XDG_DATA_HOME"] = dataHome.path
-        app.launchArguments += ["-allowSecondInstance", "YES"]
+        app.launchArguments += ["-allowSecondInstance", "YES"] + arguments
         if restoringState {
             // As for someone who keeps windows when quitting an app.
             app.launchArguments += ["-ApplePersistenceIgnoreState", "NO", "-NSQuitAlwaysKeepsWindows", "YES"]
