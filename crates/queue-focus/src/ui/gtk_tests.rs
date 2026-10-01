@@ -121,10 +121,9 @@ fn hero_of(ui: &Rc<Ui>, page: Page) -> gtk::Box {
 fn placement_drops_and_focus() {
     let dir = std::env::temp_dir().join(format!("qf-placement-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let state = crate::state::State::load_from(dir.join("tasks.json")).unwrap();
-    let (settings, _) = crate::settings::SettingsStore::load_from(dir.join("settings.json"));
+    let (service, _) = crate::service::Service::open_in(&dir).unwrap();
     let mut ids = Vec::new();
-    state
+    service
         .update(|s| {
             for (name, bucket) in [
                 ("current", Bucket::Now),
@@ -143,8 +142,7 @@ fn placement_drops_and_focus() {
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.register(None::<&gtk::gio::Cancellable>).unwrap();
-    let flash = crate::flash::FlashClock::new(state.clone(), settings.clone());
-    let ui = Ui::new(app, state.clone(), settings, flash);
+    let ui = Ui::new(app, service.clone());
     ui.show(Page::Queue);
     settle();
     // Inspect GTK's actual row order, independently of Placement::visible.
@@ -174,7 +172,7 @@ fn placement_drops_and_focus() {
         ids
     };
     let in_bucket =
-        |bucket: Bucket| -> Vec<u64> { state.store().in_bucket(bucket).map(|t| t.id).collect() };
+        |bucket: Bucket| -> Vec<u64> { service.store().in_bucket(bucket).map(|t| t.id).collect() };
     let section = |page: Page, bucket: Bucket| {
         ui.sections
             .borrow()
@@ -203,7 +201,7 @@ fn placement_drops_and_focus() {
     let next_list = list_of(Page::Queue, Bucket::Next);
     assert_eq!(row_id(&next_list.row_at_y(1).unwrap()), Some(queued));
     emit_drop(&next_list, next, 1.0);
-    assert_eq!(state.store().current().unwrap().id, current);
+    assert_eq!(service.store().current().unwrap().id, current);
     assert_eq!(in_bucket(Bucket::Next), [next, queued]);
     assert_eq!(rendered_ids(), [current, side, next, queued]);
     assert_eq!(ui.focused_row().as_ref().and_then(row_id), Some(next));
@@ -266,7 +264,7 @@ fn placement_drops_and_focus() {
     // Moving the current task out leaves Now empty; nothing is pulled in.
     ui.update(|s| s.move_to(side, Bucket::Side, None)).unwrap();
     settle();
-    assert!(state.store().current().is_none());
+    assert!(service.store().current().is_none());
     assert_eq!(section(Page::Board, Bucket::Now).text(), "0");
     assert_eq!(rendered_ids(), [side, queued, next, current, later]);
     ui.row_for(side).unwrap().grab_focus();
@@ -285,9 +283,8 @@ fn placement_drops_and_focus() {
 fn hero_dressing() {
     let dir = std::env::temp_dir().join(format!("qf-hero-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let state = crate::state::State::load_from(dir.join("tasks.json")).unwrap();
-    let (settings, _) = crate::settings::SettingsStore::load_from(dir.join("settings.json"));
-    state
+    let (service, _) = crate::service::Service::open_in(&dir).unwrap();
+    service
         .update(|s| {
             s.add("untagged current", Bucket::Now, None);
             s.add("queued", Bucket::Next, None);
@@ -298,8 +295,7 @@ fn hero_dressing() {
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.register(None::<&gtk::gio::Cancellable>).unwrap();
-    let flash = crate::flash::FlashClock::new(state.clone(), settings.clone());
-    let ui = Ui::new(app, state.clone(), settings, flash);
+    let ui = Ui::new(app, service.clone());
     ui.show(Page::Board);
     settle();
     let (band, card) = (hero_of(&ui, Page::Queue), hero_of(&ui, Page::Board));
@@ -326,14 +322,14 @@ fn hero_dressing() {
     }
 
     // A title that fits has nothing to add, so it offers no tooltip.
-    let queued_id = state.store().in_bucket(Bucket::Next).next().unwrap().id;
+    let queued_id = service.store().in_bucket(Bucket::Next).next().unwrap().id;
     let queued_row = ui.row_for(queued_id).unwrap();
     assert!(!offers_tooltip(&title_in(&card, "current-title")));
     assert!(!offers_tooltip(&title_in(&queued_row, "row-title")));
 
     // Board titles remain complete even when the Queue banner truncates them.
     let long_title = "W".repeat(256);
-    let current_id = state.store().current().unwrap().id;
+    let current_id = service.store().current().unwrap().id;
     ui.update(|s| {
         s.rename(current_id, &long_title);
         s.rename(queued_id, &long_title);
@@ -367,9 +363,9 @@ fn hero_dressing() {
     assert!(scroll.vadjustment().upper() > scroll.vadjustment().page_size());
 
     // A Board hero supplies the current task, including after a promotion.
-    let current = state.store().current().unwrap().id;
+    let current = service.store().current().unwrap().id;
     assert_eq!(drag_payload(&card), Some(current));
-    let queued = state.store().in_bucket(Bucket::Next).next().unwrap().id;
+    let queued = service.store().in_bucket(Bucket::Next).next().unwrap().id;
     ui.update(|s| s.promote(queued)).unwrap();
     settle();
     assert_eq!(drag_payload(&card), Some(queued));
@@ -385,10 +381,10 @@ fn hero_dressing() {
     // Dragged out of its panel the current task leaves Now empty: the task it
     // replaced waits at the front of Next, and only completing pulls from there.
     emit_drop(&side_header, drag_payload(&card).unwrap(), 0.0);
-    assert_eq!(state.store().get(queued).unwrap().bucket, Bucket::Side);
-    assert!(state.store().current().is_none());
+    assert_eq!(service.store().get(queued).unwrap().bucket, Bucket::Side);
+    assert!(service.store().current().is_none());
     assert_eq!(
-        state.store().in_bucket(Bucket::Next).next().unwrap().id,
+        service.store().in_bucket(Bucket::Next).next().unwrap().id,
         current
     );
 
@@ -414,9 +410,8 @@ fn drag_feedback() {
     load_css();
     let dir = std::env::temp_dir().join(format!("qf-drag-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let state = crate::state::State::load_from(dir.join("tasks.json")).unwrap();
-    let (settings, _) = crate::settings::SettingsStore::load_from(dir.join("settings.json"));
-    state
+    let (service, _) = crate::service::Service::open_in(&dir).unwrap();
+    service
         .update(|s| {
             s.add("current", Bucket::Now, None);
             for bucket in [Bucket::Next, Bucket::Later] {
@@ -431,8 +426,7 @@ fn drag_feedback() {
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.register(None::<&gtk::gio::Cancellable>).unwrap();
-    let flash = crate::flash::FlashClock::new(state.clone(), settings.clone());
-    let ui = Ui::new(app, state.clone(), settings, flash);
+    let ui = Ui::new(app, service.clone());
     ui.show(Page::Board);
     settle();
 
@@ -538,7 +532,7 @@ fn drag_feedback() {
         .and_then(|r| row_id(&r))
         .unwrap();
     let order = || {
-        state
+        service
             .store()
             .in_bucket(Bucket::Next)
             .map(|t| t.id)
@@ -636,13 +630,13 @@ fn drag_feedback() {
 
     // A drop on the Now heading lands where the ring was: the task takes over,
     // and the one it replaces leads Next rather than staying in Now.
-    let was_current = state.store().current().unwrap().id;
-    let to_now = state.store().in_bucket(Bucket::Later).next().unwrap().id;
+    let was_current = service.store().current().unwrap().id;
+    let to_now = service.store().in_bucket(Bucket::Later).next().unwrap().id;
     emit_drop(&now_header, to_now, 0.0);
-    assert_eq!(state.store().in_bucket(Bucket::Now).count(), 1);
-    assert_eq!(state.store().current().unwrap().id, to_now);
+    assert_eq!(service.store().in_bucket(Bucket::Now).count(), 1);
+    assert_eq!(service.store().current().unwrap().id, to_now);
     assert_eq!(
-        state.store().in_bucket(Bucket::Next).next().unwrap().id,
+        service.store().in_bucket(Bucket::Next).next().unwrap().id,
         was_current
     );
     assert!(!hero.has_css_class("drop-into"));
@@ -654,7 +648,7 @@ fn drag_feedback() {
     emit_motion(&now_header, 0.0);
     assert!(hero.has_css_class("drop-into"));
     emit_drop(&now_header, was_current, 0.0);
-    assert_eq!(state.store().current().unwrap().id, was_current);
+    assert_eq!(service.store().current().unwrap().id, was_current);
     assert!(!hero.has_css_class("drop-into"));
 
     ui.win.borrow().as_ref().unwrap().destroy();

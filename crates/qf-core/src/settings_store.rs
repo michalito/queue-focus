@@ -9,7 +9,7 @@
 //! it exits, and reports whatever problem either one returns.
 
 use crate::Settings;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Ticks to sit out before trying a failed write again.
 const RETRY_TICKS: u32 = 30;
@@ -54,10 +54,6 @@ impl SettingsStore {
 
     pub fn get(&self) -> &Settings {
         &self.settings
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// Change the settings. Returns whether anything changed; nothing is

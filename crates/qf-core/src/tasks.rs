@@ -102,10 +102,6 @@ impl Tasks {
         &self.store
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     /// How many changes have been saved since the file was loaded.
     pub fn revision(&self) -> u64 {
         self.revision

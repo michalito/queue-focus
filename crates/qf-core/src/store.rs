@@ -104,15 +104,9 @@ fn data_dir_for(
     base.join("queue-focus")
 }
 
-/// `$XDG_DATA_HOME/queue-focus/tasks.json`.
-pub fn data_path() -> PathBuf {
-    data_dir().join("tasks.json")
-}
-
-/// `$XDG_DATA_HOME/queue-focus/settings.json`.
-pub fn settings_path() -> PathBuf {
-    data_dir().join("settings.json")
-}
+/// The two files in the data directory.
+pub(crate) const TASKS_FILE: &str = "tasks.json";
+pub(crate) const SETTINGS_FILE: &str = "settings.json";
 
 /// Load the task store, repairing permissions left by pre-hardening builds.
 ///
@@ -493,14 +487,6 @@ mod tests {
             data_dir_for(Platform::MacOs, None, None),
             Path::new("./queue-focus")
         );
-    }
-
-    #[test]
-    fn the_data_files_sit_together_in_one_directory() {
-        assert_eq!(data_path().parent(), Some(data_dir().as_path()));
-        assert_eq!(settings_path().parent(), Some(data_dir().as_path()));
-        assert_eq!(data_path().file_name().unwrap(), "tasks.json");
-        assert_eq!(settings_path().file_name().unwrap(), "settings.json");
     }
 
     #[test]
