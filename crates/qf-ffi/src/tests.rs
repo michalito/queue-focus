@@ -513,6 +513,40 @@ fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// Settings that cannot be read at recovery would come back as the defaults
+/// and be written over the user's own, so they count as a failed recovery.
+#[test]
+fn a_panic_with_unreadable_settings_refuses_changes_until_they_read_again() {
+    let dir = temp_dir("panic-settings");
+    let engine = open(&dir);
+    engine.add("kept".into(), None).unwrap();
+    let mut settings = engine.settings();
+    settings.interval_min = 42;
+    engine.set_settings(settings).unwrap();
+    assert!(engine.flush().is_empty());
+    let good = fs::read(dir.join("settings.json")).unwrap();
+    fs::write(dir.join("settings.json"), b"[]").unwrap();
+    panic_mid_change(&engine);
+
+    let message = match engine.add("refused".into(), None) {
+        Err(QfError::Persistence { message }) => message,
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    assert!(message.contains("settings.json"), "{message}");
+    assert_eq!(engine.tick(0, noon(), 0).unwrap().problems.len(), 1);
+    assert_eq!(fs::read(dir.join("settings.json")).unwrap(), b"[]");
+
+    fs::write(dir.join("settings.json"), &good).unwrap();
+    assert_eq!(
+        engine.settings().interval_min,
+        42,
+        "the user's own came back"
+    );
+    engine.add("after".into(), None).unwrap();
+    assert_eq!(titles(&engine), ["kept", "after"]);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn the_clocks_read_like_the_core() {
     assert_eq!(short_elapsed(62 * 60, false), "1h02");

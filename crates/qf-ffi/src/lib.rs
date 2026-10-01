@@ -79,8 +79,15 @@ impl State {
     /// settings change not yet written go with it. Until the files can be
     /// read, changes are refused rather than saved on top of a half-made one.
     fn recover(&mut self, dir: &Path, just_panicked: bool) {
-        match Engine::open(dir, qf_core::unix_now) {
-            Ok((engine, _)) => {
+        // Settings that cannot be read would come back as the defaults, and
+        // the next change would write those over the user's own.
+        let reopened =
+            Engine::open(dir, qf_core::unix_now).and_then(|(engine, warning)| match warning {
+                None => Ok(engine),
+                Some(warning) => Err(std::io::Error::other(warning)),
+            });
+        match reopened {
+            Ok(engine) => {
                 self.engine = engine;
                 self.damaged = None;
                 self.report(
