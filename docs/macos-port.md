@@ -98,7 +98,7 @@ because this Mac cannot build the GTK crate.
 - [x] 4. Reduce Motion: still for 1.5 s
 - [x] 5. A new flash replaces a running one; panel released at the end
 - [x] 6. Hidden launch argument to render a style; Flash now uses the engine
-- [ ] Review: GPT phase review green
+- [x] Review: GPT phase review green (second pass)
 - [ ] Review: Fable approves the Phase 6 design
 
 ## Phase 6. Hotkeys, notifications, automation
@@ -402,3 +402,6 @@ First pass, not green:
    every step against Clutter's formula.
 3. `safeTitle` folded U+0085, which JavaScript's `\s` leaves alone.
 
+Second pass: green, no findings. It sampled every easing step against
+Clutter's formula and checked `safeTitle` against JavaScript's white space
+for every Unicode scalar.
