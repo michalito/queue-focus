@@ -99,15 +99,15 @@ because this Mac cannot build the GTK crate.
 - [x] 5. A new flash replaces a running one; panel released at the end
 - [x] 6. Hidden launch argument to render a style; Flash now uses the engine
 - [x] Review: GPT phase review green (second pass)
-- [ ] Review: Fable approves the Phase 6 design
+- [x] Review: Fable approves the Phase 6 design (with changes, all taken)
 
 ## Phase 6. Hotkeys, notifications, automation
 
-- [ ] 1. KeyboardShortcuts with the four actions and a recorder in Settings
-- [ ] 2. Complete-current notification with Undo; fallback to the popover
-- [ ] 3. Empty Now reports nothing to complete
-- [ ] 4. One notification per durability or settings failure
-- [ ] 5. Optional: URL scheme and App Intents
+- [x] 1. KeyboardShortcuts with the four actions and a recorder in Settings
+- [x] 2. Complete-current notification with Undo; fallback to the popover
+- [x] 3. Empty Now reports nothing to complete
+- [x] 4. One notification per durability or settings failure
+- [x] 5. Optional: URL scheme (add, show) and App Intents
 - [ ] Review: GPT phase review green
 - [ ] Review: Fable approves the Phase 7 design
 
@@ -146,14 +146,32 @@ Deliberate differences from GNOME, so far:
   the primary monitor; the top bar styles colour the menu bar (or the notch
   row, which is taller). Reduce Motion holds it still for 1.5 s, as GNOME
   does with animations off.
+- The global shortcuts are Control-Option with GNOME's letters (Super is
+  taken on the Mac); they are changed in Settings, not with
+  `queue-focus-setup`.
+- A Done notification goes once the queue changes, since its Undo could no
+  longer work; GNOME's go with the extension's next action. Banners show
+  even while the app is in front. With notifications off, or before the
+  user has answered the first request, the popover opens with its Undo row
+  instead.
+- `queuefocus://add?text=…` (`&now=1`) and `queuefocus://show?view=…`
+  (queue, board, add) do what the D-Bus `Add` and `Show` do. There is no
+  link to complete a task: any web page can open a link. Shortcuts has Add
+  a Task, Complete the Current Task and Get the Current Task.
+- `-notifications off` keeps the app from asking for notifications; the UI
+  tests pass it, and move the global shortcuts to Control-Option-Shift
+  with J, L, K and U through the launch arguments.
 - `-flashPreview <style>` (`all` for the six in turn), with
   `-flashIntensity` and `-flashPalette`, draws a flash with a sample task
   two seconds after launch, for checking a style by eye.
 
 Known gaps, to close later:
-- XCTest cannot type into the quick add panel: its accessibility does not
-  report the field as focused, though AppKit has given it the keyboard.
-  Opening and closing are tested; typing there is checked in Phase 6.
+- ⌃⌥D is also Rectangle's default for "First Third", and two apps can hold
+  one hot key without either knowing, so both act. Settings says to change
+  a shortcut that does nothing.
+- The real notification, with its Undo button, needs the user to allow
+  notifications; check it by hand once (the logic is tested against a
+  stand-in Notification Center).
 - SwiftUI's accessibility folds a list's only row into the list, so that row
   loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
   accessibility.
@@ -405,3 +423,43 @@ First pass, not green:
 Second pass: green, no findings. It sampled every easing step against
 Clutter's formula and checked `safeTitle` against JavaScript's white space
 for every Unicode scalar.
+
+### Phase 6 design, Fable
+
+Approved with changes, all taken. Spikes behind them: KeyboardShortcuts
+3.1.0 builds for macOS 14 under Swift 6; two processes can register the
+same hot key and both are told; the shortcut store can be overridden from
+the launch arguments without touching the user's defaults.
+1. Completing the current task says whether it was done, Now was empty, or
+   the save failed; a failure is a note with the reason, not "Nothing in
+   Now".
+2. Nothing waits on the permission prompt: the first time, the popover
+   offers the undo and the request is for next time.
+3. The notification delegate and the Done category with its Undo are set
+   up at launch; a Done note from a previous run is withdrawn at launch and
+   at quit, since the engine's undo record does not outlive the app.
+4. Windows open from AppKit through SwiftUI's own actions, lent by a view
+   kept in the status item; a shortcut brings the app in front with
+   `activate(ignoringOtherApps:)`, since plain `activate()` only asks.
+5. UI tests never ask for notifications and never press the real
+   shortcuts; no UI test records a shortcut into the user's defaults.
+6. A completion while the popover is open is offered in its row only.
+7. A recorder refuses a shortcut another of the four already has.
+8. The model reports problems to a closure; notifications stay outside it.
+9. Links add and show only.
+10. Hosted unit tests never touch the shortcut store or Carbon.
+11. Undo from a note clears the popover's offer, and says "Nothing to undo"
+    or why it failed.
+12. Package versions come from the committed Package.resolved only.
+
+Found while building it:
+- A link that starts the app arrives before the queue is open; it was
+  dropped, and is now held until the queue opens.
+- The quick add field could miss the keyboard the first time the panel
+  opened, before SwiftUI had built it. The panel is laid out first and the
+  field focused at once, then again once SwiftUI settles. A hosted test
+  now types into the panel five times over; with the old code it fails.
+- XCTest's function keys never match a hot key, so the test shortcuts use
+  letters; XCTest opens every link in a fresh copy of the app, so the link
+  test covers a link that starts the app, and the unit tests the rest.
+
