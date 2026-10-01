@@ -277,7 +277,7 @@ expect_state '[t["id"] for t in s["later"]]' '[1, 7]'
 mv "$DATA/tasks.json" "$TEST_ROOT/tasks.json.saved"
 mkdir "$DATA/tasks.json"
 expect_error Add org.queuefocus.Error.Persistence 'could not save' 'lost' ''
-expect_state '"lost" in [t["title"] for t in s["next"]]' False
+expect_state 'any(t and t["title"] == "lost" for t in [s["current"], *s["side"], *s["next"], *s["later"]])' False
 rmdir "$DATA/tasks.json"
 mv "$TEST_ROOT/tasks.json.saved" "$DATA/tasks.json"
 
