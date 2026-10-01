@@ -56,14 +56,21 @@ because this Mac cannot build the GTK crate.
 
 ## Phase 3. App scaffold and menu bar
 
-- [ ] 1. `macos/` Xcode project: accessory app, macOS 14, hardened runtime,
-      Rust build phase, unit and UI test targets
-- [ ] 2. Main-actor model owning the engine; 1 Hz tick
-- [ ] 3. Launch: unreadable task file alerts and quits; unreadable settings warn
-- [ ] 4. Status item: tag dot, capped title, timer; left click popover, right click pause
-- [ ] 5. Popover: Now card, view buttons, gear menu, add field, Side cards, Done row with Undo
-- [ ] 6. Launch at login toggle
-- [ ] 7. Milestone: usable daily from the menu bar
+- [x] 1. `macos/` Xcode project: accessory app, macOS 14, hardened runtime,
+      Rust build phase (`RustCore`, rebuilds only on change, one
+      architecture in Debug), unit and UI test targets, shared scheme
+- [x] 2. Main-actor model owning the engine; 1 Hz tick in every run loop mode
+- [x] 3. Launch: unreadable task file alerts and quits; unreadable settings
+      warn; a second copy of the app quits; nothing opens at launch
+- [x] 4. Status item: tag dot, title cut to a width in points, timer;
+      left click popover, right click (or Control-click) pause
+- [x] 5. Popover: Now card, view buttons, gear menu, add field (Return,
+      Command-Return), Side cards, Done row with Undo, inline messages
+- [x] 6. Launch at login toggle (gear menu and Settings)
+- [x] 7. Milestone: 20 unit tests and 8 UI tests drive the real status item,
+      popover and windows; a universal Release build launches under the
+      hardened runtime. Queue, Board and Settings windows hold minimal real
+      content until Phase 4
 - [ ] Review: GPT phase review green
 - [ ] Review: Fable approves the Phase 4 design
 
