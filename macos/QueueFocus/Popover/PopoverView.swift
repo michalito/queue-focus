@@ -186,7 +186,9 @@ private struct GearMenu: View {
     let openSettings: () -> Void
 
     var body: some View {
-        Menu {
+        // Titled, and drawn as its symbol alone: a menu takes its name from
+        // its title, not from an accessibility label.
+        Menu("Settings and more", systemImage: "gearshape") {
             Button("Settings…", action: openSettings)
                 .accessibilityIdentifier("gear-settings")
             Toggle("Launch at Login", isOn: Binding(get: { loginItem.isEnabled }, set: loginItem.set))
@@ -196,13 +198,11 @@ private struct GearMenu: View {
             Divider()
             Button("Quit Queue Focus", action: actions.quit)
                 .accessibilityIdentifier("gear-quit")
-        } label: {
-            Image(systemName: "gearshape")
         }
+        .labelStyle(.iconOnly)
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel("Settings and more")
         .accessibilityIdentifier("gear-menu")
     }
 }
@@ -324,6 +324,15 @@ private struct SideCard: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
         .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
+        // The buttons show only under the pointer or the keyboard, as in
+        // GNOME, and a hidden button is gone for VoiceOver too: the card
+        // offers what they do.
+        .accessibilityAction(named: "Make current") { model.promote(task) }
+        .accessibilityAction(named: "Done") {
+            if model.complete(task) {
+                model.offerUndo(for: task)
+            }
+        }
         .accessibilityIdentifier("side-\(task.id)")
     }
 }
@@ -383,6 +392,8 @@ struct MessageLine: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
         }
+        // One group for VoiceOver: the message and what dismisses it.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("message-line")
     }
 }

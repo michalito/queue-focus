@@ -78,12 +78,15 @@ struct TruncatedTitle: View {
     let text: String
     let lines: Int
     var font: Font = .body
+    /// Stepped back, as the Board's Later rows are: grey, still readable.
+    var dim = false
     @State private var shownHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
 
     var body: some View {
         Text(text)
             .font(font)
+            .foregroundStyle(dim ? Color.readableGrey : Color.primary)
             .lineLimit(lines)
             .truncationMode(.tail)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownHeight = $0 }
@@ -253,7 +256,10 @@ struct TaskRow: View {
                 if context.renaming == task.id {
                     RenameField(task: task, focus: focus)
                 } else {
-                    TruncatedTitle(text: task.title, lines: style.lines)
+                    // The Board's Later rows step back by their title alone:
+                    // a dimmed chip would no longer read.
+                    TruncatedTitle(text: task.title, lines: style.lines,
+                                   dim: style == .boardLater && !options.increaseContrast)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -283,8 +289,7 @@ struct TaskRow: View {
                     .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
             }
         }
-        // The Board's Later rows step back, unless the user asked for contrast.
-        .opacity(drag.fades(task.id) ? 0.35 : (style == .boardLater && !options.increaseContrast ? 0.7 : 1))
+        .opacity(drag.fades(task.id) ? 0.35 : 1)
         .contentShape(Rectangle())
         // While renamed, the field inside takes the keyboard instead.
         .focusable(context.renaming != task.id)

@@ -65,14 +65,7 @@ struct SettingsView: View {
             globalShortcuts
             Section("Keyboard") {
                 LabeledContent("In the Queue and the Board") {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
-                        ForEach(shortcutList, id: \.keys) { shortcut in
-                            GridRow {
-                                Text(shortcut.keys).font(.body.monospaced()).foregroundStyle(.secondary)
-                                Text(shortcut.does)
-                            }
-                        }
-                    }
+                    ShortcutLines(spacing: 3)
                 }
             }
             Section("General") {
@@ -239,6 +232,7 @@ private struct TryIt: View {
         } label: {
             Text("Try it")
             Text(Self.describe(status))
+                .foregroundStyle(Color.readableGrey)
                 .accessibilityIdentifier("flash-status")
         }
     }
@@ -253,11 +247,10 @@ private struct TryIt: View {
 }
 
 private extension View {
-    /// A line that explains a setting, in the system's grey for such lines,
-    /// as System Settings has them; macOS darkens it with Increase Contrast.
-    /// The accessibility audit measures it under 4.5 to 1, and is told so.
+    /// A line that explains a setting: grey, but a grey that reads, where
+    /// the system's own for such lines measures under 4.5 to 1.
     func settingNote() -> some View {
-        accessibilityIdentifier("setting-note")
+        foregroundStyle(Color.readableGrey)
     }
 }
 

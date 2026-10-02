@@ -211,16 +211,24 @@ private struct WindowAddField: View {
 /// The keys, as the `?` button lists them.
 private struct ShortcutList: View {
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+        ShortcutLines(spacing: 6)
+            .padding(14)
+    }
+}
+
+/// The task keys, a line each: the key, set apart by weight (a key such as
+/// `l` is one thin stroke, too faint in grey) and padded so the meanings line
+/// up, then what it does. One text a line, which VoiceOver reads whole.
+struct ShortcutLines: View {
+    let spacing: CGFloat
+
+    var body: some View {
+        let width = shortcutList.map(\.keys.count).max() ?? 0
+        VStack(alignment: .leading, spacing: spacing) {
             ForEach(shortcutList, id: \.keys) { shortcut in
-                GridRow {
-                    Text(shortcut.keys)
-                        .font(.body.monospaced())
-                        .foregroundStyle(.secondary)
-                    Text(shortcut.does)
-                }
+                let key = shortcut.keys.padding(toLength: width, withPad: " ", startingAt: 0)
+                Text("\(Text(key).font(.body.monospaced().weight(.semibold)))   \(shortcut.does)")
             }
         }
-        .padding(14)
     }
 }

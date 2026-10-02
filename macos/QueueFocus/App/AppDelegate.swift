@@ -11,8 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let drag = DragState()
     /// The Queue and Board windows, for the global shortcuts and links.
     let windows = AppWindows()
-    /// The accessibility display settings the look follows.
-    let display = Display()
+    /// The accessibility display settings the look follows. Read once the
+    /// app is past the hosted tests' early return.
+    private(set) lazy var display = Display()
     private var statusItem: StatusItemController?
     /// The floating add field, which ⌘N and the global shortcut open.
     private(set) var quickAdd: QuickAddController?
@@ -57,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               defaults: .standard, quit: { NSApp.terminate(nil) })
         self.statusItem = statusItem
         display.didChange = { statusItem.update() }
-        quickAdd = QuickAddController(model: model)
+        quickAdd = QuickAddController(model: model, display: display)
         let flash = FlashController(options: { [display] in display.options })
         self.flash = flash
         model.presentFlash = { [weak flash] event in flash?.show(event) }

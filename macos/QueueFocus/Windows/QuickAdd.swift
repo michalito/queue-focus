@@ -9,7 +9,7 @@ final class QuickAddController: NSObject, NSWindowDelegate {
     static let identifier = NSUserInterfaceItemIdentifier("quick-add")
     private let panel: QuickAddPanel
 
-    init(model: QueueModel) {
+    init(model: QueueModel, display: Display) {
         panel = QuickAddPanel(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 60),
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
@@ -30,7 +30,9 @@ final class QuickAddController: NSObject, NSWindowDelegate {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(button)?.isHidden = true
         }
-        let content = QuickAddView(close: { [weak self] in self?.close() }).environment(model)
+        let content = FollowingDisplay(display: display) {
+            QuickAddView(close: { [weak self] in self?.close() }).environment(model)
+        }
         let host = NSHostingController(rootView: content)
         host.sizingOptions = [.preferredContentSize]
         panel.contentViewController = host

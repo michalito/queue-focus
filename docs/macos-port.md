@@ -163,9 +163,10 @@ Deliberate differences from GNOME, so far:
   tests pass it, and move the global shortcuts to Control-Option-Shift
   with J, L, K and U through the launch arguments.
 - The tag chip's blue is GNOME's next blue down (#1C71D8), not its accent:
-  white on the accent is 3.8 to 1, under the 4.5 small text needs. With
-  Increase Contrast both tag colours darken further and the Board's Later
-  rows are no longer dimmed; with Differentiate Without Color the menu bar
+  white on the accent is 3.8 to 1, under the 4.5 small text needs. The
+  Board's Later rows step back by a grey title, not by fading the whole row,
+  which faded the chip below 3 to 1. With Increase Contrast both tag
+  colours darken further and the Later titles are not greyed; with Differentiate Without Color the menu bar
   names the tag's letter beside its dot; with Reduce Transparency the flash
   card is solid. The paused timer in the windows carries the `❚❚` glyph, as
   the menu bar's does, rather than a fainter colour alone.
@@ -189,13 +190,15 @@ Known gaps, to close later:
   (desktop switching, most likely), so ⌘1 never reaches the app there; a
   test reports it, and fails on a build machine if it ever happens on a
   clean Mac. The UI tests go back to the Queue by its button.
-- The accessibility audit lets through what is not the app's to fix: the
-  hosting view's nameless root, the Touch Bar and a text field's
-  completions window, a slider's thumb, text scrolled out of its window,
-  window titles, and Settings' explanatory lines in the system's grey (as
-  System Settings has them; macOS darkens them with Increase Contrast).
-  Every issue is printed; on another macOS than 27 they are reported, not
-  failed.
+- The accessibility audit lets through only what is the system's, each
+  matched narrowly: a window's hosting root, the Touch Bar and its items, a
+  text field's completions window, a named slider's thumb, a window's title
+  bar (its title, and content scrolled under it), text a scroll view cuts
+  off (Settings is audited part by part as it scrolls, so each line is
+  measured whole), and text outside every window. Grey text in the app uses
+  a grey that reads at 4.5 to 1 in either appearance, where the system's
+  secondary grey does not. Every issue is printed; on another macOS than
+  27 they are reported, not failed.
 
 Hand checks, which a test cannot make here:
 - ⌘1 and ⌘2 on a Mac where the system does not hold them.
@@ -223,12 +226,13 @@ Hand checks, which a test cannot make here:
 | Global shortcuts | ⌃⌥Q, ⌃⌥⇧Q, ⌃⌥B, ⌃⌥D, changed in Settings rather than with `queue-focus-setup`; no Accessibility permission. | HotkeyTests, HotkeyUITests |
 | The flash reminder | The same six styles, envelopes and card, on the screen with the menu bar; the top bar styles colour the menu bar; Reduce Motion holds it still for 1.5 s, as GNOME does with animations off. | FlashPlanTests, FlashStageTests, FlashControllerTests, FlashUITests |
 | Add tasks | The same markers: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, WindowUITests |
-| Keyboard | The same task keys; ⌘1 and ⌘2 where GNOME has Ctrl+1 and Ctrl+2; ⌘, for Settings; Escape and ⌘W close a window, ⌘Q quits. | PlacementTests, WindowUITests |
+| Keyboard | The same task keys in the Queue and the Board; ⌘1 and ⌘2 where GNOME has Ctrl+1 and Ctrl+2; ⌘, for Settings; Escape and ⌘W close a window, ⌘Q quits. Settings is a window of its own, so `q` and `b` do not lead from it to the Queue and the Board; ⌘1 and ⌘2 do. | PlacementTests, WindowUITests |
 | Mouse | The same: double-click promotes, drags and drops, tooltips only on cut titles. | WindowUITests |
 | Command line use | No command; `queuefocus://add` and `queuefocus://show` links, and Shortcuts actions (`shortcuts run` for the current task). | AppURLTests, IntentsTests, HotkeyUITests |
 | Task data | The same file, format and modes, in `~/Library/Application Support/queue-focus`; a task file that cannot be read is an alert, and the app quits. | golden files, EngineTests |
 | Settings data | The same file and keys; the Mac-only settings (title width, shortcuts) live in the app's defaults, the login item with the system. | golden files, QueueModelTests |
-| D Bus interface, Debian package, Developer commands | GNOME only; the Mac's make targets are in Phase 8's README section. | — |
+| D Bus interface, Debian package | GNOME only. | — |
+| Developer commands, Source layout | Already list the Mac's make targets and directories; Phase 8 adds the release target and corrects the Xcode version. | — |
 | Common problems | "A shortcut does not work": another app may hold it, change it in Settings. | — |
 
 - `make test-extension-shell` fails in the container on `main` too: in the
@@ -605,4 +609,33 @@ Found while building it:
   as its symbol.
 - The add fields had no names, the sliders none for VoiceOver.
 - Settings grew taller than a laptop's screen; it now scrolls.
+
+### Phase 7, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. Settings' explanatory lines were let off the contrast audit by
+   identifier, though they say things worth reading. They, the flash
+   status and the Board's Later titles now use a grey that reads at 4.5 to
+   1 in either appearance; the exemption is gone, and Settings is audited
+   in light and dark, part by part as it scrolls. That turned up the
+   shortcut list: a key such as `l` is one stroke too thin to measure in
+   grey or alone, so each line is now one text, the key in semibold.
+2. Fading the Board's Later rows faded their tag chips below 3 to 1. Only
+   the title steps back now; the audit seeds tagged Later tasks.
+3. The audit's filters were broader than their reasons. Each now matches
+   only its system piece: the hosting root by its window's frame, the
+   completions window by name, a slider's thumb inside a named slider, the
+   title bar band, text cut off by a scroll view.
+4. The gear menu had the task menu's old problem: titled now. The label
+   table covers the popover's gear, a Side card's buttons (shown under the
+   pointer; the card also offers both as actions, since hidden buttons are
+   hidden from VoiceOver too) and the message line, now one group.
+5. The system-shortcut tests called Carbon's reader from parallel tests;
+   they run on the main actor.
+6. The pause test could fail at a second boundary; its clock starts after
+   the engine stamps the task.
+7. The display options were read before the hosted tests' early return;
+   they are read once the app is past it.
+8. Quick add now has the display options in its environment.
+9. Two rows of the README table were stale.
 

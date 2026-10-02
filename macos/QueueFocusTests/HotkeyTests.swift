@@ -9,6 +9,8 @@ private let modifierBits = cmdKey | shiftKey | optionKey | controlKey
 
 /// The shortcuts this Mac's system has turned on (Mission Control, Spotlight,
 /// screenshots, input sources…), as System Settings › Keyboard lists them.
+/// On the main actor: Carbon's reader is not safe to call from two threads.
+@MainActor
 private func systemShortcuts() -> [KeyCombo]? {
     var list: Unmanaged<CFArray>?
     guard CopySymbolicHotKeys(&list) == noErr, let entries = list?.takeRetainedValue() as? [[String: Any]] else {
@@ -33,6 +35,7 @@ private let letterKeys: Set<Int> = [
 /// Shortcuts in `keys` the system has taken on this Mac. A clash fails on a
 /// build machine, which is a clean Mac; here it is reported, since the user
 /// may have bound the key on purpose.
+@MainActor
 private func expectNoneTaken(_ keys: [(String, KeyCombo)]) throws {
     let taken = Set(try #require(systemShortcuts(), "the system's shortcuts can be read"))
     let clashes = keys.filter { taken.contains($0.1) }.map(\.0)
@@ -47,6 +50,7 @@ private func expectNoneTaken(_ keys: [(String, KeyCombo)]) throws {
 
 /// The shortcuts' rules, on stand-in keys: the hosted tests never touch the
 /// real shortcuts, which live in the user's defaults.
+@MainActor
 @Suite struct HotkeyTests {
     @Test func aKeyAnotherActionHasIsRefused() {
         let keys: [Hotkey: String] = [.toggleQueue: "⌃⌥Q", .quickAdd: "⌃⌥⇧Q", .showBoard: "⌃⌥B", .completeCurrent: "⌃⌥D"]
