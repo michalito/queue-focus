@@ -120,7 +120,7 @@ because this Mac cannot build the GTK crate.
 - [x] 5. Accessibility: VoiceOver labels, Reduce Motion, Increase Contrast
 - [x] 6. Overlay on a second display and over full screen; crowded menu bar
       (by hand: see the hand checks below)
-- [ ] Review: GPT phase review green
+- [x] Review: GPT phase review green (sixth pass, with the test runs)
 - [ ] Review: Fable approves the Phase 8 design
 
 ## Phase 8. Release
@@ -690,4 +690,7 @@ the test hold it to that: one grey measures 5.78 to 1, a faint grey under
 the check for strays, or for a second grey, or the notes' mark, fails a
 test each time. What it cannot see is a few words in a grey between the
 text's and the background's, which would pass for edges: hence notes only.
+
+Sixth pass: green, no findings. With it the unit tests pass (122, one
+known issue), and so do all 45 UI tests and the four picture tests.
 
