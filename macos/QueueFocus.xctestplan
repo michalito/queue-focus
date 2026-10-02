@@ -1,0 +1,34 @@
+{
+  "configurations" : [
+    {
+      "id" : "6E8C2A4B-1F3D-4C5E-9A7B-0D2E4F6A8B1C",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "preferredScreenCaptureFormat" : "screenshots",
+    "systemAttachmentLifetime" : "keepNever",
+    "uiTestingScreenshotsLifetime" : "keepNever",
+    "userAttachmentLifetime" : "keepNever"
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:QueueFocus.xcodeproj",
+        "identifier" : "B00000000000000000000060",
+        "name" : "QueueFocusTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:QueueFocus.xcodeproj",
+        "identifier" : "B00000000000000000000070",
+        "name" : "QueueFocusUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

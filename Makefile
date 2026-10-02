@@ -81,13 +81,17 @@ mac-app:         ## build the macOS app into target/xcode/Build/Products/Debug
 	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
 	$(XCODEBUILD) build
 
+# The test plan keeps no screenshots or screen recordings: a UI test's would
+# show whatever else is on the screen.
+XCODETEST = $(XCODEBUILD) test -testPlan QueueFocus -collect-test-diagnostics never
+
 test-mac-app:    ## the macOS app's unit tests
 	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
-	$(XCODEBUILD) test -only-testing:QueueFocusTests
+	$(XCODETEST) -only-testing:QueueFocusTests
 
 test-mac-ui:     ## the macOS app's UI tests; they drive the real menu bar, pointer and keyboard
 	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
-	$(XCODEBUILD) test -only-testing:QueueFocusUITests
+	$(XCODETEST) -only-testing:QueueFocusUITests
 
 version: set-version  ## set VERSION everywhere; prompts when VERSION is omitted
 
