@@ -1,0 +1,40 @@
+{
+  "next_id": 7,
+  "tasks": [
+    {
+      "id": 3,
+      "title": "Ship v0.5",
+      "bucket": "now",
+      "tag": "work",
+      "created_at": 1759300000,
+      "started_at": 1759310000,
+      "paused_at": 1759311000
+    },
+    {
+      "id": 1,
+      "title": "Write the release notes",
+      "bucket": "next",
+      "created_at": 1759290000
+    },
+    {
+      "id": 6,
+      "title": "Café ☕ with Ana",
+      "bucket": "next",
+      "tag": "personal",
+      "created_at": 1759320000
+    },
+    {
+      "id": 2,
+      "title": "Renew the domain",
+      "bucket": "later",
+      "created_at": 1759280000
+    },
+    {
+      "id": 4,
+      "title": "Reply to the review",
+      "bucket": "side",
+      "tag": "work",
+      "created_at": 1759305000
+    }
+  ]
+}

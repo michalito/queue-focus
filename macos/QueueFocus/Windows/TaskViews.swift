@@ -78,12 +78,15 @@ struct TruncatedTitle: View {
     let text: String
     let lines: Int
     var font: Font = .body
+    /// Stepped back, as the Board's Later rows are: grey, still readable.
+    var dim = false
     @State private var shownHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
 
     var body: some View {
         Text(text)
             .font(font)
+            .foregroundStyle(dim ? Color.readableGrey : Color.primary)
             .lineLimit(lines)
             .truncationMode(.tail)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownHeight = $0 }
@@ -151,15 +154,15 @@ struct TaskMenuButton: View {
     let isCurrent: Bool
 
     var body: some View {
-        Menu {
+        // Named, and drawn as its symbol alone: a menu takes its name from
+        // its title, and the symbol by itself reads "More".
+        Menu("Task menu", systemImage: "ellipsis") {
             TaskMenuItems(task: task, isCurrent: isCurrent)
-        } label: {
-            Image(systemName: "ellipsis")
         }
+        .labelStyle(.iconOnly)
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel("Task menu")
         .accessibilityIdentifier("menu-\(task.id)")
     }
 }
@@ -236,6 +239,7 @@ struct RenameField: View {
 /// One task in a list: its tag, its title, and what can be done with it.
 struct TaskRow: View {
     @Environment(QueueModel.self) private var model
+    @Environment(\.displayOptions) private var options
     @Environment(DragState.self) private var drag
     @Environment(WindowContext.self) private var context
     let task: QueueTask
@@ -252,7 +256,10 @@ struct TaskRow: View {
                 if context.renaming == task.id {
                     RenameField(task: task, focus: focus)
                 } else {
-                    TruncatedTitle(text: task.title, lines: style.lines)
+                    // The Board's Later rows step back by their title alone:
+                    // a dimmed chip would no longer read.
+                    TruncatedTitle(text: task.title, lines: style.lines,
+                                   dim: style == .boardLater && !options.increaseContrast)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -282,7 +289,7 @@ struct TaskRow: View {
                     .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
             }
         }
-        .opacity(drag.fades(task.id) ? 0.35 : (style == .boardLater ? 0.7 : 1))
+        .opacity(drag.fades(task.id) ? 0.35 : 1)
         .contentShape(Rectangle())
         // While renamed, the field inside takes the keyboard instead.
         .focusable(context.renaming != task.id)
@@ -328,7 +335,7 @@ struct BucketList: View {
     var body: some View {
         if tasks.isEmpty {
             Text("empty")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, minHeight: max(minHeight, 28), alignment: style == .boardSide || style == .boardNext ? .center : .leading)
                 .padding(.horizontal, 8)
                 .contentShape(Rectangle())
@@ -338,24 +345,21 @@ struct BucketList: View {
         } else {
             VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: style.gap) {
-                ForEach(tasks, id: \.id) { task in
-                    TaskRow(task: task, style: style, focus: focus)
-                        .rowFrame(task.id, in: space)
-                        .overlay(alignment: .top) {
-                            if drag.marks(.before(task.id), in: context.page) {
-                                InsertionLine().offset(y: -style.gap / 2 - 1)
+                    ForEach(tasks, id: \.id) { task in
+                        TaskRow(task: task, style: style, focus: focus)
+                            .rowFrame(task.id, in: space)
+                            .overlay(alignment: .top) {
+                                if drag.marks(.before(task.id), in: context.page) {
+                                    InsertionLine().offset(y: -style.gap / 2 - 1)
+                                }
                             }
-                        }
-                        .overlay(alignment: .bottom) {
-                            if drag.marks(.end(bucket), in: context.page), task.id == tasks.last?.id {
-                                InsertionLine().offset(y: style.gap / 2 + 1)
+                            .overlay(alignment: .bottom) {
+                                if drag.marks(.end(bucket), in: context.page), task.id == tasks.last?.id {
+                                    InsertionLine().offset(y: style.gap / 2 + 1)
+                                }
                             }
-                        }
+                    }
                 }
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(BucketName.of(bucket))
-                .accessibilityIdentifier("list-\(BucketName.of(bucket).lowercased())")
                 // The room under the rows, which takes a drop at the end.
                 Spacer(minLength: 0)
             }
@@ -367,6 +371,17 @@ struct BucketList: View {
                 page: context.page, bucket: bucket, rows: tasks.map(\.id), frames: frames, drag: drag, model: model
             ))
         }
+    }
+}
+
+extension View {
+    /// A bucket's heading and its rows, as one group VoiceOver reads by the
+    /// bucket's name. The heading belongs inside: SwiftUI drops a group's
+    /// only element, so a bucket holding one task would lose its row.
+    func bucketGroup(_ bucket: Bucket) -> some View {
+        accessibilityElement(children: .contain)
+            .accessibilityLabel(BucketName.of(bucket))
+            .accessibilityIdentifier("list-\(BucketName.of(bucket).lowercased())")
     }
 }
 
@@ -457,9 +472,11 @@ struct NowPanel: View {
                     Button {
                         model.togglePause()
                     } label: {
-                        Text(longElapsed(secs: secs))
+                        // Paused is the glyph, as in the menu bar, not only a
+                        // fainter colour.
+                        Text(current.pausedAt == nil ? longElapsed(secs: secs) : "\(longElapsed(secs: secs)) \(StatusTitle.pauseGlyph)")
                             .font(.body.monospacedDigit())
-                            .foregroundStyle(current.pausedAt == nil ? .secondary : .tertiary)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
                     .help(current.pausedAt == nil ? "Pause" : "Resume")

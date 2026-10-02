@@ -27,7 +27,7 @@ struct FlashCardView: View {
             }
         }
         .padding(EdgeInsets(top: 26, leading: 44, bottom: 24, trailing: 44))
-        .background(Color(red: 6 / 255, green: 6 / 255, blue: 10 / 255, opacity: 0.85),
+        .background(Color(red: 6 / 255, green: 6 / 255, blue: 10 / 255, opacity: card.opaque ? 1 : 0.85),
                     in: RoundedRectangle(cornerRadius: 18))
         .environment(\.colorScheme, .dark)
     }

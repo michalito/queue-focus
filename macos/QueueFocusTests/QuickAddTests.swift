@@ -42,7 +42,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: dir) }
         let model = QueueModel(engine: try QueueEngine(dir: dir.path))
         for round in 1...5 {
-            let quickAdd = QuickAddController(model: model)
+            let quickAdd = QuickAddController(model: model, display: Display(defaults: UserDefaults(suiteName: "qf-quick-add-tests")!))
             quickAdd.show()
             defer { quickAdd.close() }
             let panel = try #require(NSApp.windows.last { $0.identifier == QuickAddController.identifier && $0.isVisible })

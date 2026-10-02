@@ -59,7 +59,7 @@ struct FlashTiming {
 @MainActor
 final class FlashController {
     private let screen: @MainActor () -> FlashScreen?
-    private let still: @MainActor () -> Bool
+    private let options: @MainActor () -> DisplayOptions
     private let makeSurface: @MainActor () -> FlashSurface
     private let timing: FlashTiming
     private var surface: FlashSurface?
@@ -69,12 +69,12 @@ final class FlashController {
 
     init(
         screen: @escaping @MainActor () -> FlashScreen? = FlashScreen.main,
-        still: @escaping @MainActor () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+        options: @escaping @MainActor () -> DisplayOptions = { DisplayOptions.current() },
         makeSurface: @escaping @MainActor () -> FlashSurface = { FlashPanel() },
         timing: FlashTiming = .live
     ) {
         self.screen = screen
-        self.still = still
+        self.options = options
         self.makeSurface = makeSurface
         self.timing = timing
     }
@@ -87,9 +87,12 @@ final class FlashController {
         clear()
         guard let screen = screen() else { return }
         let generation = generation
-        let plan = FlashPlan.make(event, screen: screen.frame.size, menuBar: screen.menuBar)
+        let options = options()
+        // Without transparency the card is solid.
+        let plan = FlashPlan.make(event, screen: screen.frame.size, menuBar: screen.menuBar,
+                                  opaqueCard: options.reduceTransparency)
         // With Reduce Motion on, the flash holds still at its peak, then goes.
-        let still = still()
+        let still = options.reduceMotion
         let stage = FlashStage.build(plan, card: FlashCardView.render(plan.card, scale: screen.scale),
                                      scale: screen.scale, still: still)
         let surface = makeSurface()

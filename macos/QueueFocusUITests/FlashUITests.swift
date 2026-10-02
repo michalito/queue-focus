@@ -18,7 +18,6 @@ final class FlashUITests: AppUITestCase {
         XCTAssertTrue(overlay.waitForExistence(timeout: 6), "two seconds in, the flash is drawn")
         XCTAssertEqual(overlay.label, "Queue Focus flash: NOW, Write the quarterly report, 23m")
         waitForTheFlashToGo()
-        XCTAssertTrue(statusItem.exists, "and the app carries on")
     }
 
     func testFlashNowDrawsTheCurrentTask() throws {

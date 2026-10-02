@@ -77,6 +77,7 @@ private struct Quadrant: View {
             }
         }
         .frame(maxHeight: .infinity)
+        .bucketGroup(bucket)
     }
 }
 
@@ -94,5 +95,6 @@ private struct SideQuadrant: View {
             .frame(minHeight: 72, maxHeight: 196)
             .fixedSize(horizontal: false, vertical: true)
         }
+        .bucketGroup(.side)
     }
 }

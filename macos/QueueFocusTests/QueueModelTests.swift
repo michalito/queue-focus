@@ -96,6 +96,58 @@ private final class Fixture {
         #expect(heard == [["could not save"]], "once, and not for nothing")
     }
 
+    /// The engine stamps the timer with the real clock, so this follows how
+    /// the time moves, not what it reads.
+    @Test func pausingFreezesTheClockAndSurvivesAReopen() throws {
+        let f = try Fixture()
+        f.model.add("ship", asCurrent: true)
+        // The engine stamped the task with the real time: start the test's
+        // clock there, and let the model read it, so the first reading is
+        // not cut short at zero.
+        f.clock.date = Date()
+        f.model.tick()
+        let task = { try #require(f.model.snapshot.current) }
+        let running = try #require(f.model.elapsed(of: try task()))
+        f.clock.advance(120)
+        f.model.tick()
+        #expect(try f.model.elapsed(of: try task()) == running + 120, "it runs with the clock")
+        f.model.togglePause()
+        let paused = try #require(f.model.elapsed(of: try task()))
+        f.clock.advance(600)
+        f.model.tick()
+        #expect(try f.model.elapsed(of: try task()) == paused, "and stops while paused")
+        let reopened = QueueModel(engine: try QueueEngine(dir: f.dir.path), clock: { f.clock.date })
+        let stored = try #require(reopened.snapshot.current)
+        #expect(stored.pausedAt == (try task()).pausedAt && stored.pausedAt != nil, "the pause is in the file")
+        #expect(reopened.elapsed(of: stored) == paused)
+        f.model.togglePause()
+        let resumed = try #require(f.model.elapsed(of: try task()))
+        f.clock.advance(60)
+        f.model.tick()
+        #expect(try f.model.elapsed(of: try task()) == resumed + 60, "and runs again once resumed")
+    }
+
+    @Test func everySettingSurvivesAReopen() throws {
+        let f = try Fixture()
+        var settings = f.model.settings
+        settings.intervalMin = 25
+        settings.vary.toggle()
+        settings.intensity = .strong
+        settings.color = .orange
+        settings.quietPaused.toggle()
+        settings.quietHours.toggle()
+        settings.quietFrom = TimeOfDay(hour: 8, minute: 30)
+        settings.quietTo = TimeOfDay(hour: 17, minute: 45)
+        settings.theme = .dark
+        settings.showTimer.toggle()
+        settings.defaultBucket = .later
+        f.model.setSettings(settings)
+        #expect(f.model.settings == settings)
+        // The engine writes settings on its next tick.
+        f.model.tick()
+        #expect(try QueueEngine(dir: f.dir.path).settings() == settings)
+    }
+
     @Test func blankTextAddsNothingAndSaysNothing() throws {
         let f = try Fixture()
         #expect(!f.model.add("   "))

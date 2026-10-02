@@ -1,0 +1,13 @@
+{
+  "interval_min": 25,
+  "vary": false,
+  "intensity": "strong",
+  "color": "orange",
+  "quiet_paused": false,
+  "quiet_hours": true,
+  "quiet_from": "08:30",
+  "quiet_to": "17:45",
+  "theme": "dark",
+  "show_timer": false,
+  "default_bucket": "later"
+}

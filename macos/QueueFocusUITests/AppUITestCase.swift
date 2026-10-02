@@ -1,5 +1,17 @@
 import XCTest
 
+/// What a test needs of the Mac it runs on, beyond the app. A test that
+/// depends on more than the app says so here, so a build machine knows what
+/// it can hold the app to.
+enum TestEnvironment {
+    /// The accessibility audit's findings, and the noise filtered from them,
+    /// are those of the macOS they were written on; another version words
+    /// them differently, so there they are reported rather than failed.
+    static var isAuditBaseline: Bool {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 27
+    }
+}
+
 /// The app launched on a data directory of the test's own, and what the
 /// tests need to drive it.
 @MainActor
@@ -46,7 +58,14 @@ class AppUITestCase: XCTestCase {
             let file: [String: Any] = [
                 "next_id": tasks.count + 1,
                 "tasks": tasks.enumerated().map { index, task in
-                    ["id": index + 1, "title": task.0, "bucket": task.1, "created_at": 0]
+                    // "title #w" or "title #p" seeds a tag, as the add field's
+                    // markers do.
+                    var entry: [String: Any] = ["id": index + 1, "title": task.0, "bucket": task.1, "created_at": 0]
+                    for (marker, tag) in [(" #w", "work"), (" #p", "personal")] where task.0.hasSuffix(marker) {
+                        entry["title"] = String(task.0.dropLast(marker.count))
+                        entry["tag"] = tag
+                    }
+                    return entry
                 },
             ]
             try JSONSerialization.data(withJSONObject: file).write(to: dir.appendingPathComponent("tasks.json"))

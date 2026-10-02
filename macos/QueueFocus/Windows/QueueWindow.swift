@@ -25,11 +25,17 @@ private struct QueueBands: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
-                        BucketHeader(bucket: .side, count: snapshot.side.count)
-                        BucketList(bucket: .side, tasks: snapshot.side, style: .queue, focus: focus)
+                        VStack(alignment: .leading, spacing: 6) {
+                            BucketHeader(bucket: .side, count: snapshot.side.count)
+                            BucketList(bucket: .side, tasks: snapshot.side, style: .queue, focus: focus)
+                        }
+                        .bucketGroup(.side)
                         Divider().padding(.vertical, 4)
-                        BucketHeader(bucket: .next, count: snapshot.next.count)
-                        BucketList(bucket: .next, tasks: snapshot.next, style: .queue, focus: focus)
+                        VStack(alignment: .leading, spacing: 6) {
+                            BucketHeader(bucket: .next, count: snapshot.next.count)
+                            BucketList(bucket: .next, tasks: snapshot.next, style: .queue, focus: focus)
+                        }
+                        .bucketGroup(.next)
                     }
                     .padding(12)
                 }

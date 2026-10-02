@@ -109,17 +109,18 @@ because this Mac cannot build the GTK crate.
 - [x] 4. One notification per durability or settings failure
 - [x] 5. Optional: URL scheme (add, show) and App Intents
 - [x] Review: GPT phase review green (fourth pass)
-- [ ] Review: Fable approves the Phase 7 design
+- [x] Review: Fable approves the Phase 7 design (with changes, all taken)
 
 ## Phase 7. Quality
 
-- [ ] 1. Swift unit tests against a temporary engine
-- [ ] 2. Parity tests: status title, truncation, hotkey collisions
-- [ ] 3. UI tests: popover add, complete, undo; Board drag; settings to file
-- [ ] 4. README audit and recorded differences
-- [ ] 5. Accessibility: VoiceOver labels, Reduce Motion, Increase Contrast
-- [ ] 6. Overlay on a second display and over full screen; crowded menu bar
-- [ ] Review: GPT phase review green
+- [x] 1. Swift unit tests against a temporary engine (golden files too)
+- [x] 2. Parity tests: status title, truncation, hotkey collisions
+- [x] 3. UI tests: popover add, complete, undo; Board drag; settings to file
+- [x] 4. README audit and recorded differences (table below)
+- [x] 5. Accessibility: VoiceOver labels, Reduce Motion, Increase Contrast
+- [x] 6. Overlay on a second display and over full screen; crowded menu bar
+      (by hand: see the hand checks below)
+- [x] Review: GPT phase review green (sixth pass, with the test runs)
 - [ ] Review: Fable approves the Phase 8 design
 
 ## Phase 8. Release
@@ -161,6 +162,22 @@ Deliberate differences from GNOME, so far:
 - `-notifications off` keeps the app from asking for notifications; the UI
   tests pass it, and move the global shortcuts to Control-Option-Shift
   with J, L, K and U through the launch arguments.
+- The tag chip's blue is GNOME's next blue down (#1C71D8), not its accent:
+  white on the accent is 3.8 to 1, under the 4.5 small text needs. The
+  Board's Later rows step back by a grey title, not by fading the whole row,
+  which faded the chip below 3 to 1. With Increase Contrast both tag
+  colours darken further and the Later titles are not greyed; with Differentiate Without Color the menu bar
+  names the tag's letter beside its dot; with Reduce Transparency the flash
+  card is solid. The paused timer in the windows carries the `❚❚` glyph, as
+  the menu bar's does, rather than a fainter colour alone.
+- Settings is a window of its own that scrolls, rather than a page in the
+  Queue's window; it adds the menu bar title width, the global shortcuts and
+  Launch at login.
+- The Queue and Board windows have no full-screen mode (SwiftUI gives its
+  `Window` scenes none).
+- `-displayOptions increaseContrast,reduceTransparency,…` stands in for the
+  system's accessibility display settings, for the UI tests and for
+  checking by eye; nothing changes the user's System Settings.
 - `-flashPreview <style>` (`all` for the six in turn), with
   `-flashIntensity` and `-flashPalette`, draws a flash with a sample task
   two seconds after launch, for checking a style by eye.
@@ -169,18 +186,54 @@ Known gaps, to close later:
 - ⌃⌥D is also Rectangle's default for "First Third", and two apps can hold
   one hot key without either knowing, so both act. Settings says to change
   a shortcut that does nothing.
-- The real notification, with its Undo button, needs the user to allow
-  notifications; check it by hand once (the logic is tested against a
-  stand-in Notification Center).
-- SwiftUI's accessibility folds a list's only row into the list, so that row
-  loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
-  accessibility.
-- The flash over a full-screen app, on a second display, and under Reduce
-  Transparency (an opaque card) are Phase 7 checks.
-- ⌘1 never reaches the app on the Mac these tests were written on: something
-  outside the app takes it (the same menu item on ⌘3 fires at once, and ⌘2
-  and ⌘N work). The UI tests go back to the Queue by its button; check ⌘1 by
-  hand on a clean Mac in Phase 7.
+- ⌘1 and ⌘2 are system shortcuts on the Mac these tests were written on
+  (desktop switching, most likely), so ⌘1 never reaches the app there; a
+  test reports it, and fails on a build machine if it ever happens on a
+  clean Mac. The UI tests go back to the Queue by its button.
+- The accessibility audit lets through only what is the system's, each
+  matched narrowly: a window's hosting root, the Touch Bar and its items, a
+  text field's completions window, a named slider's thumb, a window's title
+  bar (its title, and content scrolled under it), text a scroll view cuts
+  off (Settings is audited part by part as it scrolls, so each line is
+  measured whole), and text outside every window. Grey text in the app uses
+  a grey that reads at 4.5 to 1 in either appearance, where the system's
+  secondary grey does not. Every issue is printed; on another macOS than
+  27 they are reported, not failed.
+
+Hand checks, which a test cannot make here:
+- ⌘1 and ⌘2 on a Mac where the system does not hold them.
+- The real Done notification and its Undo button, once notifications are
+  allowed.
+- The flash over a full-screen app, and on a Mac with a second display (it
+  is drawn on the screen with the menu bar).
+- The status item with a crowded menu bar (macOS hides items that do not
+  fit; the title width setting is the defence).
+- A VoiceOver walk through the popover, the Queue, the Board and Settings.
+- Shortcuts and Spotlight listing Add a Task, Complete the Current Task and
+  Get the Current Task.
+
+### README, section by section
+
+| README section | On the Mac | Covered by |
+| --- | --- | --- |
+| The four buckets | The same: the shared engine. | QfCore EngineTests, QueueModelTests |
+| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, the clock with `❚❚` while paused. Right-click pauses. The popover is fixed-width, with tooltips; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, MenuBarUITests, NoticesTests, HotkeyUITests |
+| Queue view | The same three bands; its own window. | WindowUITests, AccessibilityUITests |
+| Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
+| Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
+| Quick add window | A floating panel: ⌃⌥⇧Q or ⌘N; Return adds, ⌘Return adds as current, Escape closes. | QuickAddTests, QuickAddUITests |
+| Install, update, uninstall, choose the version | Not yet: Phase 8 (a notarized app). | — |
+| Global shortcuts | ⌃⌥Q, ⌃⌥⇧Q, ⌃⌥B, ⌃⌥D, changed in Settings rather than with `queue-focus-setup`; no Accessibility permission. | HotkeyTests, HotkeyUITests |
+| The flash reminder | The same six styles, envelopes and card, on the screen with the menu bar; the top bar styles colour the menu bar; Reduce Motion holds it still for 1.5 s, as GNOME does with animations off. | FlashPlanTests, FlashStageTests, FlashControllerTests, FlashUITests |
+| Add tasks | The same markers: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, WindowUITests |
+| Keyboard | The same task keys in the Queue and the Board; ⌘1 and ⌘2 where GNOME has Ctrl+1 and Ctrl+2; ⌘, for Settings; Escape and ⌘W close a window, ⌘Q quits. Settings is a window of its own, so `q` and `b` do not lead from it to the Queue and the Board; ⌘1 and ⌘2 do. | PlacementTests, WindowUITests |
+| Mouse | The same: double-click promotes, drags and drops, tooltips only on cut titles. | WindowUITests |
+| Command line use | No command; `queuefocus://add` and `queuefocus://show` links, and Shortcuts actions (`shortcuts run` for the current task). | AppURLTests, IntentsTests, HotkeyUITests |
+| Task data | The same file, format and modes, in `~/Library/Application Support/queue-focus`; a task file that cannot be read is an alert, and the app quits. | golden files, EngineTests |
+| Settings data | The same file and keys; the Mac-only settings (title width, shortcuts) live in the app's defaults, the login item with the system. | golden files, QueueModelTests |
+| D Bus interface, Debian package | GNOME only. | — |
+| Developer commands, Source layout | Already list the Mac's make targets and directories; Phase 8 adds the release target and corrects the Xcode version. | — |
+| Common problems | "A shortcut does not work": another app may hold it, change it in Settings. | — |
 
 - `make test-extension-shell` fails in the container on `main` too: in the
   headless GNOME Shell 50 on arm64 the virtual pointer's x stays at 0, so the
@@ -516,3 +569,128 @@ opens. A stale Undo with no note to say so said nothing; it now says so on
 the popover's message line. Each has a test that fails without its fix.
 
 Fourth pass: green, no findings.
+
+### Phase 7 design, Fable
+
+Approved with changes, all taken. Spikes behind them: an out-of-process
+accessibility dump confirmed SwiftUI drops a group's only element;
+`performAccessibilityAudit` ran against SwiftUI on macOS 27 and its noise
+was catalogued; the system's symbolic hot keys can be read; SwiftUI's
+`Window` scenes have no full-screen mode.
+1. Golden task and settings files in the core, read byte for byte by the
+   core and through the Swift bindings, instead of a GTK-written fixture
+   that would only repeat the shared serializer.
+2. The default shortcuts as plain Carbon numbers, so tests never touch the
+   user's stored shortcuts; a structural test, and comparisons with the
+   system's shortcuts that fail on a build machine and report elsewhere.
+3. Each bucket's heading in the bucket's group, so a bucket with one task
+   keeps its row.
+4. The audit gates on contrast and descriptions only, with the noise named;
+   a table checks every icon-only control's label.
+5. One `DisplayOptions` seam for Reduce Motion, Increase Contrast, Reduce
+   Transparency and Differentiate Without Color, with its launch argument.
+6. Full screen and a second display are hand checks.
+7. No tests that cannot fail.
+8. No hosted test touches the user's defaults.
+9. Machine-dependent tests go through `TestEnvironment`; the test plan keeps
+   no screenshots or recordings.
+
+Found while building it:
+- XCTest kept screen recordings and screenshots of failing UI tests in the
+  result bundles, which can show anything else on the screen. The bundles
+  were deleted unopened; the committed test plan now keeps none
+  (`uiTestingScreenshotsLifetime`, `systemAttachmentLifetime` and
+  `userAttachmentLifetime` all `keepNever`), the Makefile runs every test
+  through it with `-collect-test-diagnostics never`, and the audit fails the
+  test itself rather than letting a failed audit attach pictures. A failing
+  UI test was run to prove no media is kept.
+- The task menu read "More" to VoiceOver: a SwiftUI menu takes no
+  accessibility label, only a title. It is now titled "Task menu" and drawn
+  as its symbol.
+- The add fields had no names, the sliders none for VoiceOver.
+- Settings grew taller than a laptop's screen; it now scrolls.
+
+### Phase 7, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. Settings' explanatory lines were let off the contrast audit by
+   identifier, though they say things worth reading. They, the flash
+   status and the Board's Later titles now use a grey that reads at 4.5 to
+   1 in either appearance; the exemption is gone, and Settings is audited
+   in light and dark, part by part as it scrolls. That turned up the
+   shortcut list: a key such as `l` is one stroke too thin to measure in
+   grey or alone, so each line is now one text, the key in semibold.
+2. Fading the Board's Later rows faded their tag chips below 3 to 1. Only
+   the title steps back now; the audit seeds tagged Later tasks.
+3. The audit's filters were broader than their reasons. Each now matches
+   only its system piece: the hosting root by its window's frame, the
+   completions window by name, a slider's thumb inside a named slider, the
+   title bar band, text cut off by a scroll view.
+4. The gear menu had the task menu's old problem: titled now. The label
+   table covers the popover's gear, a Side card's buttons (shown under the
+   pointer; the card also offers both as actions, since hidden buttons are
+   hidden from VoiceOver too) and the message line, now one group.
+5. The system-shortcut tests called Carbon's reader from parallel tests;
+   they run on the main actor.
+6. The pause test could fail at a second boundary; its clock starts after
+   the engine stamps the task.
+7. The display options were read before the hosted tests' early return;
+   they are read once the app is past it.
+8. Quick add now has the display options in its environment.
+9. Two rows of the README table were stale.
+
+Second pass, not green: four smaller things.
+1. The title-bar exemption covered popovers and any text in the band; it
+   now takes only a window's own title text.
+2. Text a scroll view cut off was let through with no promise it would be
+   measured: horizontally cut text is no longer let through at all, and
+   text cut off at the top or bottom of its own scroll view is set aside,
+   with the test failing unless each such line was seen whole, and so
+   measured, in some pass.
+3. The pause test could still meet a second boundary: the model reads the
+   clock it is given on a tick, so it ticks before the first reading.
+4. The light Settings audit followed the Mac's appearance; it is now light.
+
+Third pass, not green: set-aside text was matched by its words, so two
+chips reading "P" could stand in for each other. A surface audited once
+may now set nothing aside, and across Settings' passes a line is matched
+by its identifier, or by its words and where they start across the line.
+
+Fourth pass: green, no findings, pending the test runs.
+
+For a while neither the unit nor the UI tests could run: an
+authentication prompt on the screen (macOS's coreautha) kept XCTest's
+runner from connecting, until the user answered it. Then the unit tests
+passed (122, one known issue), and the UI tests all but one (44 of 45):
+the light Settings audit, light at last since the second pass, found grey
+the dark run never showed.
+1. LabeledContent draws its content in the system's secondary grey, 3.9
+   to 1 here: the interval's minutes, the title width's points, the "and"
+   between the quiet hours and the keyboard lines. They take the readable
+   grey.
+2. Two wrapped notes were failed by the audit at 5.8 and 6.2 to 1, as
+   measured from a picture of the Settings window alone; a wrapped note
+   beside them, of the same grey, passed. Text the audit fails is now
+   measured from its own pixels, and let through, logged, only at 4.5 to 1
+   or more. With the readable grey made too faint (white 0.56), every grey
+   line in Settings fails, these two included.
+3. The popover's audit once failed reading its own bookkeeping: the clock
+   changed between listing a scroll view's text and reading one. Each pass
+   now reads the app from one snapshot.
+
+Fifth pass, not green: the re-measure took the commonest colour apart from
+the background as the text's, so text in two greys could pass on the
+darker one, and a dark frame in the picture could stand in for pale text.
+It now answers only for Settings' notes, which the app marks as one Text
+in one colour, and only for a picture of one colour of text on one
+background, every other pixel a blend of the two and none common enough
+to be more text; otherwise the audit's verdict stands. Pictures drawn in
+the test hold it to that: one grey measures 5.78 to 1, a faint grey under
+4.5, and two greys, or pale text in a dark frame, get no answer. Taking out
+the check for strays, or for a second grey, or the notes' mark, fails a
+test each time. What it cannot see is a few words in a grey between the
+text's and the background's, which would pass for edges: hence notes only.
+
+Sixth pass: green, no findings. With it the unit tests pass (122, one
+known issue), and so do all 45 UI tests and the four picture tests.
+

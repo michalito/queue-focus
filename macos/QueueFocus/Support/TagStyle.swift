@@ -12,6 +12,25 @@ enum TagStyle {
         }
     }
 
+    /// The colour behind white text: the chip, and controls tinted by the
+    /// tag. Not GNOME's accent: white on that blue is 3.8 to 1, under the
+    /// 4.5 small text needs, so GNOME's next blue down (4.8); darker still
+    /// with Increase Contrast. Red, green and blue out of 255.
+    static func solidRGB(_ tag: TaskTag, increaseContrast: Bool) -> (Double, Double, Double) {
+        switch (tag, increaseContrast) {
+        case (.work, false): (0x1C, 0x71, 0xD8)
+        case (.work, true): (0x1A, 0x5F, 0xB4)
+        case (.personal, false): (0xC6, 0x46, 0x00)
+        case (.personal, true): (0xA1, 0x35, 0x00)
+        }
+    }
+
+    static func solid(_ tag: TaskTag?, _ options: DisplayOptions) -> Color {
+        guard let tag else { return .accentColor }
+        let (red, green, blue) = solidRGB(tag, increaseContrast: options.increaseContrast)
+        return Color(red: red / 255, green: green / 255, blue: blue / 255)
+    }
+
     /// The dot in the menu bar: brighter, so it reads on either menu bar.
     static func dot(_ tag: TaskTag?) -> NSColor {
         switch tag {
@@ -39,6 +58,7 @@ enum TagStyle {
 
 /// A task's tag as a small coloured letter.
 struct TagChip: View {
+    @Environment(\.displayOptions) private var options
     let tag: TaskTag
 
     var body: some View {
@@ -47,7 +67,7 @@ struct TagChip: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(TagStyle.accent(tag), in: RoundedRectangle(cornerRadius: 4))
+            .background(TagStyle.solid(tag, options), in: RoundedRectangle(cornerRadius: 4))
             .accessibilityLabel(Text(TagStyle.name(tag)))
     }
 }

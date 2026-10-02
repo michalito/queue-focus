@@ -44,7 +44,7 @@ private final class Clock {
     private func controller(still: Bool = false, screen: FlashScreen?? = nil) -> (FlashController, () -> [Surface]) {
         var made: [Surface] = []
         let shown = screen ?? self.screen
-        let controller = FlashController(screen: { shown }, still: { still }, makeSurface: {
+        let controller = FlashController(screen: { shown }, options: { DisplayOptions(reduceMotion: still) }, makeSurface: {
             let surface = Surface()
             made.append(surface)
             return surface

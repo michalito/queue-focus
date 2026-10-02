@@ -45,12 +45,12 @@ private struct AppCommands: Commands {
         // In the standard View menu: a menu of their own would be a second one.
         CommandGroup(before: .toolbar) {
             Button("Queue") { openWindow(id: WindowID.queue) }
-                .keyboardShortcut("1")
+                .keyboardShortcut(KeyEquivalent(MenuKey.queue.character))
             Button("Board") { openWindow(id: WindowID.board) }
-                .keyboardShortcut("2")
+                .keyboardShortcut(KeyEquivalent(MenuKey.board.character))
             Divider()
             Button("Quick Add…") { delegate.quickAdd?.show() }
-                .keyboardShortcut("n")
+                .keyboardShortcut(KeyEquivalent(MenuKey.quickAdd.character))
             Divider()
         }
     }
@@ -67,7 +67,7 @@ private struct WithModel<Content: View>: View {
 
     var body: some View {
         if let model = delegate.model {
-            content()
+            FollowingDisplay(display: delegate.display, content: content)
                 .environment(model)
                 .environment(delegate.loginItem)
                 .environment(delegate.drag)
