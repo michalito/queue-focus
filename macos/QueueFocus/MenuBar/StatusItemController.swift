@@ -71,8 +71,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     /// A paused task's words, dimmed as GNOME dims its label: a sign of the
-    /// pause even with the clock hidden.
-    static let pausedTitleColor = NSColor.labelColor.withAlphaComponent(0.7)
+    /// pause even with the clock hidden. The menu bar's own text colour at
+    /// 70%, worked out each time it is drawn, for the appearance it is drawn
+    /// in: `withAlphaComponent` on `labelColor` would fix it at once, black
+    /// on a dark menu bar.
+    static let pausedTitleColor = NSColor(name: "pausedTitle") { appearance in
+        var label = NSColor.black
+        appearance.performAsCurrentDrawingAppearance {
+            label = NSColor.labelColor.usingColorSpace(.sRGB) ?? .black
+        }
+        return label.withAlphaComponent(label.alphaComponent * 0.7)
+    }
 
     /// Only the dot is coloured, so the button's pressed state can still
     /// invert the rest; a paused task's words are dimmed. Where colours

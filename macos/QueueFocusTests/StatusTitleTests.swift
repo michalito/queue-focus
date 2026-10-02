@@ -93,4 +93,25 @@ private func task(_ title: String, tag: TaskTag? = nil, started: UInt64? = 0, pa
             }
         }
     }
+
+    /// The dimmed colour is the menu bar's text colour in whatever appearance
+    /// it is drawn, at 70%: light text on a dark menu bar, dark on a light.
+    @Test @MainActor func thePausedColourFollowsTheMenuBarsAppearance() throws {
+        func resolved(_ colour: NSColor, in name: NSAppearance.Name) throws -> NSColor {
+            var result: NSColor?
+            try #require(NSAppearance(named: name)).performAsCurrentDrawingAppearance {
+                result = colour.usingColorSpace(.sRGB)
+            }
+            return try #require(result)
+        }
+        for name: NSAppearance.Name in [.aqua, .vibrantLight, .darkAqua, .vibrantDark] {
+            let paused = try resolved(StatusItemController.pausedTitleColor, in: name)
+            let label = try resolved(.labelColor, in: name)
+            #expect(abs(paused.redComponent - label.redComponent) < 0.01, "\(name.rawValue): the label's own shade")
+            #expect(abs(paused.alphaComponent - label.alphaComponent * 0.7) < 0.01, "\(name.rawValue): at 70%")
+        }
+        let light = try resolved(StatusItemController.pausedTitleColor, in: .aqua)
+        let dark = try resolved(StatusItemController.pausedTitleColor, in: .darkAqua)
+        #expect(light.redComponent < 0.2 && dark.redComponent > 0.8, "dark text on light, light on dark")
+    }
 }
