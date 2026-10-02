@@ -68,6 +68,9 @@ pub struct QueueEngine {
 struct State {
     engine: Engine,
     problems: Vec<String>,
+    /// The engine started again from the files, so a settings problem said
+    /// before no longer holds: the next tick says its outage is over.
+    settings_outage_over: bool,
     /// Why changes are refused: a panic may have left a change half made in
     /// memory, and the files could not be read to start again.
     damaged: Option<String>,
@@ -90,6 +93,8 @@ impl State {
             Ok(engine) => {
                 self.engine = engine;
                 self.damaged = None;
+                // Nothing of the old engine's is waiting to be written now.
+                self.settings_outage_over = true;
                 self.report(
                     "Queue Focus hit an internal error and reloaded the queue from its files. \
                      The last change may not have been kept."
@@ -181,6 +186,7 @@ impl QueueEngine {
             state: Mutex::new(State {
                 engine,
                 problems: Vec::new(),
+                settings_outage_over: false,
                 damaged: None,
             }),
             open_warning,
@@ -316,11 +322,11 @@ impl QueueEngine {
         let mut state = self.lock();
         let mut flash = None;
         let mut settings_problem = None;
-        let mut settings_outage_ended = false;
+        let mut settings_outage_ended = std::mem::take(&mut state.settings_outage_over);
         if state.damaged.is_none() {
             let tick = state.engine.tick(now, local_time, random);
             settings_problem = tick.settings_problem;
-            settings_outage_ended = tick.settings_outage_ended;
+            settings_outage_ended |= tick.settings_outage_ended;
             flash = tick.flash.map(Into::into);
         }
         Ok(TickResult {

@@ -280,7 +280,9 @@ pub struct TickResult {
     /// The settings could not be written: said once an outage, and so until
     /// `settings_outage_ended`.
     pub settings_problem: Option<String>,
-    /// A write worked after `settings_problem`: what it said is over.
+    /// What `settings_problem` said is over: a write worked, or the engine
+    /// started again from the files, so nothing waits to be written. When a
+    /// new outage begins on the same tick, `settings_problem` is its own.
     pub settings_outage_ended: bool,
 }
 

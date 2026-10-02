@@ -531,6 +531,50 @@ fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// Starting again from the files drops a settings change not yet written, and
+/// with it the outage that kept it from the file: the next tick says so,
+/// even when a new outage begins on that tick.
+#[test]
+fn a_reload_ends_a_settings_outage() {
+    let dir = temp_dir("panic-outage");
+    let engine = open(&dir);
+    engine.add("kept".into(), None).unwrap();
+    let blocker = dir.join("settings.json");
+    let change = |engine: &QueueEngine| {
+        let mut settings = engine.settings();
+        settings.vary = !settings.vary;
+        engine.set_settings(settings).unwrap();
+    };
+    fs::create_dir_all(&blocker).unwrap();
+    change(&engine);
+    assert!(engine
+        .tick(0, noon(), 0)
+        .unwrap()
+        .settings_problem
+        .is_some());
+
+    // The settings read again, and the engine starts over before its retry.
+    fs::remove_dir_all(&blocker).unwrap();
+    panic_mid_change(&engine);
+    let tick = engine.tick(1, noon(), 0).unwrap();
+    assert!(tick.settings_outage_ended, "the old outage is over");
+    assert!(tick.settings_problem.is_none());
+    assert!(
+        !engine.tick(2, noon(), 0).unwrap().settings_outage_ended,
+        "and said once"
+    );
+
+    // Started over, then blocked again before the tick: both, on one tick.
+    panic_mid_change(&engine);
+    let _ = engine.settings();
+    fs::create_dir_all(&blocker).unwrap();
+    change(&engine);
+    let tick = engine.tick(3, noon(), 0).unwrap();
+    assert!(tick.settings_outage_ended);
+    assert!(tick.settings_problem.is_some(), "the new outage is told");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 /// Settings that cannot be read at recovery would come back as the defaults
 /// and be written over the user's own, so they count as a failed recovery.
 #[test]
