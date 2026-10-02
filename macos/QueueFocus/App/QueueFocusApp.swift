@@ -67,7 +67,7 @@ private struct WithModel<Content: View>: View {
 
     var body: some View {
         if let model = delegate.model {
-            content()
+            FollowingDisplay(display: delegate.display, content: content)
                 .environment(model)
                 .environment(delegate.loginItem)
                 .environment(delegate.drag)

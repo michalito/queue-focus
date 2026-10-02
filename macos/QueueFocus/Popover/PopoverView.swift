@@ -33,6 +33,7 @@ struct PopoverView: View {
 
 private struct FocusColumn: View {
     @Environment(QueueModel.self) private var model
+    @Environment(\.displayOptions) private var options
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     let actions: PopoverActions
@@ -51,7 +52,7 @@ private struct FocusColumn: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(current.tag == nil ? .accentColor : TagStyle.accent(current.tag))
+                    .tint(TagStyle.solid(current.tag, options))
                     .accessibilityIdentifier("done-current")
 
                     let paused = current.pausedAt != nil
@@ -127,7 +128,7 @@ private struct NowCard: View {
                     // the menu bar's timer setting says.
                     Text(paused ? "\(clock) \(StatusTitle.pauseGlyph)" : clock)
                         .font(.body.monospacedDigit())
-                        .foregroundStyle(paused ? .tertiary : .secondary)
+                        .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
             } else {
@@ -260,6 +261,7 @@ private struct AddField: View {
                 return .handled
             }
             .onAppear { focused = true }
+            .accessibilityLabel("Add a task")
             .accessibilityIdentifier("add-field")
     }
 

@@ -10,14 +10,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let model: QueueModel
+    private let display: Display
     private let defaults: UserDefaults
-    private var shown: StatusTitle?
+    private var shown: (title: StatusTitle, options: DisplayOptions)?
     /// The app that was in front when the popover opened, to hand the
     /// keyboard back to when it closes.
     private var previousApp: NSRunningApplication?
 
-    init(model: QueueModel, loginItem: LoginItem, windows: AppWindows, defaults: UserDefaults, quit: @escaping () -> Void) {
+    init(model: QueueModel, loginItem: LoginItem, windows: AppWindows, display: Display, defaults: UserDefaults,
+         quit: @escaping () -> Void) {
         self.model = model
+        self.display = display
         self.defaults = defaults
         super.init()
 
@@ -35,9 +38,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             close: { [weak self] in self?.closePopover() },
             quit: quit
         )
-        let host = NSHostingController(rootView: PopoverView(actions: actions)
-            .environment(model)
-            .environment(loginItem))
+        let host = NSHostingController(rootView: FollowingDisplay(display: display) {
+            PopoverView(actions: actions)
+                .environment(model)
+                .environment(loginItem)
+        })
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.behavior = .transient
@@ -57,22 +62,27 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             maxWidth: Preferences.menuBarTitleWidth(in: defaults),
             measure: { ($0 as NSString).size(withAttributes: [.font: font]).width }
         )
-        guard title != shown, let button = item.button else { return }
-        shown = title
-        button.attributedTitle = Self.render(title, font: font)
+        let options = display.options
+        guard shown?.title != title || shown?.options != options, let button = item.button else { return }
+        shown = (title, options)
+        button.attributedTitle = Self.render(title, font: font, options: options)
         button.toolTip = title.fullTitle
         button.setAccessibilityLabel("Queue Focus: \(title.accessibilityLabel)")
     }
 
     /// Only the dot is coloured, so the button's pressed state can still
-    /// invert the rest.
-    static func render(_ title: StatusTitle, font: NSFont) -> NSAttributedString {
+    /// invert the rest. Where colours should not be the only difference, the
+    /// tag's letter follows the dot.
+    static func render(_ title: StatusTitle, font: NSFont, options: DisplayOptions) -> NSAttributedString {
         let text = NSMutableAttributedString()
         text.append(NSAttributedString(string: "● ", attributes: [
             .font: NSFont.menuBarFont(ofSize: font.pointSize * 0.7),
             .foregroundColor: TagStyle.dot(title.tag),
             .baselineOffset: 1,
         ]))
+        if options.differentiateWithoutColor, let tag = title.tag {
+            text.append(NSAttributedString(string: "\(TagStyle.letter(tag)) ", attributes: [.font: font]))
+        }
         text.append(NSAttributedString(string: title.title, attributes: [.font: font]))
         if let timer = title.timer {
             text.append(NSAttributedString(string: "  \(timer)", attributes: [

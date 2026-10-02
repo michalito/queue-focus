@@ -126,6 +126,7 @@ private struct QuickAddView: View {
                     let limit = Int(maxTitleChars())
                     if text.count > limit { draft = String(text.prefix(limit)) }
                 }
+                .accessibilityLabel("Add a task")
                 .accessibilityIdentifier("quick-add-field")
             MessageLine()
         }

@@ -17,8 +17,9 @@ struct SettingsView: View {
             // Settings open, nowhere else would.
             MessageLine()
         }
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
+        // The form scrolls: grown to fit every section, the window ran past
+        // the bottom of a laptop's screen.
+        .frame(width: 480, height: 620)
     }
 
     private var form: some View {
@@ -36,11 +37,13 @@ struct SettingsView: View {
             Section("Menu bar") {
                 Toggle(isOn: setting(\.showTimer)) {
                     Text("Show elapsed time")
-                    Text("Off keeps the title alone: ● ship v0.1")
+                    Text("Off keeps the title alone: ● ship v0.1").settingNote()
                 }
                 .accessibilityIdentifier("setting-show-timer")
                 LabeledContent("Title width") {
                     Slider(value: $titleWidth, in: Preferences.menuBarTitleWidthRange, step: 10)
+                        .accessibilityLabel("Title width")
+                        .accessibilityValue("\(Int(titleWidth)) points")
                     Text("\(Int(titleWidth)) pt")
                         .monospacedDigit()
                         .frame(width: 52, alignment: .trailing)
@@ -55,7 +58,7 @@ struct SettingsView: View {
                     Text("Later").tag(Bucket.later)
                 } label: {
                     Text("⏎ adds to")
-                    Text("⌘⏎ always goes to Now; @markers still win.")
+                    Text("⌘⏎ always goes to Now; @markers still win.").settingNote()
                 }
                 .accessibilityIdentifier("setting-default-bucket")
             }
@@ -95,6 +98,8 @@ struct SettingsView: View {
                     Text("\(intervalBounds().max)")
                 }
                 .labelsHidden()
+                .accessibilityLabel("Flash every")
+                .accessibilityValue("\(model.settings.intervalMin) minutes")
                 .accessibilityIdentifier("setting-interval")
                 Text("\(model.settings.intervalMin) min")
                     .monospacedDigit()
@@ -102,7 +107,7 @@ struct SettingsView: View {
             }
             Toggle(isOn: setting(\.vary)) {
                 Text("Vary the flash")
-                Text("Picks one of six styles at random, so you do not learn to ignore the one.")
+                Text("Picks one of six styles at random, so you do not learn to ignore the one.").settingNote()
             }
             Picker("Intensity", selection: setting(\.intensity)) {
                 Text("subtle").tag(Intensity.subtle)
@@ -120,7 +125,7 @@ struct SettingsView: View {
         } header: {
             Text("Reminder")
         } footer: {
-            Text("The screen flashes the current task and its time. Never while Now is empty.")
+            Text("The screen flashes the current task and its time. Never while Now is empty.").settingNote()
         }
     }
 
@@ -154,7 +159,7 @@ struct SettingsView: View {
         } header: {
             Text("Global shortcuts")
         } footer: {
-            Text("They work whatever app is in front. If one does nothing, another app may be using it.")
+            Text("They work whatever app is in front. If one does nothing, another app may be using it.").settingNote()
         }
     }
 
@@ -164,11 +169,11 @@ struct SettingsView: View {
         Section {
             Toggle(isOn: setting(\.quietPaused)) {
                 Text("While the timer is paused")
-                Text("A paused task is a deliberate break.")
+                Text("A paused task is a deliberate break.").settingNote()
             }
             Toggle(isOn: setting(\.quietHours)) {
                 Text("Outside hours")
-                Text("A range that ends before it starts runs past midnight; the same start and end is the whole day.")
+                Text("A range that ends before it starts runs past midnight; the same start and end is the whole day.").settingNote()
             }
             .accessibilityIdentifier("setting-quiet-hours")
             LabeledContent("Flash only between") {
@@ -187,7 +192,7 @@ struct SettingsView: View {
         } header: {
             Text("Quiet")
         } footer: {
-            Text("When the reminder holds back.")
+            Text("When the reminder holds back.").settingNote()
         }
     }
 
@@ -246,3 +251,13 @@ private struct TryIt: View {
         }
     }
 }
+
+private extension View {
+    /// A line that explains a setting, in the system's grey for such lines,
+    /// as System Settings has them; macOS darkens it with Increase Contrast.
+    /// The accessibility audit measures it under 4.5 to 1, and is told so.
+    func settingNote() -> some View {
+        accessibilityIdentifier("setting-note")
+    }
+}
+

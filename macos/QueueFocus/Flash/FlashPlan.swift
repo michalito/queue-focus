@@ -156,6 +156,8 @@ struct FlashCard: Equatable {
     /// NOW and the clock.
     let color: RGBA
     let scale: Double
+    /// No see-through background, for Reduce Transparency.
+    var opaque = false
 }
 
 /// One flash, ready to draw: its layers from the bottom up, the card last.
@@ -177,7 +179,7 @@ struct FlashPlan: Equatable {
 
     /// The flash for `event` on a screen of `size`, under a menu bar `menuBar`
     /// points tall.
-    static func make(_ event: FlashEvent, screen size: CGSize, menuBar: Double) -> FlashPlan {
+    static func make(_ event: FlashEvent, screen size: CGSize, menuBar: Double, opaqueCard: Bool = false) -> FlashPlan {
         let look = FlashLook.of(event.intensity)
         let palette = FlashPalette.of(event.palette)
         let accent = palette.accent
@@ -209,7 +211,7 @@ struct FlashPlan: Equatable {
         layers.append(FlashLayer(frame: whole, parts: [FlashPart(frame: whole, shape: .card)], envelope: .card,
                                  motion: Motion(property: .translationY, from: -cardSlide, to: 0, fraction: 0.2)))
         let card = FlashCard(title: safeTitle(event.title), timer: event.timer.isEmpty ? nil : event.timer,
-                             color: palette.text, scale: look.scale)
+                             color: palette.text, scale: look.scale, opaque: opaqueCard)
         return FlashPlan(screen: size, layers: layers, card: card)
     }
 

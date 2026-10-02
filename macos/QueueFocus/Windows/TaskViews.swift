@@ -151,15 +151,15 @@ struct TaskMenuButton: View {
     let isCurrent: Bool
 
     var body: some View {
-        Menu {
+        // Named, and drawn as its symbol alone: a menu takes its name from
+        // its title, and the symbol by itself reads "More".
+        Menu("Task menu", systemImage: "ellipsis") {
             TaskMenuItems(task: task, isCurrent: isCurrent)
-        } label: {
-            Image(systemName: "ellipsis")
         }
+        .labelStyle(.iconOnly)
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel("Task menu")
         .accessibilityIdentifier("menu-\(task.id)")
     }
 }
@@ -236,6 +236,7 @@ struct RenameField: View {
 /// One task in a list: its tag, its title, and what can be done with it.
 struct TaskRow: View {
     @Environment(QueueModel.self) private var model
+    @Environment(\.displayOptions) private var options
     @Environment(DragState.self) private var drag
     @Environment(WindowContext.self) private var context
     let task: QueueTask
@@ -282,7 +283,8 @@ struct TaskRow: View {
                     .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
             }
         }
-        .opacity(drag.fades(task.id) ? 0.35 : (style == .boardLater ? 0.7 : 1))
+        // The Board's Later rows step back, unless the user asked for contrast.
+        .opacity(drag.fades(task.id) ? 0.35 : (style == .boardLater && !options.increaseContrast ? 0.7 : 1))
         .contentShape(Rectangle())
         // While renamed, the field inside takes the keyboard instead.
         .focusable(context.renaming != task.id)
@@ -328,7 +330,7 @@ struct BucketList: View {
     var body: some View {
         if tasks.isEmpty {
             Text("empty")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, minHeight: max(minHeight, 28), alignment: style == .boardSide || style == .boardNext ? .center : .leading)
                 .padding(.horizontal, 8)
                 .contentShape(Rectangle())
@@ -465,9 +467,11 @@ struct NowPanel: View {
                     Button {
                         model.togglePause()
                     } label: {
-                        Text(longElapsed(secs: secs))
+                        // Paused is the glyph, as in the menu bar, not only a
+                        // fainter colour.
+                        Text(current.pausedAt == nil ? longElapsed(secs: secs) : "\(longElapsed(secs: secs)) \(StatusTitle.pauseGlyph)")
                             .font(.body.monospacedDigit())
-                            .foregroundStyle(current.pausedAt == nil ? .secondary : .tertiary)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
                     .help(current.pausedAt == nil ? "Pause" : "Resume")

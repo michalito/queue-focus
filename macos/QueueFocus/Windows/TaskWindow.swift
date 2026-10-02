@@ -5,6 +5,7 @@ import SwiftUI
 /// and the current task's colour.
 struct TaskWindow<Content: View>: View {
     @Environment(QueueModel.self) private var model
+    @Environment(\.displayOptions) private var options
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var context: WindowContext
@@ -37,7 +38,7 @@ struct TaskWindow<Content: View>: View {
         }
         .environment(context)
         .background(TagStyle.accent(tag).opacity(tag == nil ? 0 : 0.04))
-        .tint(tag.map { TagStyle.accent($0) } ?? .accentColor)
+        .tint(TagStyle.solid(tag, options))
         .onKeyPress(phases: .down, action: handle)
         .onAppear { settleFocus() }
         .onChange(of: model.snapshot) { _, _ in
@@ -196,6 +197,7 @@ private struct WindowAddField: View {
                 let limit = Int(maxTitleChars())
                 if text.count > limit { draft = String(text.prefix(limit)) }
             }
+            .accessibilityLabel("Add a task")
             .accessibilityIdentifier("window-add-field")
     }
 
