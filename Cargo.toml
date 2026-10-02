@@ -8,6 +8,11 @@ edition = "2021"
 license = "MIT"
 authors = ["Michael Sinoplis"]
 
+[workspace.dependencies]
+# One version for the library's scaffolding and the bindings generated from
+# it: they must agree, or the Swift side refuses the library at load.
+uniffi = "0.32"
+
 [profile.release]
 opt-level = 3
 lto = "fat"
