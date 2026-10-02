@@ -36,7 +36,7 @@ final class SystemNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate
         center.requestAuthorization(options: [.alert]) { _, _ in }
     }
 
-    func post(_ note: Note) {
+    func post(_ note: Note) async -> Bool {
         let content = UNMutableNotificationContent()
         content.title = note.title
         if let body = note.body {
@@ -46,7 +46,12 @@ final class SystemNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate
             content.categoryIdentifier = Self.doneCategory
             content.userInfo = [Self.taskKey: String(task)]
         }
-        center.add(UNNotificationRequest(identifier: note.id, content: content, trigger: nil))
+        do {
+            try await center.add(UNNotificationRequest(identifier: note.id, content: content, trigger: nil))
+            return true
+        } catch {
+            return false
+        }
     }
 
     func withdraw(_ id: String) {
@@ -76,6 +81,6 @@ final class SystemNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate
 final class SilentNotifier: Notifier {
     func permission() async -> NotePermission { .denied }
     func ask() {}
-    func post(_ note: Note) {}
+    func post(_ note: Note) async -> Bool { false }
     func withdraw(_ id: String) {}
 }

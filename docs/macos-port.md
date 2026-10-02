@@ -463,3 +463,30 @@ Found while building it:
   letters; XCTest opens every link in a fresh copy of the app, so the link
   test covers a link that starts the app, and the unit tests the rest.
 
+### Phase 6, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. A Done note could outlive its undo: the queue could change, or a second
+   completion overtake the first, while the permission was looked up. The
+   completion's revision is taken before the wait and checked after it;
+   tests hold the answer back and change the queue, or answer two
+   completions out of order.
+2. Undo from a note that could not be saved withdrew the note first, so
+   nothing was left to try again with once the popover's eight seconds were
+   up. The note now stays, saying why, with its Undo; tests break and then
+   repair the task file.
+3. A link that could not add said nothing with notifications off; it now
+   opens the popover with the reason on its message line.
+4. A link's failure was read after the next link had cleared it; the
+   reason is taken at once, by a `LinkFollower` the tests drive.
+5. A note Notification Center would not take still counted as shown; the
+   notifier now says whether it was, and the popover opens if not.
+6. The Settings test checked one label; it now reads all four recorders'
+   keys, and refusing another action's key is a pure rule with its own
+   test.
+
+Each of 1, 2, 3 and 5 has a test that fails with its fix undone. Also: a UI
+test that followed one which quits and restarts the app sometimes clicked
+the menu bar while it was laying its items out again; tests now wait for
+the status item to stay put after launch.
+

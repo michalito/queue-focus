@@ -29,6 +29,13 @@ enum Hotkey: CaseIterable {
         }
     }
 
+    /// Another of the four that already has `shortcut`: a recorder refuses
+    /// it, since two actions on one key would both run.
+    static func holder<Shortcut: Equatable>(of shortcut: Shortcut, besides hotkey: Hotkey,
+                                            shortcuts: (Hotkey) -> Shortcut?) -> Hotkey? {
+        allCases.first { $0 != hotkey && shortcuts($0) == shortcut }
+    }
+
     /// Have `perform` told whenever one is pressed. Once, at launch.
     @MainActor
     static func install(_ perform: @escaping @MainActor (Hotkey) -> Void) {

@@ -74,7 +74,22 @@ class AppUITestCase: XCTestCase {
         self.app = app
         self.dataHome = dataHome
         XCTAssertTrue(statusItem.waitForExistence(timeout: 10), "the status item appears")
+        waitForTheMenuBarToSettle()
         XCTAssertEqual(app.windows.count, 0, "a menu bar app opens no window at launch: \(app.windows.debugDescription)")
+    }
+
+    /// The menu bar lays its items out again as an app's item comes or goes,
+    /// such as the one of the copy a test before this one quit; a click while
+    /// it does lands where the item was. Wait until it stays put.
+    func waitForTheMenuBarToSettle() {
+        var last = statusItem.frame
+        var still = 0
+        for _ in 0..<20 where still < 2 {
+            Thread.sleep(forTimeInterval: 0.25)
+            let frame = statusItem.frame
+            still = frame == last ? still + 1 : 0
+            last = frame
+        }
     }
 
     /// The saved queue, as the engine wrote it.

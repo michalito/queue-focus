@@ -35,7 +35,8 @@ protocol Notifier: AnyObject {
     /// Ask to show notifications. The answer is for next time: nothing waits
     /// on it.
     func ask()
-    func post(_ note: Note)
+    /// Post `note`; whether Notification Center took it.
+    func post(_ note: Note) async -> Bool
     func withdraw(_ id: String)
 }
 
@@ -68,11 +69,18 @@ final class Notices {
         switch model.completeCurrent() {
         case .done(let task):
             model.offerUndo(for: task)
+            let revision = model.snapshot.revision
             // An open popover offers it in its own row, as GNOME's open menu
             // does instead of a notification.
             guard !popoverIsShown() else { return }
-            if await tell(.done(task)) {
-                done = (task.id, model.snapshot.revision)
+            let allowed = await mayPost()
+            // Meanwhile the queue may have moved on, and the undo with it, or
+            // the popover may have opened and be offering it already.
+            guard model.snapshot.revision == revision, !popoverIsShown() else { return }
+            if allowed, await notifier.post(.done(task)) {
+                done = (task.id, revision)
+                // The queue may have moved on while the note was posted.
+                modelDidChange()
             } else {
                 showPopover()
             }
@@ -91,14 +99,22 @@ final class Notices {
     /// Undo, from the Done note's button. The engine decides whether it
     /// still can, whatever the popover's own offer says.
     func undo(id: UInt64) async {
-        withdrawDone()
         switch model.undo(id: id) {
         case .undone:
-            break
+            withdrawDone()
         case .stale:
-            _ = await tell(.message("Nothing to undo", "The queue changed since."))
+            withdrawDone()
+            await tell(.message("Nothing to undo", "The queue changed since."))
         case .failed(let message):
-            _ = await tell(.message("Could not undo", message))
+            // Nothing changed and the engine still has the completion, so
+            // the note offers to try again, as GNOME's menu keeps its offer.
+            let retry = Note(id: Note.doneID, title: "Could not undo", body: message, undo: id)
+            if await mayPost(), await notifier.post(retry) {
+                done = (id, model.snapshot.revision)
+                modelDidChange()
+            } else {
+                showPopover()
+            }
         }
     }
 
@@ -107,14 +123,17 @@ final class Notices {
     /// while notifications are off.
     func report(_ problems: [String]) async {
         for problem in problems {
-            _ = await tell(.message("Queue Focus", problem))
+            await tell(.message("Queue Focus", problem))
         }
     }
 
     /// A request made from outside the app failed: say so where it can be
-    /// seen. The message line has it too.
+    /// seen, in a note or, without one, on the popover's message line.
     func failed(_ title: String, _ message: String?) async {
-        _ = await tell(.message(title, message))
+        if !(await tell(.message(title, message))) {
+            model.actionError = message
+            showPopover()
+        }
     }
 
     /// The queue changed: once the Done note's undo can no longer work, the
@@ -132,12 +151,18 @@ final class Notices {
         notifier.withdraw(Note.doneID)
     }
 
-    /// Post `note` if notifications are on; whether it was. The first time,
-    /// ask, and leave the note to the fallback: the answer is for next time.
+    /// Post `note` if notifications are on; whether it was.
+    @discardableResult
     private func tell(_ note: Note) async -> Bool {
+        guard await mayPost() else { return false }
+        return await notifier.post(note)
+    }
+
+    /// Whether notes can be shown. The first time, ask, and say no: the
+    /// answer is for next time.
+    private func mayPost() async -> Bool {
         switch await notifier.permission() {
         case .allowed:
-            notifier.post(note)
             return true
         case .notAsked:
             if !asked {

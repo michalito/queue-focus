@@ -3,20 +3,44 @@ import Testing
 @testable import QueueFocus
 
 /// Notification Center, stood in for: what was posted, asked and withdrawn.
+/// With `holds`, each answer about permission waits until it is released,
+/// as the real one takes a moment.
 @MainActor
 private final class Bell: Notifier {
     var answer: NotePermission
+    var accepts = true
+    var holds = false
     var posted: [Note] = []
     var asks = 0
     var withdrawn: [String] = []
+    private var held: [CheckedContinuation<Void, Never>?] = []
 
     init(_ answer: NotePermission) {
         self.answer = answer
     }
 
-    func permission() async -> NotePermission { answer }
+    /// How many answers have been asked for and are waiting.
+    var waiting: Int { held.count }
+
+    func release(_ index: Int) {
+        held[index]?.resume()
+        held[index] = nil
+    }
+
+    func permission() async -> NotePermission {
+        if holds {
+            await withCheckedContinuation { held.append($0) }
+        }
+        return answer
+    }
+
     func ask() { asks += 1 }
-    func post(_ note: Note) { posted.append(note) }
+
+    func post(_ note: Note) async -> Bool {
+        if accepts { posted.append(note) }
+        return accepts
+    }
+
     func withdraw(_ id: String) { withdrawn.append(id) }
 }
 
@@ -51,6 +75,20 @@ private final class Setup {
         let file = dir.appendingPathComponent("tasks.json")
         try? FileManager.default.removeItem(at: file)
         try FileManager.default.createDirectory(at: file.appendingPathComponent("in-the-way"), withIntermediateDirectories: true)
+    }
+
+    func repairSaving() throws {
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("tasks.json"))
+    }
+
+    /// Run `work` until it waits on the stand-in for an answer.
+    func start(_ work: @escaping @MainActor () async -> Void) async -> Task<Void, Never> {
+        let count = bell.waiting
+        let task = Task { await work() }
+        while bell.waiting == count {
+            await Task.yield()
+        }
+        return task
     }
 
     deinit {
@@ -163,4 +201,58 @@ private final class Setup {
         await first.notices.report(["a", "b", "c"])
         #expect(first.bell.asks == 1)
     }
+
+    @Test func aChangeWhileAskingLeavesNoNoteBehind() async throws {
+        let s = try Setup(.allowed)
+        s.bell.holds = true
+        let completing = await s.start { await s.notices.completeCurrent() }
+        s.model.add("something else")
+        s.bell.release(0)
+        await completing.value
+        #expect(s.bell.posted.isEmpty, "its undo could no longer work")
+        #expect(s.popoverOpenings == 0)
+    }
+
+    @Test func completionsAnsweredOutOfOrderLeaveTheLatestNote() async throws {
+        let s = try Setup(.allowed, next: ["one", "two"])
+        s.bell.holds = true
+        let first = await s.start { await s.notices.completeCurrent() }
+        let second = await s.start { await s.notices.completeCurrent() }
+        s.bell.release(1)
+        await second.value
+        s.bell.release(0)
+        await first.value
+        #expect(s.bell.posted.map(\.body) == ["one"], "the first completion's undo had gone")
+    }
+
+    @Test func aNoteNotTakenFallsBackToThePopover() async throws {
+        let s = try Setup(.allowed)
+        s.bell.accepts = false
+        await s.notices.completeCurrent()
+        #expect(s.popoverOpenings == 1)
+    }
+
+    @Test func aFailedUndoOffersToTryAgain() async throws {
+        let s = try Setup(.allowed)
+        let task = try #require(s.model.snapshot.current)
+        await s.notices.completeCurrent()
+        try s.breakSaving()
+        await s.notices.undo(id: task.id)
+        let retry = try #require(s.bell.posted.last)
+        #expect(retry.id == Note.doneID && retry.title == "Could not undo" && retry.undo == task.id)
+        #expect(retry.body?.contains("could not save") == true)
+        #expect(s.bell.withdrawn.isEmpty, "the offer stays")
+        try s.repairSaving()
+        await s.notices.undo(id: task.id)
+        #expect(s.model.snapshot.current?.title == "ship v0.1")
+        #expect(s.bell.withdrawn == ["done"])
+    }
+
+    @Test func aFailureFromOutsideWithoutNotesShowsInThePopover() async throws {
+        let s = try Setup(.denied)
+        await s.notices.failed("Could not add the task", "empty title")
+        #expect(s.popoverOpenings == 1)
+        #expect(s.model.actionError == "empty title", "on its message line")
+    }
 }
+

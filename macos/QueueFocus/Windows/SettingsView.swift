@@ -142,11 +142,10 @@ struct SettingsView: View {
             ForEach(Hotkey.allCases, id: \.self) { hotkey in
                 KeyboardShortcuts.Recorder(hotkey.title, name: hotkey.name)
                     .shortcutValidation { shortcut in
-                        let others = Hotkey.allCases.filter { $0 != hotkey }
-                        if let other = others.first(where: { KeyboardShortcuts.getShortcut(for: $0.name) == shortcut }) {
-                            return .disallow(reason: "“\(other.title)” uses it already.")
-                        }
-                        return .allow
+                        guard let other = Hotkey.holder(of: shortcut, besides: hotkey,
+                                                        shortcuts: { KeyboardShortcuts.getShortcut(for: $0.name) })
+                        else { return .allow }
+                        return .disallow(reason: "“\(other.title)” uses it already.")
                     }
             }
             Button("Restore Defaults") {

@@ -111,19 +111,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func follow(_ link: AppURL) {
-        guard let model else { return }
-        switch link {
-        case .add(let text, let asCurrent):
-            if !model.add(text, asCurrent: asCurrent), let notices {
-                Task { await notices.failed("Could not add the task", model.actionError) }
+        guard let model, let notices else { return }
+        LinkFollower(model: model, show: { [weak self] view in
+            switch view {
+            case .queue: self?.windows.show(WindowID.queue)
+            case .board: self?.windows.show(WindowID.board)
+            case .quickAdd: self?.quickAdd?.show()
             }
-        case .show(.queue):
-            windows.show(WindowID.queue)
-        case .show(.board):
-            windows.show(WindowID.board)
-        case .show(.quickAdd):
-            quickAdd?.show()
-        }
+        }, failed: { title, reason in
+            Task { await notices.failed(title, reason) }
+        }).follow(link)
     }
 
     /// A flash drawn for a screen that has since changed goes at once.

@@ -81,3 +81,23 @@ final class Links {
     }
 }
 
+/// What a link does once the queue is open. A link that fails says why, at
+/// once: the reason is gone with the next request.
+@MainActor
+struct LinkFollower {
+    let model: QueueModel
+    let show: @MainActor (AppURL.View) -> Void
+    let failed: @MainActor (_ title: String, _ reason: String?) -> Void
+
+    func follow(_ link: AppURL) {
+        switch link {
+        case .add(let text, let asCurrent):
+            if !model.add(text, asCurrent: asCurrent) {
+                failed("Could not add the task", model.actionError)
+            }
+        case .show(let view):
+            show(view)
+        }
+    }
+}
+

@@ -71,7 +71,8 @@ final class HotkeyUITests: AppUITestCase {
         XCTAssertTrue(app.windows["Board"].waitForExistence(timeout: 10), "a link opens a view")
     }
 
-    /// Settings shows each shortcut's keys: here the test ones.
+    /// Settings shows each action with its keys: here the test ones, in the
+    /// order the actions are listed.
     func testSettingsListsTheShortcuts() throws {
         try launch()
         _ = openPopover()
@@ -79,7 +80,13 @@ final class HotkeyUITests: AppUITestCase {
         click(app.menuItems["gear-settings"])
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        XCTAssertTrue(settings.staticTexts["Complete the current task"].waitForExistence(timeout: 5))
+        for title in ["Show or hide the Queue", "Quick add", "Show the Board", "Complete the current task"] {
+            XCTAssertTrue(settings.staticTexts[title].waitForExistence(timeout: 5), title)
+        }
+        let recorders = settings.searchFields.matching(NSPredicate(format: "placeholderValue == %@", "Record Shortcut"))
+        let shown = recorders.allElementsBoundByIndex.map { $0.value as? String ?? "" }
+        let expected = Self.testShortcuts.map { "⌃⌥⇧" + $0.key.rawValue.uppercased() }
+        XCTAssertEqual(shown, expected)
         XCTAssertTrue(settings.buttons["Restore Defaults"].exists)
     }
 }

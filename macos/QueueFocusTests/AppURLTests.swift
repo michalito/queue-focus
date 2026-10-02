@@ -46,3 +46,26 @@ private func link(_ string: String) -> AppURL? {
         #expect(followed == [.add(text: "a", asCurrent: false), .show(.board)], "after that, at once")
     }
 }
+
+@MainActor
+@Suite struct LinkFollowerTests {
+    @Test func aLinkThatCannotAddSaysWhyEvenWhenAnotherFollows() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("qf-links-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = QueueModel(engine: try QueueEngine(dir: dir.path))
+        var failures: [(String, String?)] = []
+        var shown: [AppURL.View] = []
+        let follower = LinkFollower(model: model, show: { shown.append($0) }, failed: { failures.append(($0, $1)) })
+        // Markers and nothing else: no title left to add.
+        follower.follow(.add(text: "#w @later", asCurrent: false))
+        follower.follow(.add(text: "write notes", asCurrent: false))
+        follower.follow(.show(.board))
+        #expect(failures.count == 1)
+        #expect(failures.first?.0 == "Could not add the task")
+        #expect(failures.first?.1?.isEmpty == false, "with its reason, read before the next link cleared it")
+        #expect(model.snapshot.next.map(\.title) == ["write notes"])
+        #expect(shown == [.board])
+    }
+}
+
