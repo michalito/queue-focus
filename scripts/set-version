@@ -20,7 +20,6 @@ CARGO_LOCK = ROOT / "Cargo.lock"
 EXTENSION_METADATA = (
     ROOT / "extension/queue-focus@queuefocus.org/metadata.json"
 )
-WORKSPACE_PACKAGES = {"qf-core", "queue-focus"}
 MAX_EXTENSION_VERSION = 2_147_483_647
 
 SEMVER = re.compile(
@@ -173,19 +172,32 @@ PACKAGE_BLOCK = re.compile(
 LOCK_VERSION_LINE = re.compile(r'^(version\s*=\s*)"([^"]*)"(\s*)$', re.MULTILINE)
 
 
+def workspace_packages() -> set[str]:
+    """Every package in the workspace, by name. They all take its version."""
+    try:
+        members = tomllib.loads(CARGO_TOML.read_text())["workspace"]["members"]
+        return {
+            tomllib.loads((ROOT / member / "Cargo.toml").read_text())["package"]["name"]
+            for member in members
+        }
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        raise VersionError(f"could not read the workspace members: {error}") from error
+
+
 def replace_lock_versions(lock_text: str, old: str, new: str) -> str:
     try:
         lock = tomllib.loads(lock_text)
     except tomllib.TOMLDecodeError as error:
         raise VersionError(f"Cargo.lock is invalid TOML: {error}") from error
+    packages = workspace_packages()
 
     workspace_entries = {
         package["name"]: package
         for package in lock.get("package", [])
-        if package.get("name") in WORKSPACE_PACKAGES and "source" not in package
+        if package.get("name") in packages and "source" not in package
     }
-    if set(workspace_entries) != WORKSPACE_PACKAGES:
-        missing = ", ".join(sorted(WORKSPACE_PACKAGES - set(workspace_entries)))
+    if set(workspace_entries) != packages:
+        missing = ", ".join(sorted(packages - set(workspace_entries)))
         raise VersionError(f"Cargo.lock is missing workspace package entries: {missing}")
     for name, package in workspace_entries.items():
         if package.get("version") != old:
@@ -202,7 +214,7 @@ def replace_lock_versions(lock_text: str, old: str, new: str) -> str:
         except (tomllib.TOMLDecodeError, KeyError, IndexError, TypeError) as error:
             raise VersionError("could not parse a Cargo.lock package block") from error
         name = package.get("name")
-        if name not in WORKSPACE_PACKAGES or "source" in package:
+        if name not in packages or "source" in package:
             return block
         version_matches = list(LOCK_VERSION_LINE.finditer(block))
         if len(version_matches) != 1:
@@ -221,8 +233,8 @@ def replace_lock_versions(lock_text: str, old: str, new: str) -> str:
         )
 
     updated = PACKAGE_BLOCK.sub(update_block, lock_text)
-    if replaced != WORKSPACE_PACKAGES:
-        missing = ", ".join(sorted(WORKSPACE_PACKAGES - replaced))
+    if replaced != packages:
+        missing = ", ".join(sorted(packages - replaced))
         raise VersionError(f"did not update Cargo.lock entries: {missing}")
     return updated
 

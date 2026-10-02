@@ -19,6 +19,13 @@ pub struct DurabilityWarning {
     error: String,
 }
 
+impl DurabilityWarning {
+    /// The warning for `path`, whose directory could not be synced.
+    pub fn new(path: PathBuf, error: String) -> Self {
+        DurabilityWarning { path, error }
+    }
+}
+
 impl fmt::Display for DurabilityWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -130,10 +137,9 @@ impl Tasks {
         }
         let warning = match save(&self.path, &self.store) {
             Ok(()) => None,
-            Err(error) if error.is_committed() => Some(DurabilityWarning {
-                path: self.path.clone(),
-                error: error.to_string(),
-            }),
+            Err(error) if error.is_committed() => {
+                Some(DurabilityWarning::new(self.path.clone(), error.to_string()))
+            }
             Err(error) => {
                 self.store = original;
                 return Err(io::Error::new(

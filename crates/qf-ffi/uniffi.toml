@@ -1,0 +1,5 @@
+# The Swift module the macOS app imports, and the C module beneath it.
+[bindings.swift]
+module_name = "QfCore"
+ffi_module_name = "QfCoreFFI"
+ffi_module_filename = "QfCoreFFI"
