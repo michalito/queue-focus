@@ -91,6 +91,9 @@ final class Notices {
                     // The queue may have moved on while the note was posted.
                     modelDidChange()
                 } else if model.snapshot.revision == revision {
+                    // The popover's eight seconds count from now: the wait
+                    // may have used them up.
+                    model.offerUndo(for: task)
                     showPopover()
                 }
             case .empty:
@@ -118,7 +121,10 @@ final class Notices {
                 if record != nil { withdrawDone() }
             case .stale:
                 if record != nil { withdrawDone() }
-                await tell(.message("Nothing to undo", "The queue changed since."))
+                if !(await tell(.message("Nothing to undo", "The queue changed since."))) {
+                    model.actionError = "Nothing to undo: the queue changed since."
+                    showPopover()
+                }
             case .failed(let message):
                 // Nothing changed and the engine still has the completion,
                 // so it is offered again, as GNOME's menu keeps its offer;

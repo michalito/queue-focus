@@ -359,4 +359,45 @@ private final class Setup {
         await newer.value
         #expect(s.model.actionError == "the newer one")
     }
+
+    @Test func aSlowAnswerStillLeavesThePopoverItsEightSeconds() async throws {
+        let s = try Setup(.denied)
+        s.bell.holdsAnswers = true
+        let task = try #require(s.model.snapshot.current)
+        let completing = s.notices.completeCurrent()
+        await s.untilWaiting(1)
+        s.clock.date += 9
+        s.bell.release(0)
+        await completing.value
+        s.model.tick()
+        #expect(s.popoverOpenings == 1)
+        #expect(s.model.liveUndoOffer?.id == task.id, "offered from when the popover opens")
+    }
+
+    @Test func aSlowRefusedNoteStillLeavesThePopoverItsEightSeconds() async throws {
+        let s = try Setup(.allowed)
+        s.bell.holdsPosts = true
+        s.bell.accepts = false
+        let task = try #require(s.model.snapshot.current)
+        let completing = s.notices.completeCurrent()
+        await s.untilWaiting(1)
+        s.clock.date += 9
+        s.bell.release(0)
+        await completing.value
+        s.model.tick()
+        #expect(s.popoverOpenings == 1)
+        #expect(s.model.liveUndoOffer?.id == task.id)
+    }
+
+    @Test func aStaleUndoWithoutNotesSaysSoInThePopover() async throws {
+        let s = try Setup(.allowed)
+        let task = try #require(s.model.snapshot.current)
+        await s.notices.completeCurrent().value
+        s.model.add("something else")
+        s.bell.answer = .denied
+        await s.notices.undo(id: task.id).value
+        #expect(s.popoverOpenings == 1)
+        #expect(s.model.actionError == "Nothing to undo: the queue changed since.")
+    }
 }
+

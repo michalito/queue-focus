@@ -509,3 +509,9 @@ shows the reason it kept; the intent says blank text is nothing to add.
 Each has a test that fails with its fix undone; the stand-in Notification
 Center holds back permission answers and posts to make the races happen.
 
+Third pass, not green: two fallbacks still fell short. A completion whose
+permission answer, or refused note, took longer than eight seconds opened
+the popover after its offer had run out; it is renewed as the popover
+opens. A stale Undo with no note to say so said nothing; it now says so on
+the popover's message line. Each has a test that fails without its fix.
+
