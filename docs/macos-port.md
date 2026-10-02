@@ -14,7 +14,9 @@ because this Mac cannot build the GTK crate.
 ## Phase 0. Decisions
 
 - [x] Minimum macOS 14
-- [x] Developer ID distribution with notarization, no App Sandbox
+- [x] Developer ID distribution with notarization, no App Sandbox. Until
+      there is a Developer ID, releases are signed ad hoc and not notarized
+      (the user's call, 2 October 2026); the README says how to open one.
 - [x] Universal binary (arm64 and x86_64)
 - [x] Hotkeys: Control Option Q queue, Control Option Shift Q quick add,
       Control Option B board, Control Option D complete current
@@ -128,9 +130,10 @@ because this Mac cannot build the GTK crate.
 - [x] 1. `scripts/set-version` also sets the Xcode marketing version
 - [x] 2. macOS CI job (and a Linux one: there was none)
 - [x] 3. `scripts/release-mac.sh`: archive, sign, notarize, staple, DMG
-      (dry run checked here; the real run needs the Developer ID)
-- [ ] 4. GitHub Release — the user's to make, with the certificate and
-      after the hand checks; Homebrew cask and Sparkle later
+      (dry run checked here; the real run needs the Developer ID), and an
+      unsigned release (`--unsigned`) until there is one
+- [ ] 4. GitHub Release of 0.6.0, unsigned, after the hand checks; Homebrew
+      cask and Sparkle later
 - [x] 5. README macOS section and Source layout
 - [x] Review: GPT phase review green (second pass)
 
@@ -224,7 +227,7 @@ Hand checks, which a test cannot make here:
 | Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
 | Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
 | Quick add window | A floating panel: ⌃⌥⇧Q or ⌘N; Return adds, ⌘Return adds as current, Escape closes. | QuickAddTests, QuickAddUITests |
-| Install, update, uninstall, choose the version | A signed, notarized disk image from the GitHub release, checked with its checksum; updated by replacing the app; no installer, so no version to choose beyond the release downloaded. Uninstalling turns off Launch at Login and deletes the app, and optionally the data and the defaults domain. | `release-mac.sh` checks, the release dry run, hand checks |
+| Install, update, uninstall, choose the version | A disk image from the GitHub release, checked with its checksum; signed ad hoc and not notarized until there is a Developer ID, so its first launch is allowed in System Settings (macOS 15) or with Control-click Open (macOS 14); updated by replacing the app; no installer, so no version to choose beyond the release downloaded. Uninstalling turns off Launch at Login and deletes the app, and optionally the data and the defaults domain. | `release-mac.sh` checks, the release dry run, hand checks |
 | Global shortcuts | ⌃⌥Q, ⌃⌥⇧Q, ⌃⌥B, ⌃⌥D, changed in Settings rather than with `queue-focus-setup`; no Accessibility permission. | HotkeyTests, HotkeyUITests |
 | The flash reminder | The same six styles, envelopes and card, on the screen with the menu bar; the top bar styles colour the menu bar; Reduce Motion holds it still for 1.5 s, as GNOME does with animations off. | FlashPlanTests, FlashStageTests, FlashControllerTests, FlashUITests |
 | Add tasks | The same markers: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, WindowUITests |

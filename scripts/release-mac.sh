@@ -3,8 +3,9 @@
 # ID, notarized and stapled, in a signed, notarized, stapled DMG, with its
 # checksum and debug symbols, in dist/. It publishes nothing.
 #
-#   scripts/release-mac.sh            # needs DEVELOPER_TEAM and notary credentials
-#   scripts/release-mac.sh --dry-run  # signs ad hoc; no notarization
+#   scripts/release-mac.sh             # needs DEVELOPER_TEAM and notary credentials
+#   scripts/release-mac.sh --unsigned  # a release signed ad hoc; no notarization
+#   scripts/release-mac.sh --dry-run   # the same, from any tree, not for publishing
 #
 # DEVELOPER_TEAM is the ten-character team id of the "Developer ID
 # Application" certificate in the login keychain. Notarization uses
@@ -12,9 +13,11 @@
 # Store Connect API key: NOTARY_KEY (path to the .p8), NOTARY_KEY_ID and
 # NOTARY_ISSUER. Nothing secret is passed on a command line or printed.
 #
-# The dry run takes the same path with an ad hoc signature, so it checks the
-# archive, the binary, the DMG and the checks themselves without the
-# certificate; Gatekeeper rejects what it makes, and it says so.
+# Without Developer ID the app takes the same path with an ad hoc signature,
+# so the archive, the binary, the DMG and the checks themselves are all
+# exercised; Gatekeeper rejects what it makes, and it checks that it does.
+# An unsigned release is made, like a signed one, from a clean tree at its
+# tag; macOS blocks its first launch until it is allowed (see the README).
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,11 +25,13 @@ readonly DIST="$ROOT/dist"
 readonly APP_NAME="Queue Focus"
 readonly PROJECT="$ROOT/macos/QueueFocus.xcodeproj"
 
+developer_id=true
 dry_run=false
 case "${1:-}" in
   "") ;;
-  --dry-run) dry_run=true ;;
-  *) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
+  --unsigned) developer_id=false ;;
+  --dry-run) developer_id=false dry_run=true ;;
+  *) echo "usage: $0 [--unsigned | --dry-run]" >&2; exit 2 ;;
 esac
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -53,7 +58,7 @@ check_tree() {
 
 # The one Developer ID Application identity of the team, by its hash.
 signing_identity() {
-  if $dry_run; then
+  if ! $developer_id; then
     echo "-"
     return
   fi
@@ -113,7 +118,7 @@ say "Building the engine for Apple silicon and Intel"
 
 say "Archiving $APP_NAME $app_version"
 sign_settings=(CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=$identity")
-$dry_run || sign_settings+=("DEVELOPMENT_TEAM=$DEVELOPER_TEAM" "OTHER_CODE_SIGN_FLAGS=--timestamp")
+! $developer_id || sign_settings+=("DEVELOPMENT_TEAM=$DEVELOPER_TEAM" "OTHER_CODE_SIGN_FLAGS=--timestamp")
 # Always an archive: a plain Release build adds the debugger's entitlement,
 # which notarization refuses.
 xcodebuild archive -project "$PROJECT" -scheme QueueFocus -configuration Release \
@@ -129,7 +134,7 @@ say "Checking the app"
 codesign --verify --deep --strict "$app"
 details=$(codesign -d --verbose=2 "$app" 2>&1)
 grep -q "flags=.*runtime" <<<"$details" || fail "the app is not signed for the hardened runtime"
-if ! $dry_run; then
+if $developer_id; then
   grep -q "^Timestamp=" <<<"$details" || fail "the signature has no secure timestamp"
   grep -qx "TeamIdentifier=$DEVELOPER_TEAM" <<<"$details" || fail "the signature is not team $DEVELOPER_TEAM's"
 fi
@@ -145,7 +150,7 @@ plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$app/Contents/Info.plist"; }
 [ "$(plist CFBundleShortVersionString)" = "$app_version" ] || fail "the app's version is not $app_version"
 [ "$(plist LSMinimumSystemVersion)" = "14.0" ] || fail "the app's minimum macOS is not 14.0"
 
-if ! $dry_run; then
+if $developer_id; then
   say "Notarizing the app"
   ditto -c -k --keepParent "$app" "$DIST/$name.zip"
   notarize "$DIST/$name.zip"
@@ -158,9 +163,9 @@ ln -s /Applications "$DIST/stage/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$DIST/stage" -fs HFS+ -format UDZO -ov \
   "$DIST/$name.dmg" -quiet
 dmg_signing=(--sign "$identity")
-$dry_run || dmg_signing+=(--timestamp)
+! $developer_id || dmg_signing+=(--timestamp)
 codesign "${dmg_signing[@]}" "$DIST/$name.dmg"
-if ! $dry_run; then
+if $developer_id; then
   say "Notarizing the disk image"
   notarize "$DIST/$name.dmg"
   staple "$DIST/$name.dmg"
@@ -178,7 +183,7 @@ notarized() {
 }
 
 say "Asking Gatekeeper"
-if $dry_run; then
+if ! $developer_id; then
   # An ad hoc signature is not Developer ID: Gatekeeper must say no.
   assess --type execute "$app"
   [ "$assessed" = 3 ] || fail "Gatekeeper did not reject the ad hoc app (spctl exited $assessed): $assessment"
@@ -197,11 +202,21 @@ say "Writing the checksum, the debug symbols and the build record"
   echo "version: $app_version (build $(plist CFBundleVersion))"
   echo "commit: $(git -C "$ROOT" rev-parse HEAD)"
   echo "xcode: $(plist DTXcode) ($(plist DTXcodeBuild)), sdk: $(plist DTSDKName)"
-  echo "signed: $($dry_run && echo "ad hoc (dry run)" || echo "Developer ID, team $DEVELOPER_TEAM, notarized")"
+  if $developer_id; then
+    echo "signed: Developer ID, team $DEVELOPER_TEAM, notarized"
+  elif $dry_run; then
+    echo "signed: ad hoc, not notarized (dry run)"
+  else
+    echo "signed: ad hoc, not notarized"
+  fi
   cat "$DIST/$name.dmg.sha256"
 } >"$DIST/$name.build-info.txt"
 rm -rf "$DIST/stage"
 
 say "Done"
 ls -1 "$DIST" | sed 's/^/  dist\//'
-if $dry_run; then echo "dry run: nothing here is for publishing"; fi
+if $dry_run; then
+  echo "dry run: nothing here is for publishing"
+elif ! $developer_id; then
+  echo "unsigned: macOS blocks the app's first launch until it is allowed; say so with the release"
+fi

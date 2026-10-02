@@ -234,9 +234,14 @@ On a Mac, Queue Focus is an app in the menu bar. It runs on macOS 14 or newer, o
 
 3. Open the disk image and drag Queue Focus to Applications.
 
-4. Open Queue Focus from Applications. macOS asks once whether to open an app downloaded from the internet.
+4. Open Queue Focus from Applications. The first time, macOS will not open it; see below.
 
-The app is signed with a Developer ID and notarized by Apple. To check that, run `spctl -a -vv -t execute "/Applications/Queue Focus.app"`; it names `Notarized Developer ID`. If macOS says the app cannot be verified or is damaged, do not work around it: download it again and check the checksum.
+The app is not yet signed with a Developer ID or notarized by Apple, so macOS cannot vouch for it and blocks its first launch. Open it only if step 2 printed `OK`. The checksum shows that the file is the one published; it cannot show who published it. Then:
+
+- On macOS 15 or newer, after that first try, open System Settings › Privacy & Security. Under Security it says Queue Focus was blocked; click Open Anyway, and confirm.
+- On macOS 14, Control-click Queue Focus in Applications, choose Open, and click Open.
+
+macOS asks again for each new download. If it says the app is damaged, do not work around it: download it again and check the checksum.
 
 There is no automatic update yet. To update, quit Queue Focus and replace the app in Applications with the new one.
 
@@ -617,6 +622,7 @@ make mac-app
 make test-mac-app
 make test-mac-ui
 make release-mac-dry-run
+make release-mac-unsigned
 make release-mac
 make deb
 make clean
@@ -655,12 +661,12 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 `make mac-app` builds the macOS app in Debug for this Mac's architecture, into `target/xcode/Build/Products/Debug/Queue Focus.app`. `make test-mac-app` runs its unit tests, which drive the app's model against engines in temporary directories. `make test-mac-ui` runs its UI tests, which launch the app on a temporary data directory and click the real menu bar item and popover; they take over the pointer and the keyboard for a few minutes. To work in Xcode, open `macos/QueueFocus.xcodeproj` after `make mac-app` or `make mac-core` has run once: Xcode lists the generated engine files before its own build of them can run. After that, Xcode rebuilds the engine whenever the Rust changes. The tests run through `macos/QueueFocus.xctestplan`, which keeps no screenshots or screen recordings, since those would show whatever else is on the screen.
 
-`make release-mac` makes a release of the macOS app in `dist/`: a universal app signed with a Developer ID, notarized and stapled, in a signed, notarized and stapled disk image, with its checksum, its debug symbols, and a record of how it was built. It checks every step: the hardened runtime, the timestamp, the team, no entitlements, both architectures, the version, and Gatekeeper's verdict. It needs a clean tree tagged `v<version>`, the Developer ID Application certificate in the login keychain, `DEVELOPER_TEAM` set to its team id, and notary credentials: a profile saved with `xcrun notarytool store-credentials` in `NOTARY_PROFILE`, or an App Store Connect API key in `NOTARY_KEY`, `NOTARY_KEY_ID`, and `NOTARY_ISSUER`. It publishes nothing. `make release-mac-dry-run` takes the same steps with an ad hoc signature and no notarization, so it can run anywhere; Gatekeeper rejects what it makes, and it checks that it does.
+`make release-mac` makes a release of the macOS app in `dist/`: a universal app signed with a Developer ID, notarized and stapled, in a signed, notarized and stapled disk image, with its checksum, its debug symbols, and a record of how it was built. It checks every step: the hardened runtime, the timestamp, the team, no entitlements, both architectures, the version, and Gatekeeper's verdict. It needs a clean tree tagged `v<version>`, the Developer ID Application certificate in the login keychain, `DEVELOPER_TEAM` set to its team id, and notary credentials: a profile saved with `xcrun notarytool store-credentials` in `NOTARY_PROFILE`, or an App Store Connect API key in `NOTARY_KEY`, `NOTARY_KEY_ID`, and `NOTARY_ISSUER`. It publishes nothing. Without a Developer ID, `make release-mac-unsigned` takes the same steps with an ad hoc signature and no notarization, from a clean tree at its tag as well; Gatekeeper rejects what it makes, and it checks that it does, and macOS blocks the app's first launch until it is allowed, as [Install on macOS](#install-on-macos) says. `make release-mac-dry-run` does the same from any tree, so it can run anywhere, and its files are not for publishing.
 
 A release goes:
 
 1. `make version`, then commit and tag `v<version>`. The tag carries the whole version; the files in `dist/` are named by the version without any `+` build metadata, the one Finder shows.
-2. `DEVELOPER_TEAM=<team id> NOTARY_PROFILE=<profile> make release-mac`.
+2. `DEVELOPER_TEAM=<team id> NOTARY_PROFILE=<profile> make release-mac`, or, without a Developer ID, `make release-mac-unsigned`. An unsigned release says in its notes how to open the app.
 3. The checks a machine cannot make: open the disk image on another Mac or account and start the app from Applications; start it once on an Intel Mac or under Rosetta; try the four shortcuts, a notification and its Undo, Launch at Login, and the Shortcuts actions; see that Get Info shows the version.
 4. Push the commit and the tag, then `gh release create v<version> --verify-tag dist/QueueFocus-<app version>.dmg dist/QueueFocus-<app version>.dmg.sha256 dist/QueueFocus-<app version>.dSYM.zip`, with the names `ls dist` shows. `--verify-tag` stops `gh` from making its own tag on another commit when the tag is not on GitHub.
 
