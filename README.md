@@ -6,7 +6,7 @@ A task has a title, a bucket, and an optional `work` or `personal` tag. There ar
 
 Every so often the screen flashes the current task across the desktop. The reminder is described under [The flash reminder](#the-flash-reminder) and is configured in the Settings view.
 
-Queue Focus supports GNOME Shell 48, 49, and 50.
+Queue Focus supports GNOME Shell 48, 49, and 50. It also runs on macOS 14 or newer as an app in the menu bar, with the same tasks in the same files; see [macOS](#macos).
 
 ## The four buckets
 
@@ -217,6 +217,88 @@ Check the installed binary version with:
 ```sh
 queue-focus version
 ```
+
+## macOS
+
+On a Mac, Queue Focus is an app in the menu bar. It runs on macOS 14 or newer, on Apple silicon and Intel alike, and keeps its tasks and settings in the same files, in the same format, as on GNOME: the two share one engine.
+
+### Install on macOS
+
+1. Download `QueueFocus-<version>.dmg` and `QueueFocus-<version>.dmg.sha256` from the GitHub release.
+
+2. Check the download:
+
+   ```sh
+   shasum -a 256 -c QueueFocus-<version>.dmg.sha256
+   ```
+
+3. Open the disk image and drag Queue Focus to Applications.
+
+4. Open Queue Focus from Applications. macOS asks once whether to open an app downloaded from the internet.
+
+The app is signed with a Developer ID and notarized by Apple. To check that, run `spctl -a -vv -t execute "/Applications/Queue Focus.app"`; it names `Notarized Developer ID`. If macOS says the app cannot be verified or is damaged, do not work around it: download it again and check the checksum.
+
+There is no automatic update yet. To update, quit Queue Focus and replace the app in Applications with the new one.
+
+### First run on macOS
+
+Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. The gear in the menu opens Settings, turns on Launch at Login, and quits.
+
+macOS may ask you to allow Launch at Login in System Settings › General › Login Items. Queue Focus asks to show notifications the first time it has one to show; without them, the menu opens instead. It needs no Accessibility permission.
+
+### Shortcuts and automation on macOS
+
+Four shortcuts work whatever app is in front:
+
+1. `Control+Option+Q` shows or hides the Queue window.
+2. `Control+Option+Shift+Q` opens quick add.
+3. `Control+Option+B` opens the Board window.
+4. `Control+Option+D` completes the current task. A notification offers to undo it.
+
+Change them in Settings, under Global shortcuts. If a shortcut does nothing, another app may hold it: Rectangle, for one, uses `Control+Option+D`.
+
+In the Queue and Board windows the task keys are those of the GNOME app. `Command+1` and `Command+2` open the Queue and the Board, `Command+N` opens quick add, `Command+,` opens Settings, `Escape` and `Command+W` close a window, and `Command+Q` quits.
+
+There is no command line command. Links do what `queue-focus add` and `queue-focus show` do:
+
+```sh
+open "queuefocus://add?text=fix%20login%20%23w"
+open "queuefocus://add?text=ship%200.6&now=1"
+open "queuefocus://show?view=board"
+```
+
+`view` is `queue`, `board`, or `add`. No link completes a task, since any web page can open a link. The Shortcuts app has Add a Task, Complete the Current Task, and Get the Current Task; `shortcuts run "Get the Current Task"` prints the current task in a terminal.
+
+### Data on macOS
+
+Tasks and settings are stored at:
+
+```text
+~/Library/Application Support/queue-focus/tasks.json
+~/Library/Application Support/queue-focus/settings.json
+```
+
+They are the files described under [Task data](#task-data) and [Settings data](#settings-data). The settings only a Mac has, the menu bar title width and the global shortcuts, are kept in the defaults domain `org.queuefocus.QueueFocus`.
+
+To move your tasks between a Mac and a Linux machine, quit Queue Focus on both and copy the two files. Do not point two running copies at one synced folder: each writes whole files, so the last one to save wins.
+
+### Differences from GNOME
+
+1. The menu bar shows the title cut to a width you choose in Settings, since macOS hides menu bar items that do not fit. A right click pauses the timer.
+2. The menu is a fixed width; titles cut short show the whole title in a tooltip.
+3. The Queue, the Board, and Settings are separate windows, not views of one.
+4. The flash is drawn on the screen with the menu bar. With Reduce Motion it holds still for a second and a half.
+5. The display follows Increase Contrast, Reduce Transparency, and Differentiate Without Color.
+6. Completing from the shortcut shows a notification with Undo, or the menu when notifications are off.
+
+`docs/macos-port.md` lists every difference, section by section.
+
+### Uninstall on macOS
+
+1. Turn off Launch at Login in the menu's gear.
+2. Quit Queue Focus from the same gear.
+3. Delete Queue Focus from Applications.
+4. To remove your tasks and settings too, delete `~/Library/Application Support/queue-focus` and run `defaults delete org.queuefocus.QueueFocus`.
 
 ## Global shortcuts
 
@@ -534,6 +616,8 @@ make test-mac-core
 make mac-app
 make test-mac-app
 make test-mac-ui
+make release-mac-dry-run
+make release-mac
 make deb
 make clean
 ```
@@ -567,9 +651,20 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 `make test-core` runs the tests of the engine and of `qf-ffi`, the layer the macOS app reaches it through. `make check-core` checks formatting and runs Clippy with warnings denied for those crates. Both work on Linux and on macOS, where the GTK app cannot be built.
 
-`make mac-core` builds the engine for the macOS app, on macOS: a universal static library for Apple silicon and Intel wrapped in an XCFramework, and the `QfCore` Swift module generated from that library, both inside the `macos/QfCore` Swift package. Neither is checked in, so run it again after a change to the Rust code. `make test-mac-core` builds them and runs the package's Swift tests, which drive the engine through the generated bindings. Both need Rust installed with rustup, and Xcode 16 or newer.
+`make mac-core` builds the engine for the macOS app, on macOS: a universal static library for Apple silicon and Intel wrapped in an XCFramework, and the `QfCore` Swift module generated from that library, both inside the `macos/QfCore` Swift package. Neither is checked in, so run it again after a change to the Rust code. `make test-mac-core` builds them and runs the package's Swift tests, which drive the engine through the generated bindings. Both need Rust installed with rustup, with the `aarch64-apple-darwin` and `x86_64-apple-darwin` targets, and Xcode 26 or newer.
 
-`make mac-app` builds the macOS app in Debug for this Mac's architecture, into `target/xcode/Build/Products/Debug/Queue Focus.app`. `make test-mac-app` runs its unit tests, which drive the app's model against engines in temporary directories. `make test-mac-ui` runs its UI tests, which launch the app on a temporary data directory and click the real menu bar item and popover; they take over the pointer and the keyboard for a few minutes. To work in Xcode, open `macos/QueueFocus.xcodeproj` after `make mac-app` or `make mac-core` has run once: Xcode lists the generated engine files before its own build of them can run. After that, Xcode rebuilds the engine whenever the Rust changes.
+`make mac-app` builds the macOS app in Debug for this Mac's architecture, into `target/xcode/Build/Products/Debug/Queue Focus.app`. `make test-mac-app` runs its unit tests, which drive the app's model against engines in temporary directories. `make test-mac-ui` runs its UI tests, which launch the app on a temporary data directory and click the real menu bar item and popover; they take over the pointer and the keyboard for a few minutes. To work in Xcode, open `macos/QueueFocus.xcodeproj` after `make mac-app` or `make mac-core` has run once: Xcode lists the generated engine files before its own build of them can run. After that, Xcode rebuilds the engine whenever the Rust changes. The tests run through `macos/QueueFocus.xctestplan`, which keeps no screenshots or screen recordings, since those would show whatever else is on the screen.
+
+`make release-mac` makes a release of the macOS app in `dist/`: a universal app signed with a Developer ID, notarized and stapled, in a signed, notarized and stapled disk image, with its checksum, its debug symbols, and a record of how it was built. It checks every step: the hardened runtime, the timestamp, the team, no entitlements, both architectures, the version, and Gatekeeper's verdict. It needs a clean tree tagged `v<version>`, the Developer ID Application certificate in the login keychain, `DEVELOPER_TEAM` set to its team id, and notary credentials: a profile saved with `xcrun notarytool store-credentials` in `NOTARY_PROFILE`, or an App Store Connect API key in `NOTARY_KEY`, `NOTARY_KEY_ID`, and `NOTARY_ISSUER`. It publishes nothing. `make release-mac-dry-run` takes the same steps with an ad hoc signature and no notarization, so it can run anywhere; Gatekeeper rejects what it makes, and it checks that it does.
+
+A release goes:
+
+1. `make version`, then commit and tag `v<version>`.
+2. `DEVELOPER_TEAM=<team id> NOTARY_PROFILE=<profile> make release-mac`.
+3. The checks a machine cannot make: open the disk image on another Mac or account and start the app from Applications; start it once on an Intel Mac or under Rosetta; try the four shortcuts, a notification and its Undo, Launch at Login, and the Shortcuts actions; see that Get Info shows the version.
+4. `gh release create v<version> dist/QueueFocus-<version>.dmg dist/QueueFocus-<version>.dmg.sha256 dist/QueueFocus-<version>.dSYM.zip`.
+
+The GitHub workflows run the engine, versioning, and extension tests on Linux, and the engine, Swift, and app tests on Apple silicon and on Intel, with a release dry run. The macOS UI tests run when the workflow is started by hand.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
@@ -591,6 +686,7 @@ macos/QfCore
 macos/QueueFocus
 macos/QueueFocusTests
 macos/QueueFocusUITests
+macos/QueueFocus.xctestplan
 extension/queue-focus@queuefocus.org
 extension/test
 data
@@ -618,7 +714,9 @@ Makefile
 
 `data` contains the desktop entry, system D Bus service file, and icons.
 
-`scripts` contains the Cargo wrapper, local installer, setup helper, version command, macOS core build, and integration tests.
+`scripts` contains the Cargo wrapper, local installer, setup helper, version command, macOS core build, macOS release, and integration tests.
+
+`.github/workflows` holds the Linux and macOS workflows.
 
 `Makefile` provides the supported build, test, version, install, and package commands.
 
