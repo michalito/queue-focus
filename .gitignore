@@ -17,3 +17,5 @@
 /macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
 !/macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 /macos/QueueFocus.xcodeproj/xcuserdata/
+# What scripts/release-mac.sh makes.
+/dist
