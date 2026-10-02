@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Foundation
 import Testing
 @testable import QueueFocus
@@ -34,9 +35,17 @@ import Testing
         return condition()
     }
 
+    /// Whether a window can take the keyboard at all: on a locked screen
+    /// none becomes key, and the panel's field could not either.
+    nonisolated static var screenIsUnlocked: Bool {
+        let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+        return session?["CGSSessionScreenIsLocked"] as? Bool != true
+    }
+
     /// Five times over, each on a new panel, as the first time it opens is
     /// when SwiftUI builds the field.
-    @Test func typingAndReturnAddsTheTaskAndClosesThePanel() async throws {
+    @Test(.enabled(if: screenIsUnlocked, "the screen is locked, so no window can take the keyboard"))
+    func typingAndReturnAddsTheTaskAndClosesThePanel() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("qf-quick-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
