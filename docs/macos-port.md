@@ -120,8 +120,9 @@ because this Mac cannot build the GTK crate.
 - [x] 3. UI tests: popover add, complete, undo; Board drag; settings to file
 - [x] 4. README audit and recorded differences (table below)
 - [x] 5. Accessibility: VoiceOver labels, Reduce Motion, Increase Contrast
-- [x] 6. Overlay on a second display and over full screen; crowded menu bar
-      (by hand: see the hand checks below)
+- [ ] 6. Overlay on a second display and over full screen; crowded menu bar:
+      hand checks (below), not yet made. A hidden status item still lends
+      SwiftUI's window actions to the shortcuts (AppWindowsTests)
 - [x] Review: GPT phase review green (sixth pass, with the test runs)
 - [x] Review: Fable approves the Phase 8 design (with changes, all taken)
 
@@ -238,7 +239,7 @@ Hand checks, which a test cannot make here:
 | Settings data | The same file and keys; the Mac-only settings (title width, shortcuts) live in the app's defaults, the login item with the system. | golden files, QueueModelTests |
 | D Bus interface, Debian package | GNOME only. | — |
 | Developer commands, Source layout | Already list the Mac's make targets and directories; Phase 8 adds the release target and corrects the Xcode version. | — |
-| Common problems | "A shortcut does not work": another app may hold it, change it in Settings. | — |
+| Common problems | "A shortcut does not work" says what to do on a Mac: another app may hold it, so choose another in Settings; a system shortcut takes ⌘1 and ⌘2 first. | HotkeyTests (the defaults are not the system's) |
 
 - `make test-extension-shell` fails in the container on `main` too: in the
   headless GNOME Shell 50 on arm64 the virtual pointer's x stays at 0, so the
@@ -772,3 +773,45 @@ CI's first macOS run, on the stacked PRs, failed on both runners: Xcode
 which passed the method `loginItem.set` as Binding's `@isolated(any)
 @Sendable` setter. A closure gives the setter its type; the next run passed
 on Apple silicon and Intel, and on Linux. Swift 6.4, here, had compiled it.
+
+### Cross-phase review (the user's, after the stack went up)
+
+A review of the whole stack, with the GNOME suites run in the Linux harness
+and the core, bindings and app tests run here. Each finding, checked:
+1. Xcode 26.6 could not compile the app. Already fixed (Phase 8, above);
+   CI was green on the tagged commit before this review was answered.
+2. Phase 7's item 6 was ticked for hand checks not yet made: unticked. Its
+   worry, that with the status item hidden the view lending SwiftUI's
+   window actions might never appear, did not hold: a probe put the view in
+   a hidden status item, a window never shown, and no window at all, and it
+   appeared in each. `AppWindowsTests` keeps the hidden item's case, and
+   `AppWindows` logs a fault if a window is asked for before the actions
+   are lent. The crowded menu bar stays a hand check.
+3. No CI built the GTK app. The Linux job now runs `make check`, `make
+   test`, `make test-ui` and `make test-service` in an Ubuntu 26.04
+   container, as a user of its own, since the tests make files unwritable.
+4. The quick add test failed on a locked screen, where no window can take
+   the keyboard; it now skips there and says why.
+5. A click on the status item while the popover is open might close and
+   reopen it. A UI test now clicks it twice; it could not run yet, the
+   screen being locked.
+6. A settings write that failed stayed on the message line after a later
+   one worked. The engine's tick now says when an outage ends; the
+   bindings carry the settings problem apart from the one-off ones, and
+   the model drops it then. Tested at each layer, and each fails without
+   the change.
+7. With the clock hidden, a pause did not show in the menu bar. A paused
+   task's words are dimmed, as GNOME dims its label, clock or no clock.
+8. An unknown link was logged whole and public; any web page can send one.
+   It is logged as a hash.
+9. `readonly INPUTS=$(inputs)` hid a failure, and so did `inputs` itself,
+   since `set -e` does not reach into a command substitution (and macOS's
+   bash 3.2 cannot be told to). With `shasum` made to fail, the old script
+   exited 0 and stamped an empty hash; now each step is checked and it
+   stops.
+10. The README's "A shortcut does not work" was GNOME's alone, and the
+    D-Bus section left out `Stopping`. Both added.
+11. UniFFI's version is one workspace dependency. Left as they are, both
+    documented: recovery after a panic reloads from the files, dropping a
+    settings change not yet written; and while the files cannot be read,
+    each call tries again, which is how it recovers when they can.

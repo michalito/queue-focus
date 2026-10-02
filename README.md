@@ -589,7 +589,7 @@ The service exports these methods:
 
 14. `SetSettings(json)` takes a JSON object holding only the settings to change and returns them all. An unknown key or a value that cannot be used changes nothing and returns an error, so a rejected call never leaves half a change behind.
 
-The `Changed(json)` signal is emitted after a saved task change. The `SettingsChanged(json)` signal is emitted after a settings change, with the same JSON as `GetSettings`. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced.
+The `Changed(json)` signal is emitted after a saved task change. The `SettingsChanged(json)` signal is emitted after a settings change, with the same JSON as `GetSettings`. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced. The `Stopping` signal is emitted just before the service quits because it was asked to, so the shell extension does not take the lost bus name for a crash and start it again.
 
 The `Flash(json)` signal asks the shell extension to draw one flash. Its JSON carries `style`, `intensity`, `palette`, `title`, and `timer`. The service resolves all five, so a shell that has only just connected still draws the right thing. `style` is one of `wash`, `wash2`, `edges`, `edgesSoft`, `topbar`, and `topbarBeam`; `palette` is `blue` or `orange`.
 
@@ -670,7 +670,7 @@ A release goes:
 3. The checks a machine cannot make: open the disk image on another Mac or account and start the app from Applications; start it once on an Intel Mac or under Rosetta; try the four shortcuts, a notification and its Undo, Launch at Login, and the Shortcuts actions; see that Get Info shows the version.
 4. Push the commit and the tag, then `gh release create v<version> --verify-tag dist/QueueFocus-<app version>.dmg dist/QueueFocus-<app version>.dmg.sha256 dist/QueueFocus-<app version>.dSYM.zip`, with the names `ls dist` shows. `--verify-tag` stops `gh` from making its own tag on another commit when the tag is not on GitHub.
 
-The GitHub workflows run the engine, versioning, and extension tests on Linux, and the engine, Swift, and app tests on Apple silicon and on Intel, with a release dry run. The macOS UI tests run when the workflow is started by hand.
+The GitHub workflows run `make check`, `make test`, `make test-ui`, and `make test-service` on Linux, in an Ubuntu 26.04 container for GTK 4.16 and libadwaita 1.6, and the engine, Swift, and app tests on Apple silicon and on Intel, with a release dry run. The macOS UI tests run when the workflow is started by hand; `make test-extension-shell` needs a GNOME session, and runs by hand.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
@@ -772,6 +772,8 @@ queue-focus-setup keys
 ```
 
 Set a different key with `queue-focus-setup key`.
+
+On a Mac, another app may hold the shortcut: Rectangle, for one, uses `Control+Option+D`. Choose another in Queue Focus's Settings, under Global shortcuts. `Command+1` and `Command+2` in the Queue and Board windows are taken first by any system shortcut set to them in System Settings › Keyboard › Keyboard Shortcuts.
 
 ### The service refuses to start
 
