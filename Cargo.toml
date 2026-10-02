@@ -3,10 +3,15 @@ resolver = "2"
 members = ["crates/qf-core", "crates/qf-ffi", "crates/queue-focus", "crates/uniffi-bindgen"]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 authors = ["Michael Sinoplis"]
+
+[workspace.dependencies]
+# One version for the library's scaffolding and the bindings generated from
+# it: they must agree, or the Swift side refuses the library at load.
+uniffi = "0.32"
 
 [profile.release]
 opt-level = 3

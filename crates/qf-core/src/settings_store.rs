@@ -91,6 +91,12 @@ impl SettingsStore {
         self.flush()
     }
 
+    /// Whether a failure to write was reported and no write has worked since:
+    /// an outage the user has been told of.
+    pub fn in_outage(&self) -> bool {
+        self.reported
+    }
+
     /// Write if the file is behind. Called on the writer's tick, and once more
     /// before the process exits, which is why it never sits out a turn.
     /// Returns a problem to report, only the first time in an outage: a

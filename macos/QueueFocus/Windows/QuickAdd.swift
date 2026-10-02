@@ -30,8 +30,9 @@ final class QuickAddController: NSObject, NSWindowDelegate {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(button)?.isHidden = true
         }
+        let close: () -> Void = { [weak self] in self?.close() }
         let content = FollowingDisplay(display: display) {
-            QuickAddView(close: { [weak self] in self?.close() }).environment(model)
+            QuickAddView(close: close).environment(model)
         }
         let host = NSHostingController(rootView: content)
         host.sizingOptions = [.preferredContentSize]

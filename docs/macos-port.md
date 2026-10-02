@@ -14,7 +14,9 @@ because this Mac cannot build the GTK crate.
 ## Phase 0. Decisions
 
 - [x] Minimum macOS 14
-- [x] Developer ID distribution with notarization, no App Sandbox
+- [x] Developer ID distribution with notarization, no App Sandbox. Until
+      there is a Developer ID, releases are signed ad hoc and not notarized
+      (the user's call, 2 October 2026); the README says how to open one.
 - [x] Universal binary (arm64 and x86_64)
 - [x] Hotkeys: Control Option Q queue, Control Option Shift Q quick add,
       Control Option B board, Control Option D complete current
@@ -118,19 +120,23 @@ because this Mac cannot build the GTK crate.
 - [x] 3. UI tests: popover add, complete, undo; Board drag; settings to file
 - [x] 4. README audit and recorded differences (table below)
 - [x] 5. Accessibility: VoiceOver labels, Reduce Motion, Increase Contrast
-- [x] 6. Overlay on a second display and over full screen; crowded menu bar
-      (by hand: see the hand checks below)
+- [ ] 6. Overlay on a second display and over full screen; crowded menu bar:
+      hand checks (below), not yet made. A hidden status item still lends
+      SwiftUI's window actions to the shortcuts (AppWindowsTests)
 - [x] Review: GPT phase review green (sixth pass, with the test runs)
-- [ ] Review: Fable approves the Phase 8 design
+- [x] Review: Fable approves the Phase 8 design (with changes, all taken)
 
 ## Phase 8. Release
 
-- [ ] 1. `scripts/set-version` also sets the Xcode marketing version
-- [ ] 2. macOS CI job
-- [ ] 3. `scripts/release-mac.sh`: archive, export, notarize, staple, DMG
-- [ ] 4. GitHub Release; Homebrew cask and Sparkle later
-- [ ] 5. README macOS section and Source layout
-- [ ] Review: GPT phase review green
+- [x] 1. `scripts/set-version` also sets the Xcode marketing version
+- [x] 2. macOS CI job (and a Linux one: there was none)
+- [x] 3. `scripts/release-mac.sh`: archive, sign, notarize, staple, DMG
+      (dry run checked here; the real run needs the Developer ID), and an
+      unsigned release (`--unsigned`) until there is one
+- [ ] 4. GitHub Release of 0.6.0, unsigned, after the hand checks; Homebrew
+      cask and Sparkle later
+- [x] 5. README macOS section and Source layout
+- [x] Review: GPT phase review green (third pass, with the unsigned release)
 
 ## Notes
 
@@ -222,7 +228,7 @@ Hand checks, which a test cannot make here:
 | Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
 | Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
 | Quick add window | A floating panel: ⌃⌥⇧Q or ⌘N; Return adds, ⌘Return adds as current, Escape closes. | QuickAddTests, QuickAddUITests |
-| Install, update, uninstall, choose the version | Not yet: Phase 8 (a notarized app). | — |
+| Install, update, uninstall, choose the version | A disk image from the GitHub release, checked with its checksum; signed ad hoc and not notarized until there is a Developer ID, so its first launch is allowed in System Settings (macOS 15) or with Control-click Open (macOS 14); updated by replacing the app; no installer, so no version to choose beyond the release downloaded. Uninstalling turns off Launch at Login and deletes the app, and optionally the data and the defaults domain. | `release-mac.sh` checks, the release dry run, hand checks |
 | Global shortcuts | ⌃⌥Q, ⌃⌥⇧Q, ⌃⌥B, ⌃⌥D, changed in Settings rather than with `queue-focus-setup`; no Accessibility permission. | HotkeyTests, HotkeyUITests |
 | The flash reminder | The same six styles, envelopes and card, on the screen with the menu bar; the top bar styles colour the menu bar; Reduce Motion holds it still for 1.5 s, as GNOME does with animations off. | FlashPlanTests, FlashStageTests, FlashControllerTests, FlashUITests |
 | Add tasks | The same markers: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, WindowUITests |
@@ -233,7 +239,7 @@ Hand checks, which a test cannot make here:
 | Settings data | The same file and keys; the Mac-only settings (title width, shortcuts) live in the app's defaults, the login item with the system. | golden files, QueueModelTests |
 | D Bus interface, Debian package | GNOME only. | — |
 | Developer commands, Source layout | Already list the Mac's make targets and directories; Phase 8 adds the release target and corrects the Xcode version. | — |
-| Common problems | "A shortcut does not work": another app may hold it, change it in Settings. | — |
+| Common problems | "A shortcut does not work" says what to do on a Mac: another app may hold it, so choose another in Settings; a system shortcut takes ⌘1 and ⌘2 first. | HotkeyTests (the defaults are not the system's) |
 
 - `make test-extension-shell` fails in the container on `main` too: in the
   headless GNOME Shell 50 on arm64 the virtual pointer's x stays at 0, so the
@@ -694,3 +700,135 @@ text's and the background's, which would pass for edges: hence notes only.
 Sixth pass: green, no findings. With it the unit tests pass (122, one
 known issue), and so do all 45 UI tests and the four picture tests.
 
+### Phase 8 design, Fable
+
+Approved with changes, all taken. An ad hoc universal archive of the app,
+made in /tmp, showed what the release has to handle: the hardened runtime,
+no entitlements, a stripped universal binary, an unsigned resource bundle
+for KeyboardShortcuts, the App Intents metadata, and an export that needs a
+team to run at all.
+1. The app is signed with Developer ID when it is archived, and taken from
+   the archive, so the dry run (ad hoc) and the release take one path.
+2. The dry run skips only notarizing and stapling, and expects Gatekeeper's
+   rejection rather than ignoring it.
+3. With `CI` set, the hosted tests fail on a shortcut the system holds
+   (`TEST_RUNNER_CI`).
+4. macOS CI on Apple silicon and Intel, Xcode 26.6 pinned, Rust with both
+   targets, caches, the UI tests by hand only.
+5. `set-version` writes the project's version (prerelease kept, quoted;
+   build metadata dropped) and build number (the extension's revision),
+   requires both Debug and Release lines, and checks the result with plutil.
+6. The script checks everything it can, resolves the identity from the team,
+   takes notary credentials from a keychain profile or an API key, and
+   leaves the checksum, debug symbols and a build record.
+7. A Linux job for what needs no GTK.
+8. The README covers Gatekeeper, the first run, sharing data with Linux,
+   updating, uninstalling, and the release steps.
+
+Found while building it: the first dry run failed to link the Intel half,
+because a Debug build run alongside it in the same worktree rewrote the
+engine library for this Mac alone; run on its own, it passed. It also
+showed a Swift 6.4 warning in quick add, now gone.
+
+
+### Phase 8, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. The release steps tagged locally and never pushed; `gh release create`
+   then makes the tag itself, on the default branch. The steps push the
+   commit and the tag and pass `--verify-tag`.
+2. Gatekeeper's verdict was piped into `grep -q`, which can close the pipe
+   before `spctl` is done; under `pipefail` an accepted app then failed.
+   The verdict is now read whole, with its exit code.
+3. The tag check matched `v<version>` as a pattern, so its dots matched
+   anything; it is literal now. `DEVELOPER_TEAM` must look like a team id.
+4. The dry run took any failure of `spctl` for a rejection; it now needs
+   exit code 3, which `spctl` keeps for a denial. Checked on this Mac: a
+   notarized app gives 0, the ad hoc app 3, bad arguments 2, a missing
+   app 1.
+5. `bash -n scripts/*.sh` parses only the first file. The Linux job and
+   `make check` now check each one, and the extension's JavaScript loop
+   stops at the first failure too.
+6. `shortcuts run` takes the name of a shortcut, not an action's; the
+   README says to make the shortcut first.
+7. The release steps used one `<version>` for the tag and for the files,
+   which drop any build metadata; they now say which is which.
+8. The macOS job cached a directory the engine is not built in; it caches
+   the two per-target ones.
+
+Second pass: green, no findings. GPT reran the version tests, the engine
+and Swift binding tests and the dry run, and saw Gatekeeper reject the ad
+hoc app with exit code 3. Not run: XCTest (see Phase 7), and the real
+signing and notarization, which need the Developer ID.
+
+Third pass, on the unsigned release (the user's call: no Developer ID yet)
+and version 0.6.0: green, no findings. GPT checked each of the script's
+three modes step by step, the README's ways to open an app that is not
+notarized against Apple's guidance for macOS 15 and 14, and that the
+version is 0.6.0 everywhere, build 11; it reran the version tests and the
+dry run.
+
+CI's first macOS run, on the stacked PRs, failed on both runners: Xcode
+26.6's Swift 6.3.3 crashed generating code for the Launch at Login toggles,
+which passed the method `loginItem.set` as Binding's `@isolated(any)
+@Sendable` setter. A closure gives the setter its type; the next run passed
+on Apple silicon and Intel, and on Linux. Swift 6.4, here, had compiled it.
+
+### Cross-phase review (the user's, after the stack went up)
+
+A review of the whole stack, with the GNOME suites run in the Linux harness
+and the core, bindings and app tests run here. Each finding, checked:
+1. Xcode 26.6 could not compile the app. Already fixed (Phase 8, above);
+   CI was green on the tagged commit before this review was answered.
+2. Phase 7's item 6 was ticked for hand checks not yet made: unticked. Its
+   worry, that with the status item hidden the view lending SwiftUI's
+   window actions might never appear, did not hold: a probe put the view in
+   a hidden status item, a window never shown, and no window at all, and it
+   appeared in each. `AppWindowsTests` keeps the hidden item's case, and
+   `AppWindows` logs a fault if a window is asked for before the actions
+   are lent. The crowded menu bar stays a hand check.
+3. No CI built the GTK app. The Linux job now runs `make check`, `make
+   test`, `make test-ui` and `make test-service` in an Ubuntu 26.04
+   container, as a user of its own, since the tests make files unwritable.
+4. The quick add test failed on a locked screen, where no window can take
+   the keyboard; it now skips there and says why.
+5. A click on the status item while the popover is open might close and
+   reopen it. A UI test now clicks it twice; it could not run yet, the
+   screen being locked.
+6. A settings write that failed stayed on the message line after a later
+   one worked. The engine's tick now says when an outage ends; the
+   bindings carry the settings problem apart from the one-off ones, and
+   the model drops it then. Tested at each layer, and each fails without
+   the change.
+7. With the clock hidden, a pause did not show in the menu bar. A paused
+   task's words are dimmed, as GNOME dims its label, clock or no clock.
+8. An unknown link was logged whole and public; any web page can send one.
+   It is logged as a hash.
+9. `readonly INPUTS=$(inputs)` hid a failure, and so did `inputs` itself,
+   since `set -e` does not reach into a command substitution (and macOS's
+   bash 3.2 cannot be told to). With `shasum` made to fail, the old script
+   exited 0 and stamped an empty hash; now each step is checked and it
+   stops.
+10. The README's "A shortcut does not work" was GNOME's alone, and the
+    D-Bus section left out `Stopping`. Both added.
+11. UniFFI's version is one workspace dependency. Left as they are, both
+    documented: recovery after a panic reloads from the files, dropping a
+    settings change not yet written; and while the files cannot be read,
+    each call tries again, which is how it recovers when they can.
+
+GPT on these answers, first pass, not green: two of them fell short.
+1. The dimmed colour, `labelColor.withAlphaComponent(0.7)`, was fixed when
+   made: black at 70%, unreadable on a dark menu bar. It is now worked out
+   for the appearance it is drawn in, the menu bar's text colour at 70%;
+   a test resolves it in the light, dark and vibrant appearances, and fails
+   on the old colour.
+2. A reload after an internal error drops the settings change, and with it
+   the outage, but nothing said so: the old problem stayed. The next tick
+   now says the outage is over, and a new one begun on that tick is still
+   told; a test starts the engine over mid-outage, and fails without it.
+
+Second pass: green, no findings. GPT resolved the colour in the light,
+dark, vibrant and high-contrast appearances and in a highlighted draw, and
+saw both new tests fail without their fixes. Still to run: the UI tests,
+the second click on the status item among them, once the screen is
+unlocked.

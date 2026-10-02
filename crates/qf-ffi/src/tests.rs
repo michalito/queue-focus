@@ -378,13 +378,31 @@ fn a_settings_write_failure_is_one_problem_per_outage() {
     settings.vary = false;
     engine.set_settings(settings).unwrap();
 
-    let problems = engine.tick(0, noon(), 0).unwrap().problems;
-    assert_eq!(problems.len(), 1);
-    assert!(problems[0].contains("settings.json"), "{problems:?}");
+    let tick = engine.tick(0, noon(), 0).unwrap();
+    assert!(
+        tick.problems.is_empty(),
+        "the outage is not one of the one-off problems"
+    );
+    let problem = tick.settings_problem.unwrap();
+    assert!(problem.contains("settings.json"), "{problem}");
     for second in 1..=40 {
-        assert!(engine.tick(second, noon(), 0).unwrap().problems.is_empty());
+        let tick = engine.tick(second, noon(), 0).unwrap();
+        assert!(tick.problems.is_empty() && tick.settings_problem.is_none());
+        assert!(!tick.settings_outage_ended);
     }
     assert!(engine.flush().is_empty(), "one outage, one complaint");
+
+    // The file can be written again: the next attempt works, and says so.
+    fs::remove_dir_all(dir.join("settings.json")).unwrap();
+    let ended: Vec<u64> = (41..=80)
+        .filter(|&second| {
+            engine
+                .tick(second, noon(), 0)
+                .unwrap()
+                .settings_outage_ended
+        })
+        .collect();
+    assert_eq!(ended.len(), 1, "{ended:?}");
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -510,6 +528,50 @@ fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
     assert_eq!(titles(&engine), ["kept", "after"]);
     let problems = engine.tick(2, noon(), 0).unwrap().problems;
     assert!(problems[0].contains("reloaded the queue"), "{problems:?}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// Starting again from the files drops a settings change not yet written, and
+/// with it the outage that kept it from the file: the next tick says so,
+/// even when a new outage begins on that tick.
+#[test]
+fn a_reload_ends_a_settings_outage() {
+    let dir = temp_dir("panic-outage");
+    let engine = open(&dir);
+    engine.add("kept".into(), None).unwrap();
+    let blocker = dir.join("settings.json");
+    let change = |engine: &QueueEngine| {
+        let mut settings = engine.settings();
+        settings.vary = !settings.vary;
+        engine.set_settings(settings).unwrap();
+    };
+    fs::create_dir_all(&blocker).unwrap();
+    change(&engine);
+    assert!(engine
+        .tick(0, noon(), 0)
+        .unwrap()
+        .settings_problem
+        .is_some());
+
+    // The settings read again, and the engine starts over before its retry.
+    fs::remove_dir_all(&blocker).unwrap();
+    panic_mid_change(&engine);
+    let tick = engine.tick(1, noon(), 0).unwrap();
+    assert!(tick.settings_outage_ended, "the old outage is over");
+    assert!(tick.settings_problem.is_none());
+    assert!(
+        !engine.tick(2, noon(), 0).unwrap().settings_outage_ended,
+        "and said once"
+    );
+
+    // Started over, then blocked again before the tick: both, on one tick.
+    panic_mid_change(&engine);
+    let _ = engine.settings();
+    fs::create_dir_all(&blocker).unwrap();
+    change(&engine);
+    let tick = engine.tick(3, noon(), 0).unwrap();
+    assert!(tick.settings_outage_ended);
+    assert!(tick.settings_problem.is_some(), "the new outage is told");
     fs::remove_dir_all(dir).unwrap();
 }
 

@@ -70,9 +70,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         button.setAccessibilityLabel("Queue Focus: \(title.accessibilityLabel)")
     }
 
+    /// A paused task's words, dimmed as GNOME dims its label: a sign of the
+    /// pause even with the clock hidden. The menu bar's own text colour at
+    /// 70%, worked out each time it is drawn, for the appearance it is drawn
+    /// in: `withAlphaComponent` on `labelColor` would fix it at once, black
+    /// on a dark menu bar.
+    static let pausedTitleColor = NSColor(name: "pausedTitle") { appearance in
+        var label = NSColor.black
+        appearance.performAsCurrentDrawingAppearance {
+            label = NSColor.labelColor.usingColorSpace(.sRGB) ?? .black
+        }
+        return label.withAlphaComponent(label.alphaComponent * 0.7)
+    }
+
     /// Only the dot is coloured, so the button's pressed state can still
-    /// invert the rest. Where colours should not be the only difference, the
-    /// tag's letter follows the dot.
+    /// invert the rest; a paused task's words are dimmed. Where colours
+    /// should not be the only difference, the tag's letter follows the dot.
     static func render(_ title: StatusTitle, font: NSFont, options: DisplayOptions) -> NSAttributedString {
         let text = NSMutableAttributedString()
         text.append(NSAttributedString(string: "● ", attributes: [
@@ -80,10 +93,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             .foregroundColor: TagStyle.dot(title.tag),
             .baselineOffset: 1,
         ]))
-        if options.differentiateWithoutColor, let tag = title.tag {
-            text.append(NSAttributedString(string: "\(TagStyle.letter(tag)) ", attributes: [.font: font]))
+        var words: [NSAttributedString.Key: Any] = [.font: font]
+        if title.paused {
+            words[.foregroundColor] = pausedTitleColor
         }
-        text.append(NSAttributedString(string: title.title, attributes: [.font: font]))
+        if options.differentiateWithoutColor, let tag = title.tag {
+            text.append(NSAttributedString(string: "\(TagStyle.letter(tag)) ", attributes: words))
+        }
+        text.append(NSAttributedString(string: title.title, attributes: words))
         if let timer = title.timer {
             text.append(NSAttributedString(string: "  \(timer)", attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular),

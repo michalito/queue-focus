@@ -20,6 +20,7 @@ private final class Fixture {
     let model: QueueModel
     var changes = 0
     var flashes: [FlashEvent] = []
+    var reported: [[String]] = []
 
     init() throws {
         dir = FileManager.default.temporaryDirectory
@@ -32,6 +33,7 @@ private final class Fixture {
         model = QueueModel(engine: engine, clock: { clock.date }, calendar: calendar)
         model.didChange = { [unowned self] in changes += 1 }
         model.presentFlash = { [unowned self] in flashes.append($0) }
+        model.didReport = { [unowned self] in reported.append($0) }
     }
 
     deinit {
@@ -272,10 +274,32 @@ private final class Fixture {
             f.clock.advance(1)
             f.model.tick()
         }
-        #expect(f.model.problems.count == 1)
-        #expect(f.model.problems.first?.contains("settings.json") == true)
-        f.model.dismissProblems()
-        #expect(f.model.problems.isEmpty)
+        #expect(f.model.problems.isEmpty, "an outage is not kept with the one-off problems")
+        #expect(f.model.settingsProblem?.contains("settings.json") == true)
+        #expect(f.reported.count == 1, "and it is told once")
+        f.model.dismissSettingsProblem()
+        #expect(f.model.settingsProblem == nil)
+    }
+
+    /// The message line says the settings cannot be written only while that
+    /// is so: once a write works, it goes.
+    @Test func aSettingsProblemGoesWhenAWriteWorks() throws {
+        let f = try Fixture()
+        let blocker = f.dir.appendingPathComponent("settings.json")
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        var settings = f.model.settings
+        settings.showTimer = false
+        f.model.setSettings(settings)
+        f.clock.advance(1)
+        f.model.tick()
+        #expect(f.model.settingsProblem != nil)
+        try FileManager.default.removeItem(at: blocker)
+        for _ in 0..<40 where f.model.settingsProblem != nil {
+            f.clock.advance(1)
+            f.model.tick()
+        }
+        #expect(f.model.settingsProblem == nil, "the retry wrote the file")
+        #expect(FileManager.default.fileExists(atPath: blocker.path))
     }
 
     @Test func everyTickMovesTheClockAndRedraws() throws {

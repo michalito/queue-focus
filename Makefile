@@ -8,7 +8,7 @@ REQUESTED_VERSION           := $(if $(filter command line,$(origin VERSION)),$(V
 REQUESTED_EXTENSION_VERSION := $(if $(filter command line,$(origin EXTENSION_VERSION)),$(EXTENSION_VERSION),)
 export REQUESTED_VERSION REQUESTED_EXTENSION_VERSION
 
-.PHONY: help build test test-core test-mac-core test-mac-app test-mac-ui test-ui test-service check-core mac-core mac-app test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
+.PHONY: help build test test-core test-mac-core test-mac-app test-mac-ui release-mac release-mac-unsigned release-mac-dry-run test-ui test-service check-core mac-core mac-app test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -57,8 +57,8 @@ test-extension-shell: ## real quick-add, menu and width tests in a disposable he
 check:           ## fmt + clippy + JS/Python/shell syntax
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
-	for js in extension/$(UUID)/*.js; do node --check "$$js"; done
-	bash -n scripts/*.sh
+	for js in extension/$(UUID)/*.js; do node --check "$$js" || exit 1; done
+	for script in scripts/*.sh; do bash -n "$$script" || exit 1; done
 	python3 -c 'from pathlib import Path; compile(Path("scripts/set-version").read_text(), "scripts/set-version", "exec")'
 
 check-core:      ## fmt + clippy for the crates the macOS app uses; runs on Linux and macOS
@@ -81,6 +81,12 @@ mac-app:         ## build the macOS app into target/xcode/Build/Products/Debug
 	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
 	$(XCODEBUILD) build
 
+# On a build machine (CI set), the hosted tests hold the app to a clean Mac:
+# a default shortcut the system holds fails rather than being reported.
+ifdef CI
+export TEST_RUNNER_CI := 1
+endif
+
 # The test plan keeps no screenshots or screen recordings: a UI test's would
 # show whatever else is on the screen.
 XCODETEST = $(XCODEBUILD) test -testPlan QueueFocus -collect-test-diagnostics never
@@ -92,6 +98,15 @@ test-mac-app:    ## the macOS app's unit tests
 test-mac-ui:     ## the macOS app's UI tests; they drive the real menu bar, pointer and keyboard
 	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
 	$(XCODETEST) -only-testing:QueueFocusUITests
+
+release-mac:     ## the macOS release in dist/: universal, Developer ID, notarized, in a DMG
+	scripts/release-mac.sh
+
+release-mac-unsigned: ## a release signed ad hoc and not notarized, from a clean tree at its tag
+	scripts/release-mac.sh --unsigned
+
+release-mac-dry-run: ## an unsigned release from any tree, not for publishing: checks it all without the certificate
+	scripts/release-mac.sh --dry-run
 
 version: set-version  ## set VERSION everywhere; prompts when VERSION is omitted
 
