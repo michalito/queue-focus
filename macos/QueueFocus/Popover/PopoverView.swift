@@ -191,7 +191,7 @@ private struct GearMenu: View {
         Menu("Settings and more", systemImage: "gearshape") {
             Button("Settings…", action: openSettings)
                 .accessibilityIdentifier("gear-settings")
-            Toggle("Launch at Login", isOn: Binding(get: { loginItem.isEnabled }, set: loginItem.set))
+            Toggle("Launch at Login", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.set($0) }))
             if loginItem.needsApproval {
                 Button("Allow in Login Items…", action: loginItem.openSystemSettings)
             }
