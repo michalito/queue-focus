@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 /// The Queue and Board windows, for code outside SwiftUI: the global
@@ -8,10 +9,17 @@ import SwiftUI
 final class AppWindows {
     fileprivate var open: (String) -> Void = { _ in }
     fileprivate var dismiss: (String) -> Void = { _ in }
+    /// Whether the bridge has lent the actions yet. It does even while
+    /// macOS hides the status item (AppWindowsTests).
+    fileprivate(set) var isBridged = false
+    private let log = Logger(subsystem: "org.queuefocus.QueueFocus", category: "windows")
 
     /// Open the window, or bring it forward, with the keyboard in it.
     func show(_ id: String) {
         Activation.takeFront()
+        if !isBridged {
+            log.fault("no window actions yet: \(id, privacy: .public) cannot open")
+        }
         open(id)
     }
 
@@ -46,6 +54,7 @@ struct WindowActionsBridge: View {
             .onAppear {
                 windows.open = { openWindow(id: $0) }
                 windows.dismiss = { dismissWindow(id: $0) }
+                windows.isBridged = true
             }
     }
 }
