@@ -651,8 +651,14 @@ Second pass, not green: four smaller things.
    clock it is given on a tick, so it ticks before the first reading.
 4. The light Settings audit followed the Mac's appearance; it is now light.
 
-The unit tests pass. The accessibility UI tests could not be run after
-these changes: an authentication prompt on the screen (macOS's coreautha)
-kept XCTest's runner from connecting, and it is the user's to answer. They
-are to be run again before this phase is called green.
+Third pass, not green: set-aside text was matched by its words, so two
+chips reading "P" could stand in for each other. A surface audited once
+may now set nothing aside, and across Settings' passes a line is matched
+by its identifier, or by its words and where they start across the line.
+
+After the second pass's changes the unit tests passed; since then neither
+the unit nor the UI tests could run: an authentication prompt on the
+screen (macOS's coreautha) keeps XCTest's runner from connecting, and it
+is the user's to answer. The tests build. Both suites are to be run again
+before this phase is called green.
 

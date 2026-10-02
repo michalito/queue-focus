@@ -25,6 +25,14 @@ final class AccessibilityUITests: AppUITestCase {
         (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
     }
 
+    /// One piece of text from pass to pass: its identifier where it has one
+    /// (which also holds while a countdown's words change), otherwise its
+    /// words where they start across the line, which scrolling up and down
+    /// does not move.
+    private func key(identifier: String, text: String, frame: CGRect) -> String {
+        identifier.isEmpty ? "\(text) @\(Int(frame.minX.rounded()))" : identifier
+    }
+
     /// XCTest's audit of what is on screen, for the two kinds of issue worth
     /// failing on: text too faint to read, and controls VoiceOver cannot
     /// tell apart. What is let through is named, and is the system's: the
@@ -44,11 +52,14 @@ final class AccessibilityUITests: AppUITestCase {
         let surfaces = windows.map(\.frame) + app.popovers.allElementsBoundByIndex.map(\.frame)
         let namedSliders = app.sliders.allElementsBoundByIndex.filter { !$0.label.isEmpty }.map(\.frame)
         let scrolling = app.scrollViews.allElementsBoundByIndex.map { view in
-            (frame: view.frame, texts: view.staticTexts.allElementsBoundByIndex.map { (frame: $0.frame, text: text(of: $0)) })
+            (frame: view.frame, texts: view.staticTexts.allElementsBoundByIndex.map { element in
+                (frame: element.frame, text: text(of: element), key: key(identifier: element.identifier, text: text(of: element),
+                                                                         frame: element.frame))
+            })
         }
         for view in scrolling {
             for text in view.texts where view.frame.contains(text.frame) {
-                pass.seenWhole.insert(text.text)
+                pass.seenWhole.insert(text.key)
             }
         }
         let same = { (a: CGRect, b: CGRect) in abs(a.minX - b.minX) < 2 && abs(a.minY - b.minY) < 2
@@ -83,7 +94,7 @@ final class AccessibilityUITests: AppUITestCase {
                         reason = "outside every window"
                     } else if cutOff {
                         reason = "partly scrolled out of view, measured whole in another pass"
-                        pass.setAside.insert(value)
+                        pass.setAside.insert(self.key(identifier: element.identifier, text: value, frame: frame))
                     } else if element.elementType == .staticText, windows.contains(where: { window in
                         !window.title.isEmpty && value == window.title
                             && window.frame.contains(frame) && frame.maxY <= window.frame.minY + 34
@@ -118,8 +129,12 @@ final class AccessibilityUITests: AppUITestCase {
         XCTAssertTrue(unmeasured.isEmpty, "never seen whole by the audit: \(unmeasured.sorted())", file: file, line: line)
     }
 
+    /// A surface audited once: nothing can be measured in a later pass, so
+    /// nothing may be set aside.
     private func audit(_ surface: String, file: StaticString = #filePath, line: UInt = #line) throws {
-        expectClean([try auditPass(surface)], file: file, line: line)
+        let pass = try auditPass(surface)
+        expectClean([pass], file: file, line: line)
+        XCTAssertTrue(pass.setAside.isEmpty, "cut off in a surface audited once: \(pass.setAside.sorted())", file: file, line: line)
     }
 
     private func openSettings() -> XCUIElement {
