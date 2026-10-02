@@ -531,6 +531,9 @@ make test-core
 make check-core
 make mac-core
 make test-mac-core
+make mac-app
+make test-mac-app
+make test-mac-ui
 make deb
 make clean
 ```
@@ -566,6 +569,8 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 `make mac-core` builds the engine for the macOS app, on macOS: a universal static library for Apple silicon and Intel wrapped in an XCFramework, and the `QfCore` Swift module generated from that library, both inside the `macos/QfCore` Swift package. Neither is checked in, so run it again after a change to the Rust code. `make test-mac-core` builds them and runs the package's Swift tests, which drive the engine through the generated bindings. Both need Rust installed with rustup, and Xcode 16 or newer.
 
+`make mac-app` builds the macOS app in Debug for this Mac's architecture, into `target/xcode/Build/Products/Debug/Queue Focus.app`. `make test-mac-app` runs its unit tests, which drive the app's model against engines in temporary directories. `make test-mac-ui` runs its UI tests, which launch the app on a temporary data directory and click the real menu bar item and popover; they take over the pointer and the keyboard for a few minutes. To work in Xcode, open `macos/QueueFocus.xcodeproj` after `make mac-app` or `make mac-core` has run once: Xcode lists the generated engine files before its own build of them can run. After that, Xcode rebuilds the engine whenever the Rust changes.
+
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
 For a direct Cargo command, use the repository wrapper:
@@ -583,6 +588,9 @@ crates/qf-ffi
 crates/queue-focus
 crates/uniffi-bindgen
 macos/QfCore
+macos/QueueFocus
+macos/QueueFocusTests
+macos/QueueFocusUITests
 extension/queue-focus@queuefocus.org
 extension/test
 data
@@ -598,7 +606,9 @@ Makefile
 
 `crates/uniffi-bindgen` builds the UniFFI Swift generator at the version `qf-ffi` uses, so it needs no separate install.
 
-`macos/QfCore` is the Swift package the macOS app imports. `make mac-core` fills in its XCFramework and its generated Swift; its tests are checked in.
+`macos/QfCore` is the Swift package holding the engine for Swift. `make mac-core` fills in its XCFramework and its generated Swift; its tests are checked in.
+
+`macos/QueueFocus` is the macOS app: a menu bar item with the current task, its popover, and the windows. It compiles the engine's generated Swift into itself and links the engine's static library, which `make mac-core` also leaves in `macos/QfCore/lib` with its C module in `macos/QfCore/include`. `macos/QueueFocus.xcodeproj` builds it; `macos/QueueFocusTests` and `macos/QueueFocusUITests` are its unit and UI tests.
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 

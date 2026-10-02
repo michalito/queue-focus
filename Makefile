@@ -8,7 +8,7 @@ REQUESTED_VERSION           := $(if $(filter command line,$(origin VERSION)),$(V
 REQUESTED_EXTENSION_VERSION := $(if $(filter command line,$(origin EXTENSION_VERSION)),$(EXTENSION_VERSION),)
 export REQUESTED_VERSION REQUESTED_EXTENSION_VERSION
 
-.PHONY: help build test test-core test-mac-core test-ui test-service check-core mac-core test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
+.PHONY: help build test test-core test-mac-core test-mac-app test-mac-ui test-ui test-service check-core mac-core mac-app test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -66,7 +66,25 @@ check-core:      ## fmt + clippy for the crates the macOS app uses; runs on Linu
 	$(CARGO) clippy -p qf-core -p qf-ffi -p uniffi-bindgen --all-targets -- -D warnings
 
 mac-core:        ## build the engine's XCFramework and Swift module for the macOS app
-	scripts/build-mac-core.sh
+	scripts/build-mac-core.sh --if-changed
+
+# The macOS app, built and tested in Debug for this Mac's architecture, as
+# Xcode's own Debug build does, so the two share one build of the engine.
+MAC_ARCH := $(shell uname -m)
+XCODEBUILD = xcodebuild -project macos/QueueFocus.xcodeproj -scheme QueueFocus \
+	-configuration Debug -derivedDataPath target/xcode
+
+mac-app:         ## build the macOS app into target/xcode/Build/Products/Debug
+	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
+	$(XCODEBUILD) build
+
+test-mac-app:    ## the macOS app's unit tests
+	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
+	$(XCODEBUILD) test -only-testing:QueueFocusTests
+
+test-mac-ui:     ## the macOS app's UI tests; they drive the real menu bar, pointer and keyboard
+	scripts/build-mac-core.sh --archs $(MAC_ARCH) --if-changed
+	$(XCODEBUILD) test -only-testing:QueueFocusUITests
 
 version: set-version  ## set VERSION everywhere; prompts when VERSION is omitted
 
