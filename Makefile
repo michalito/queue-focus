@@ -57,8 +57,8 @@ test-extension-shell: ## real quick-add, menu and width tests in a disposable he
 check:           ## fmt + clippy + JS/Python/shell syntax
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
-	for js in extension/$(UUID)/*.js; do node --check "$$js"; done
-	bash -n scripts/*.sh
+	for js in extension/$(UUID)/*.js; do node --check "$$js" || exit 1; done
+	for script in scripts/*.sh; do bash -n "$$script" || exit 1; done
 	python3 -c 'from pathlib import Path; compile(Path("scripts/set-version").read_text(), "scripts/set-version", "exec")'
 
 check-core:      ## fmt + clippy for the crates the macOS app uses; runs on Linux and macOS

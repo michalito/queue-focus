@@ -726,3 +726,28 @@ because a Debug build run alongside it in the same worktree rewrote the
 engine library for this Mac alone; run on its own, it passed. It also
 showed a Swift 6.4 warning in quick add, now gone.
 
+
+### Phase 8, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. The release steps tagged locally and never pushed; `gh release create`
+   then makes the tag itself, on the default branch. The steps push the
+   commit and the tag and pass `--verify-tag`.
+2. Gatekeeper's verdict was piped into `grep -q`, which can close the pipe
+   before `spctl` is done; under `pipefail` an accepted app then failed.
+   The verdict is now read whole, with its exit code.
+3. The tag check matched `v<version>` as a pattern, so its dots matched
+   anything; it is literal now. `DEVELOPER_TEAM` must look like a team id.
+4. The dry run took any failure of `spctl` for a rejection; it now needs
+   exit code 3, which `spctl` keeps for a denial. Checked on this Mac: a
+   notarized app gives 0, the ad hoc app 3, bad arguments 2, a missing
+   app 1.
+5. `bash -n scripts/*.sh` parses only the first file. The Linux job and
+   `make check` now check each one, and the extension's JavaScript loop
+   stops at the first failure too.
+6. `shortcuts run` takes the name of a shortcut, not an action's; the
+   README says to make the shortcut first.
+7. The release steps used one `<version>` for the tag and for the files,
+   which drop any build metadata; they now say which is which.
+8. The macOS job cached a directory the engine is not built in; it caches
+   the two per-target ones.

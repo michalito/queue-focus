@@ -45,6 +45,6 @@ jobs:
       - run: make test-extension
       - name: Script syntax
         run: |
-          bash -n scripts/*.sh
+          for script in scripts/*.sh; do bash -n "$script"; done
           python3 -m py_compile scripts/set-version
           for js in extension/queue-focus@queuefocus.org/*.js; do node --check "$js"; done

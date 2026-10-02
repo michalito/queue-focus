@@ -46,7 +46,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/debug
-            target/release-ffi
+            target/aarch64-apple-darwin/release-ffi
+            target/x86_64-apple-darwin/release-ffi
           key: cargo-${{ matrix.runner }}-${{ hashFiles('Cargo.lock') }}
       - uses: actions/cache@v4
         with:

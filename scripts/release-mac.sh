@@ -43,7 +43,7 @@ check_tree() {
   local problem=""
   if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
     problem="the working tree has uncommitted changes"
-  elif [ "$(git -C "$ROOT" tag --points-at HEAD | grep -cx "v$version")" != 1 ]; then
+  elif [ "$(git -C "$ROOT" tag --points-at HEAD | grep -Fxc "v$version")" != 1 ]; then
     problem="HEAD is not tagged v$version"
   fi
   if [ -n "$problem" ]; then
@@ -57,7 +57,7 @@ signing_identity() {
     echo "-"
     return
   fi
-  [ -n "${DEVELOPER_TEAM:-}" ] || fail "set DEVELOPER_TEAM to the Developer ID team id"
+  [[ "${DEVELOPER_TEAM:-}" =~ ^[A-Z0-9]{10}$ ]] || fail "set DEVELOPER_TEAM to the Developer ID team id"
   local matches
   matches=$(security find-identity -v -p codesigning |
     grep "\"Developer ID Application: .* ($DEVELOPER_TEAM)\"" | awk '{print $2}' || true)
@@ -166,16 +166,28 @@ if ! $dry_run; then
   staple "$DIST/$name.dmg"
 fi
 
+# Gatekeeper's verdict, whole: spctl exits 0 when it accepts, 3 when it
+# rejects, and with another code when it could not judge.
+assess() {
+  assessed=0
+  assessment=$(spctl --assess -vv "$@" 2>&1) || assessed=$?
+}
+# Accepted, and as notarized Developer ID.
+notarized() {
+  [ "$assessed" = 0 ] && grep -q "^source=Notarized Developer ID$" <<<"$assessment"
+}
+
 say "Asking Gatekeeper"
 if $dry_run; then
   # An ad hoc signature is not Developer ID: Gatekeeper must say no.
-  if spctl --assess --type execute "$app" 2>/dev/null; then fail "Gatekeeper accepted an ad hoc app"; fi
+  assess --type execute "$app"
+  [ "$assessed" = 3 ] || fail "Gatekeeper did not reject the ad hoc app (spctl exited $assessed): $assessment"
   echo "rejected, as an ad hoc signature should be"
 else
-  spctl --assess --type execute -vv "$app" 2>&1 | grep -q "source=Notarized Developer ID" ||
-    fail "Gatekeeper does not take the app as notarized Developer ID"
-  spctl --assess --type open --context context:primary-signature -vv "$DIST/$name.dmg" 2>&1 |
-    grep -q "source=Notarized Developer ID" || fail "Gatekeeper does not take the disk image"
+  assess --type execute "$app"
+  notarized || fail "Gatekeeper does not take the app as notarized Developer ID: $assessment"
+  assess --type open --context context:primary-signature "$DIST/$name.dmg"
+  notarized || fail "Gatekeeper does not take the disk image: $assessment"
 fi
 
 say "Writing the checksum, the debug symbols and the build record"

@@ -267,7 +267,7 @@ open "queuefocus://add?text=ship%200.6&now=1"
 open "queuefocus://show?view=board"
 ```
 
-`view` is `queue`, `board`, or `add`. No link completes a task, since any web page can open a link. The Shortcuts app has Add a Task, Complete the Current Task, and Get the Current Task; `shortcuts run "Get the Current Task"` prints the current task in a terminal.
+`view` is `queue`, `board`, or `add`. No link completes a task, since any web page can open a link. The Shortcuts app has Add a Task, Complete the Current Task, and Get the Current Task; to print the current task in a terminal, make a shortcut in Shortcuts with the Get the Current Task action, name it, say, What Now, and run `shortcuts run "What Now"`.
 
 ### Data on macOS
 
@@ -659,10 +659,10 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 A release goes:
 
-1. `make version`, then commit and tag `v<version>`.
+1. `make version`, then commit and tag `v<version>`. The tag carries the whole version; the files in `dist/` are named by the version without any `+` build metadata, the one Finder shows.
 2. `DEVELOPER_TEAM=<team id> NOTARY_PROFILE=<profile> make release-mac`.
 3. The checks a machine cannot make: open the disk image on another Mac or account and start the app from Applications; start it once on an Intel Mac or under Rosetta; try the four shortcuts, a notification and its Undo, Launch at Login, and the Shortcuts actions; see that Get Info shows the version.
-4. `gh release create v<version> dist/QueueFocus-<version>.dmg dist/QueueFocus-<version>.dmg.sha256 dist/QueueFocus-<version>.dSYM.zip`.
+4. Push the commit and the tag, then `gh release create v<version> --verify-tag dist/QueueFocus-<app version>.dmg dist/QueueFocus-<app version>.dmg.sha256 dist/QueueFocus-<app version>.dSYM.zip`, with the names `ls dist` shows. `--verify-tag` stops `gh` from making its own tag on another commit when the tag is not on GitHub.
 
 The GitHub workflows run the engine, versioning, and extension tests on Linux, and the engine, Swift, and app tests on Apple silicon and on Intel, with a release dry run. The macOS UI tests run when the workflow is started by hand.
 
