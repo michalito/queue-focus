@@ -344,7 +344,7 @@ struct SectionHeading: View {
 }
 
 /// Why the last request failed, or the latest problem the engine reported.
-private struct MessageLine: View {
+struct MessageLine: View {
     @Environment(QueueModel.self) private var model
 
     var body: some View {

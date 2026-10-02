@@ -137,10 +137,81 @@ final class QueueModel {
         perform { try engine.promote(id: task.id) }
     }
 
+    func promote(id: UInt64) {
+        perform { try engine.promote(id: id) }
+    }
+
+    /// Move a task to the end of `bucket`; into Now, it becomes current.
+    func move(id: UInt64, to bucket: Bucket) {
+        perform { try engine.moveTask(id: id, bucket: bucket, index: nil) }
+    }
+
+    /// Drop a task in front of the row `before` in `bucket`, or at its end.
+    /// `false` when that row has gone since it was drawn.
+    @discardableResult
+    func move(id: UInt64, to bucket: Bucket, before: UInt64?) -> Bool {
+        perform { try engine.moveBefore(id: id, bucket: bucket, before: before) } ?? false
+    }
+
+    /// Move a task up (negative) or down within its bucket.
+    func shift(id: UInt64, by delta: Int32) {
+        perform { try engine.shift(id: id, delta: delta) }
+    }
+
+    func cycleTag(id: UInt64) {
+        perform { try engine.cycleTag(id: id) }
+    }
+
+    func setTag(id: UInt64, _ tag: TaskTag?) {
+        perform { try engine.setTag(id: id, tag: tag) }
+    }
+
+    /// Rename a task. A blank title is not a rename: nothing is asked of the
+    /// engine and the old title stays.
+    @discardableResult
+    func rename(id: UInt64, to title: String) -> Bool {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return perform { try engine.rename(id: id, title: title) } != nil
+    }
+
+    /// Delete a task for good; unlike a completion, it cannot be undone.
+    func remove(id: UInt64) {
+        perform { try engine.remove(id: id) }
+    }
+
+    /// Mark a task done from a window: the current task as by Done, any other
+    /// deleted. Either way the popover offers to undo it, which the GNOME
+    /// windows do not.
+    func complete(id: UInt64) {
+        guard let task = task(id) else { return }
+        if complete(task) {
+            offerUndo(for: task)
+        }
+    }
+
+    /// The task with this id, wherever it is.
+    func task(_ id: UInt64) -> QueueTask? {
+        if snapshot.current?.id == id { return snapshot.current }
+        return (snapshot.side + snapshot.next + snapshot.later).first { $0.id == id }
+    }
+
     // MARK: Settings
 
     func setSettings(_ settings: QueueSettings) {
         perform { try engine.setSettings(settings: settings) }
+    }
+
+    // MARK: The reminder
+
+    /// Flash now, whatever the quiet rules say, so long as Now holds a task.
+    /// The wait for the next one starts over. Returns whether there was one.
+    @discardableResult
+    func flashNow() -> Bool {
+        now = clock()
+        guard let flash = engine.flashNow(now: unixNow, random: .random(in: 0..<30)) else { return false }
+        presentFlash(flash)
+        refresh()
+        return true
     }
 
     // MARK: The clock

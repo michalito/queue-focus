@@ -76,12 +76,18 @@ because this Mac cannot build the GTK crate.
 
 ## Phase 4. Windows
 
-- [ ] 1. Queue window: three bands, every shortcut, tag tint
-- [ ] 2. Board window: four quadrants, drag and drop with insertion line, Now promote and ring
-- [ ] 3. Settings scene: Flash, Quiet, Appearance, Menu bar, Adding, Shortcuts, General
-- [ ] 4. Quick add panel
-- [ ] 5. Shared row component with context menu
-- [ ] Review: GPT phase review green
+- [x] 1. Queue window: three bands, every task key, tag tint, drags and drops
+      (banner, headings, "empty" lines, the Later shelf open or closed)
+- [x] 2. Board window: quadrants split three to two, drag and drop with the
+      insertion line, Now panel and heading promote and ring, the current
+      task can be dragged out of Now
+- [x] 3. Settings: Reminder (with Try it and Flash now), Quiet, Appearance,
+      Menu bar, Quick add, Keyboard, General
+- [x] 4. Quick add panel: floating, non-activating, opened with ⌘N for now;
+      Phase 6's global shortcut opens the same panel
+- [x] 5. Shared row component with context menu, inline rename and tooltips
+      only on cut titles
+- [x] Review: GPT phase review green (third pass)
 - [ ] Review: Fable approves the Phase 5 design
 
 ## Phase 5. Flash overlay
@@ -126,6 +132,28 @@ because this Mac cannot build the GTK crate.
 - [ ] Review: GPT phase review green
 
 ## Notes
+
+Deliberate differences from GNOME, so far:
+- Queue and Board are two windows, not two pages of one; `q` and `b` open
+  the other and keep this one open. Escape and ⌘W close a window; ⌘Q quits
+  the app. ⌘1 and ⌘2 open Queue and Board, ⌘, Settings, ⌘N quick add.
+- A task completed from a window can be undone from the popover.
+- Settings has a Menu bar section (the title's width in points) where GNOME
+  has Top bar; Mac-only settings live in UserDefaults.
+- The windows' controls sit beside the add field, not in a toolbar: a
+  toolbar rebuilt with every tick of the clock crashed AppKit's layout.
+
+Known gaps, to close later:
+- XCTest cannot type into the quick add panel: its accessibility does not
+  report the field as focused, though AppKit has given it the keyboard.
+  Opening and closing are tested; typing there is checked in Phase 6.
+- SwiftUI's accessibility folds a list's only row into the list, so that row
+  loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
+  accessibility.
+- ⌘1 never reaches the app on the Mac these tests were written on: something
+  outside the app takes it (the same menu item on ⌘3 fires at once, and ⌘2
+  and ⌘N work). The UI tests go back to the Queue by its button; check ⌘1 by
+  hand on a clean Mac in Phase 7.
 
 - `make test-extension-shell` fails in the container on `main` too: in the
   headless GNOME Shell 50 on arm64 the virtual pointer's x stays at 0, so the
@@ -268,3 +296,43 @@ Approved with changes, all taken:
 11. Flash now goes through the same path as a scheduled flash.
 12. Accessibility identifiers on every row, list, heading and field.
 
+### Phase 4, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. Focus recovery could take the add field from someone typing in it: with
+   the add field chosen, a task the keyboard had been on before going
+   elsewhere sent focus back to the tasks, and the next `d` completed one.
+   The rules moved into a pure `FocusKeeper` that tells a chosen add field
+   from AppKit's fallback to it.
+2. A click in the current task's rename field took focus to the panel and
+   ended the rename. The panel's click leaves a rename alone.
+3. Closing the Later shelf over a rename there left the rename open and
+   focus nowhere. Closing the shelf ends the rename; a task moved to Later
+   from the other window while renamed opens the shelf instead, and keeps
+   the edit.
+4. Settings had no message line, so a setting that could not be saved said
+   nothing with only Settings open. It has the shared one.
+5. The quiet hours pickers showed today's moment, so on a day the clocks
+   change 02:30 showed as 03:00 and could be saved so. They now show the
+   time in a zone that never changes its clocks.
+6. A drop mark showed in both windows. Marks carry their window.
+
+While fixing these: the app had two View menus (the standard one and its
+own); its commands now sit in the standard one. Each fix has a test that
+fails without it, checked by undoing the fix; the picker test reads the
+screen, since the picker's accessibility value is a moment, not the text.
+
+Second pass, not green:
+1. A task moved between lists still shown, or made current, would leave the
+   keyboard in the add field if AppKit dropped it there. It does not: SwiftUI
+   hands focus to the task's new row. The Queue's key test already moved and
+   promoted a task and kept using the keys; a Board test now does the same
+   through Side, Later and Now, and checks nothing reached the add field.
+   The keeper says why it relies on this rather than guess at intent from
+   the mouse, which would take the field from VoiceOver.
+2. A rename begun while the add field had the keyboard kept that choice, so
+   closing the shelf over it left the keyboard in the add field. Starting a
+   rename clears it.
+
+Third pass: green. The answer to the first finding was accepted; no
+further findings.

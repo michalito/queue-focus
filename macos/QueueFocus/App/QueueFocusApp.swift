@@ -31,6 +31,28 @@ struct QueueFocusApp: App {
             WithModel(delegate: delegate) { BoardWindow() }
         }
         .defaultSize(width: 1040, height: 640)
+        .commands { AppCommands(delegate: delegate) }
+    }
+}
+
+/// The app's menu commands. A menu bar app shows no menu bar, but their keys
+/// work while one of its windows is in front.
+private struct AppCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    let delegate: AppDelegate
+
+    var body: some Commands {
+        // In the standard View menu: a menu of their own would be a second one.
+        CommandGroup(before: .toolbar) {
+            Button("Queue") { openWindow(id: WindowID.queue) }
+                .keyboardShortcut("1")
+            Button("Board") { openWindow(id: WindowID.board) }
+                .keyboardShortcut("2")
+            Divider()
+            Button("Quick Add…") { delegate.quickAdd?.show() }
+                .keyboardShortcut("n")
+            Divider()
+        }
     }
 }
 
@@ -48,6 +70,7 @@ private struct WithModel<Content: View>: View {
             content()
                 .environment(model)
                 .environment(delegate.loginItem)
+                .environment(delegate.drag)
                 .withWindow { $0.isRestorable = false }
         }
     }

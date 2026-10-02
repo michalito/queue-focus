@@ -7,7 +7,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var model: QueueModel?
     /// Launch at login, as the gear menu and Settings both show it.
     let loginItem = LoginItem()
+    /// The one drag in progress, shared by the windows.
+    let drag = DragState()
     private var statusItem: StatusItemController?
+    /// The floating add field; Phase 6's global shortcut opens it too.
+    private(set) var quickAdd: QuickAddController?
     private var ticker: Timer?
     private var theme: Theme?
     private let log = Logger(subsystem: "org.queuefocus.QueueFocus", category: "app")
@@ -42,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(model: model, loginItem: loginItem, defaults: .standard, quit: {
             NSApp.terminate(nil)
         })
+        quickAdd = QuickAddController(model: model)
         model.didChange = { [weak self] in self?.modelDidChange() }
         modelDidChange()
         startTicking(model)
