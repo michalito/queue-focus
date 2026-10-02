@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Set Queue Focus's semantic version and GNOME extension revision safely."""
+"""Set Queue Focus's semantic version and GNOME extension revision safely.
+
+One command versions everything: the Cargo workspace, the GNOME extension's
+revision, and the macOS app, whose version is the semantic one without its
+build metadata and whose build number is the extension's revision (both only
+ever grow)."""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -20,6 +26,7 @@ CARGO_LOCK = ROOT / "Cargo.lock"
 EXTENSION_METADATA = (
     ROOT / "extension/queue-focus@queuefocus.org/metadata.json"
 )
+XCODE_PROJECT = ROOT / "macos/QueueFocus.xcodeproj/project.pbxproj"
 MAX_EXTENSION_VERSION = 2_147_483_647
 
 SEMVER = re.compile(
@@ -274,6 +281,45 @@ def replace_extension_version(metadata_text: str, old: int, new: int) -> str:
     )
 
 
+def xcode_marketing_version(version: str) -> str:
+    """The macOS app's version, as Finder and About show it: the semantic
+    version without its build metadata, which has no order."""
+    return version.split("+", 1)[0]
+
+
+def xcode_value(value: str) -> str:
+    """A build setting's value as the project file writes it: bare when it is
+    plain, quoted otherwise (a prerelease's hyphen)."""
+    return value if re.fullmatch(r"[A-Za-z0-9_./]+", value) else f'"{value}"'
+
+
+def replace_xcode_setting(project_text: str, name: str, value: str) -> str:
+    """Set `name` in the project's Debug and Release configurations."""
+    pattern = re.compile(rf'^(\s*{name} = )("?)([^";\n]*)\2;$', re.MULTILINE)
+    matches = list(pattern.finditer(project_text))
+    if len(matches) != 2:
+        raise VersionError(
+            f"expected {name} twice in the Xcode project, for Debug and Release, "
+            f"found {len(matches)}"
+        )
+    if len({match.group(3) for match in matches}) != 1:
+        raise VersionError(f"the Xcode project's Debug and Release {name} differ")
+    return pattern.sub(lambda match: f"{match.group(1)}{xcode_value(value)};", project_text)
+
+
+def check_xcode_project(project_text: str) -> None:
+    """Have plutil read the rewritten project, where there is one (macOS)."""
+    plutil = shutil.which("plutil")
+    if plutil is None:
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".pbxproj", encoding="utf-8") as file:
+        file.write(project_text)
+        file.flush()
+        result = subprocess.run([plutil, "-lint", file.name], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise VersionError(f"the rewritten Xcode project does not parse: {result.stdout.strip()}")
+
+
 def validate_extension_target(current: int, requested: int, app_changed: bool) -> None:
     if requested < 1 or requested > MAX_EXTENSION_VERSION:
         raise VersionError(
@@ -343,6 +389,7 @@ def main() -> int:
     cargo_text = read_text(CARGO_TOML)
     lock_text = read_text(CARGO_LOCK)
     metadata_text = read_text(EXTENSION_METADATA)
+    project_text = read_text(XCODE_PROJECT)
     current_version = workspace_version(cargo_text)
     current_extension_version = extension_version(metadata_text)
     if arguments.version is None:
@@ -375,6 +422,14 @@ def main() -> int:
     updated_metadata = replace_extension_version(
         metadata_text, current_extension_version, requested_extension_version
     )
+    marketing_version = xcode_marketing_version(requested_version)
+    updated_project = replace_xcode_setting(
+        replace_xcode_setting(project_text, "MARKETING_VERSION", marketing_version),
+        "CURRENT_PROJECT_VERSION",
+        str(requested_extension_version),
+    )
+    if updated_project != project_text:
+        check_xcode_project(updated_project)
 
     updates = {
         path: contents
@@ -382,6 +437,7 @@ def main() -> int:
             (CARGO_TOML, cargo_text, updated_cargo),
             (CARGO_LOCK, lock_text, updated_lock),
             (EXTENSION_METADATA, metadata_text, updated_metadata),
+            (XCODE_PROJECT, project_text, updated_project),
         )
         if contents != original
     }
@@ -393,6 +449,7 @@ def main() -> int:
         "GNOME extension revision: "
         f"{current_extension_version} -> {requested_extension_version}"
     )
+    print(f"macOS app: version {marketing_version}, build {requested_extension_version}")
     if not updates:
         print("version files already up to date")
     return 0
