@@ -135,7 +135,7 @@ because this Mac cannot build the GTK crate.
 - [ ] 4. GitHub Release of 0.6.0, unsigned, after the hand checks; Homebrew
       cask and Sparkle later
 - [x] 5. README macOS section and Source layout
-- [x] Review: GPT phase review green (second pass)
+- [x] Review: GPT phase review green (third pass, with the unsigned release)
 
 ## Notes
 
@@ -759,3 +759,10 @@ Second pass: green, no findings. GPT reran the version tests, the engine
 and Swift binding tests and the dry run, and saw Gatekeeper reject the ad
 hoc app with exit code 3. Not run: XCTest (see Phase 7), and the real
 signing and notarization, which need the Developer ID.
+
+Third pass, on the unsigned release (the user's call: no Developer ID yet)
+and version 0.6.0: green, no findings. GPT checked each of the script's
+three modes step by step, the README's ways to open an app that is not
+notarized against Apple's guidance for macOS 15 and 14, and that the
+version is 0.6.0 everywhere, build 11; it reran the version tests and the
+dry run.
