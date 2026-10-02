@@ -13,6 +13,27 @@ struct UndoOffer: Equatable {
     let expires: Date
 }
 
+/// What completing the current task came to.
+enum CurrentCompletion: Equatable {
+    case done(QueueTask)
+    /// Now held no task.
+    case empty
+    /// The engine refused, or could not save; the message says why.
+    case failed(String)
+
+    var task: QueueTask? {
+        if case .done(let task) = self { task } else { nil }
+    }
+}
+
+/// What taking a completion back came to.
+enum UndoResult: Equatable {
+    case undone
+    /// The queue changed since, so the engine no longer has it to give back.
+    case stale
+    case failed(String)
+}
+
 /// The app's one engine, and everything the views show of it.
 ///
 /// Every request goes to the engine, then the model takes a fresh snapshot;
@@ -42,6 +63,8 @@ final class QueueModel {
     @ObservationIgnored var didChange: @MainActor () -> Void = {}
     /// Told when the reminder says to flash.
     @ObservationIgnored var presentFlash: @MainActor (FlashEvent) -> Void = { _ in }
+    /// Told of every problem the engine reports, after the message line is.
+    @ObservationIgnored var didReport: @MainActor ([String]) -> Void = { _ in }
 
     @ObservationIgnored private let engine: QueueEngine
     @ObservationIgnored private let clock: () -> Date
@@ -92,10 +115,13 @@ final class QueueModel {
         return perform { try engine.add(text: text, bucket: asCurrent ? .now : nil) } != nil
     }
 
-    /// Complete the current task, pulling the head of Next into Now. Returns
-    /// the task that was completed, for the caller to offer to undo.
-    func completeCurrent() -> QueueTask? {
-        perform { try engine.completeCurrent() } ?? nil
+    /// Complete the current task, pulling the head of Next into Now. A task
+    /// completed is the caller's to offer to undo.
+    func completeCurrent() -> CurrentCompletion {
+        guard let completed = perform({ try engine.completeCurrent() }) else {
+            return .failed(actionError ?? "")
+        }
+        return completed.map(CurrentCompletion.done) ?? .empty
     }
 
     /// Mark a listed task done. Returns whether it was.
@@ -107,26 +133,44 @@ final class QueueModel {
     /// Offer to undo the completion of `task`, which has just been made. Only
     /// the latest completion can be undone, so this replaces any other offer.
     func offerUndo(for task: QueueTask) {
+        offerUndo(id: task.id, title: task.title)
+    }
+
+    /// Offer to undo the completion of task `id` again, for another eight
+    /// seconds: the engine still has it, though the first offer ran out.
+    func offerUndo(id: UInt64, title: String) {
         now = clock()
         undoOffer = UndoOffer(
-            id: task.id,
-            title: task.title,
+            id: id,
+            title: title,
             revision: snapshot.revision,
             expires: now.addingTimeInterval(Self.undoWindow)
         )
     }
 
-    /// Take back the completion on offer.
-    /// Take back the completion on offer. The offer stays when the undo
-    /// could not be saved, so it can be tried again; the engine keeps its
-    /// record for the same reason.
+    /// Take back the completion on offer, and say so on the message line if
+    /// the queue has changed since.
     func undo() {
         guard let offer = undoOffer else { return }
-        guard let undone = perform({ try engine.undoComplete(id: offer.id) }) else { return }
-        undoOffer = nil
-        if !undone {
+        if undo(id: offer.id) == .stale {
             actionError = "Nothing to undo: the queue changed since."
         }
+    }
+
+    /// Take back the completion of task `id`, on offer here or not: a
+    /// notification can offer it for longer. An offer for it goes once it
+    /// is undone or cannot be; it stays when the undo could not be saved, so
+    /// it can be tried again, and the engine keeps its record for the same
+    /// reason.
+    @discardableResult
+    func undo(id: UInt64) -> UndoResult {
+        guard let undone = perform({ try engine.undoComplete(id: id) }) else {
+            return .failed(actionError ?? "")
+        }
+        if undoOffer?.id == id {
+            undoOffer = nil
+        }
+        return undone ? .undone : .stale
     }
 
     func togglePause() {
@@ -245,6 +289,7 @@ final class QueueModel {
             log.error("\(problem, privacy: .public)")
         }
         self.problems = Array((self.problems + problems).suffix(Self.keptProblems))
+        didReport(problems)
     }
 
     func dismissProblems() {

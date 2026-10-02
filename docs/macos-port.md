@@ -99,16 +99,16 @@ because this Mac cannot build the GTK crate.
 - [x] 5. A new flash replaces a running one; panel released at the end
 - [x] 6. Hidden launch argument to render a style; Flash now uses the engine
 - [x] Review: GPT phase review green (second pass)
-- [ ] Review: Fable approves the Phase 6 design
+- [x] Review: Fable approves the Phase 6 design (with changes, all taken)
 
 ## Phase 6. Hotkeys, notifications, automation
 
-- [ ] 1. KeyboardShortcuts with the four actions and a recorder in Settings
-- [ ] 2. Complete-current notification with Undo; fallback to the popover
-- [ ] 3. Empty Now reports nothing to complete
-- [ ] 4. One notification per durability or settings failure
-- [ ] 5. Optional: URL scheme and App Intents
-- [ ] Review: GPT phase review green
+- [x] 1. KeyboardShortcuts with the four actions and a recorder in Settings
+- [x] 2. Complete-current notification with Undo; fallback to the popover
+- [x] 3. Empty Now reports nothing to complete
+- [x] 4. One notification per durability or settings failure
+- [x] 5. Optional: URL scheme (add, show) and App Intents
+- [x] Review: GPT phase review green (fourth pass)
 - [ ] Review: Fable approves the Phase 7 design
 
 ## Phase 7. Quality
@@ -146,14 +146,32 @@ Deliberate differences from GNOME, so far:
   the primary monitor; the top bar styles colour the menu bar (or the notch
   row, which is taller). Reduce Motion holds it still for 1.5 s, as GNOME
   does with animations off.
+- The global shortcuts are Control-Option with GNOME's letters (Super is
+  taken on the Mac); they are changed in Settings, not with
+  `queue-focus-setup`.
+- A Done notification goes once the queue changes, since its Undo could no
+  longer work; GNOME's go with the extension's next action. Banners show
+  even while the app is in front. With notifications off, or before the
+  user has answered the first request, the popover opens with its Undo row
+  instead.
+- `queuefocus://add?text=…` (`&now=1`) and `queuefocus://show?view=…`
+  (queue, board, add) do what the D-Bus `Add` and `Show` do. There is no
+  link to complete a task: any web page can open a link. Shortcuts has Add
+  a Task, Complete the Current Task and Get the Current Task.
+- `-notifications off` keeps the app from asking for notifications; the UI
+  tests pass it, and move the global shortcuts to Control-Option-Shift
+  with J, L, K and U through the launch arguments.
 - `-flashPreview <style>` (`all` for the six in turn), with
   `-flashIntensity` and `-flashPalette`, draws a flash with a sample task
   two seconds after launch, for checking a style by eye.
 
 Known gaps, to close later:
-- XCTest cannot type into the quick add panel: its accessibility does not
-  report the field as focused, though AppKit has given it the keyboard.
-  Opening and closing are tested; typing there is checked in Phase 6.
+- ⌃⌥D is also Rectangle's default for "First Third", and two apps can hold
+  one hot key without either knowing, so both act. Settings says to change
+  a shortcut that does nothing.
+- The real notification, with its Undo button, needs the user to allow
+  notifications; check it by hand once (the logic is tested against a
+  stand-in Notification Center).
 - SwiftUI's accessibility folds a list's only row into the list, so that row
   loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
   accessibility.
@@ -405,3 +423,96 @@ First pass, not green:
 Second pass: green, no findings. It sampled every easing step against
 Clutter's formula and checked `safeTitle` against JavaScript's white space
 for every Unicode scalar.
+
+### Phase 6 design, Fable
+
+Approved with changes, all taken. Spikes behind them: KeyboardShortcuts
+3.1.0 builds for macOS 14 under Swift 6; two processes can register the
+same hot key and both are told; the shortcut store can be overridden from
+the launch arguments without touching the user's defaults.
+1. Completing the current task says whether it was done, Now was empty, or
+   the save failed; a failure is a note with the reason, not "Nothing in
+   Now".
+2. Nothing waits on the permission prompt: the first time, the popover
+   offers the undo and the request is for next time.
+3. The notification delegate and the Done category with its Undo are set
+   up at launch; a Done note from a previous run is withdrawn at launch and
+   at quit, since the engine's undo record does not outlive the app.
+4. Windows open from AppKit through SwiftUI's own actions, lent by a view
+   kept in the status item; a shortcut brings the app in front with
+   `activate(ignoringOtherApps:)`, since plain `activate()` only asks.
+5. UI tests never ask for notifications and never press the real
+   shortcuts; no UI test records a shortcut into the user's defaults.
+6. A completion while the popover is open is offered in its row only.
+7. A recorder refuses a shortcut another of the four already has.
+8. The model reports problems to a closure; notifications stay outside it.
+9. Links add and show only.
+10. Hosted unit tests never touch the shortcut store or Carbon.
+11. Undo from a note clears the popover's offer, and says "Nothing to undo"
+    or why it failed.
+12. Package versions come from the committed Package.resolved only.
+
+Found while building it:
+- A link that starts the app arrives before the queue is open; it was
+  dropped, and is now held until the queue opens.
+- The quick add field could miss the keyboard the first time the panel
+  opened, before SwiftUI had built it. The panel is laid out first and the
+  field focused at once, then again once SwiftUI settles. A hosted test
+  now types into the panel five times over; with the old code it fails.
+- XCTest's function keys never match a hot key, so the test shortcuts use
+  letters; XCTest opens every link in a fresh copy of the app, so the link
+  test covers a link that starts the app, and the unit tests the rest.
+
+### Phase 6, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. A Done note could outlive its undo: the queue could change, or a second
+   completion overtake the first, while the permission was looked up. The
+   completion's revision is taken before the wait and checked after it;
+   tests hold the answer back and change the queue, or answer two
+   completions out of order.
+2. Undo from a note that could not be saved withdrew the note first, so
+   nothing was left to try again with once the popover's eight seconds were
+   up. The note now stays, saying why, with its Undo; tests break and then
+   repair the task file.
+3. A link that could not add said nothing with notifications off; it now
+   opens the popover with the reason on its message line.
+4. A link's failure was read after the next link had cleared it; the
+   reason is taken at once, by a `LinkFollower` the tests drive.
+5. A note Notification Center would not take still counted as shown; the
+   notifier now says whether it was, and the popover opens if not.
+6. The Settings test checked one label; it now reads all four recorders'
+   keys, and refusing another action's key is a pure rule with its own
+   test.
+
+Each of 1, 2, 3 and 5 has a test that fails with its fix undone. Also: a UI
+test that followed one which quits and restarts the app sometimes clicked
+the menu bar while it was laying its items out again; tests now wait for
+the status item to stay put after launch.
+
+Second pass, not green: six ways for answers that arrive late to mislead,
+and one wrong reason.
+1. A retry note could be posted after the queue had moved on.
+2. An older completion's note, answered last, could replace the newer one
+   and then be withdrawn with it.
+3. A late Undo on an older note withdrew the newer note.
+4. A failed undo with no note to show lost its Undo once the popover's eight
+   seconds were up.
+5. Two failures answered out of order left the older reason on the message
+   line.
+6. A failed completion's reason could be cleared by a request in between.
+7. Add a Task with blank text gave whatever reason an earlier failure left.
+Notices now handles one request at a time, in the order they came, and
+whatever waited checks the queue again before it says anything; an Undo
+withdraws only its own note; the fallback renews the popover's offer and
+shows the reason it kept; the intent says blank text is nothing to add.
+Each has a test that fails with its fix undone; the stand-in Notification
+Center holds back permission answers and posts to make the races happen.
+
+Third pass, not green: two fallbacks still fell short. A completion whose
+permission answer, or refused note, took longer than eight seconds opened
+the popover after its offer had run out; it is renewed as the popover
+opens. A stale Undo with no note to say so said nothing; it now says so on
+the popover's message line. Each has a test that fails without its fix.
+
+Fourth pass: green, no findings.

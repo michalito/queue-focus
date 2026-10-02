@@ -20,6 +20,10 @@
 		};
 /* End PBXAggregateTarget section */
 
+/* Begin PBXBuildFile section */
+		B00000000000000000000201 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = B00000000000000000000202 /* KeyboardShortcuts */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		B00000000000000000000040 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -92,6 +96,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B00000000000000000000201 /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -155,6 +160,7 @@
 			);
 			name = QueueFocus;
 			packageProductDependencies = (
+				B00000000000000000000202 /* KeyboardShortcuts */,
 			);
 			productName = QueueFocus;
 			productReference = B00000000000000000000001 /* Queue Focus.app */;
@@ -231,6 +237,9 @@
 			);
 			mainGroup = B00000000000000000000101;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B00000000000000000000203 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B00000000000000000000102 /* Products */;
 			projectDirPath = "";
@@ -534,6 +543,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B00000000000000000000203 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = exactVersion;
+				version = 3.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B00000000000000000000202 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B00000000000000000000203 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B00000000000000000000100 /* Project object */;
 }

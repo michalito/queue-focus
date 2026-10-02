@@ -9,6 +9,11 @@
 /macos/QfCore/Sources/QfCore/QfCore.swift
 /macos/QfCore/.build
 /macos/QfCore/.swiftpm
-# Xcode's per-user and per-workspace state.
-/macos/QueueFocus.xcodeproj/project.xcworkspace/
+# Xcode's per-user and per-workspace state, but for the pinned packages.
+/macos/QueueFocus.xcodeproj/project.xcworkspace/*
+!/macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/
+/macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/*
+!/macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+/macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!/macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 /macos/QueueFocus.xcodeproj/xcuserdata/

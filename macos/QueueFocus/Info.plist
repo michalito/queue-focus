@@ -6,6 +6,18 @@
 	     writes the settings and keeps the reminder's schedule. -->
 	<key>NSAppSleepDisabled</key>
 	<true/>
+	<!-- queuefocus: links, to add a task or open a view (see AppURL). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.queuefocus.QueueFocus</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>queuefocus</string>
+			</array>
+		</dict>
+	</array>
 	<!-- What a dragged task is, inside the app only. -->
 	<key>UTExportedTypeDeclarations</key>
 	<array>

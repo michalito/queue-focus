@@ -4,6 +4,28 @@ import XCTest
 /// tests need to drive it.
 @MainActor
 class AppUITestCase: XCTestCase {
+    /// The global shortcuts, moved for the tests to keys nothing else uses
+    /// (Control-Option-Shift with J, L, K and U), so a test never presses the
+    /// real ones, which another copy of the app, or another app, may hold.
+    /// They go in the launch arguments, so the user's settings stay as they
+    /// are. (Function keys typed by XCTest never match a hot key.)
+    static let testShortcuts: [(name: String, key: XCUIKeyboardKey, carbonKeyCode: Int)] = [
+        ("toggleQueue", XCUIKeyboardKey(rawValue: "j"), 38),
+        ("quickAdd", XCUIKeyboardKey(rawValue: "l"), 37),
+        ("showBoard", XCUIKeyboardKey(rawValue: "k"), 40),
+        ("completeCurrent", XCUIKeyboardKey(rawValue: "u"), 32),
+    ]
+    static let testShortcutModifiers: XCUIElement.KeyModifierFlags = [.control, .option, .shift]
+    private static let carbonModifiers = 4096 + 2048 + 512
+
+    /// Press the global shortcut for `name`, as moved for the tests.
+    func pressShortcut(_ name: String) {
+        guard let shortcut = Self.testShortcuts.first(where: { $0.name == name }) else {
+            return XCTFail("no shortcut \(name)")
+        }
+        app.typeKey(shortcut.key, modifierFlags: Self.testShortcutModifiers)
+    }
+
     var app: XCUIApplication!
     var dataHome: URL!
 
@@ -32,6 +54,14 @@ class AppUITestCase: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["XDG_DATA_HOME"] = dataHome.path
         app.launchArguments += ["-allowSecondInstance", "YES"] + arguments
+        // Asking for notifications would put the system's prompt on screen.
+        app.launchArguments += ["-notifications", "off"]
+        for shortcut in Self.testShortcuts {
+            // A string in the arguments' plist syntax, holding the JSON
+            // KeyboardShortcuts stores.
+            let json = #"{\"carbonKeyCode\":\#(shortcut.carbonKeyCode),\"carbonModifiers\":\#(Self.carbonModifiers)}"#
+            app.launchArguments += ["-KeyboardShortcuts_\(shortcut.name)", "\"\(json)\""]
+        }
         if restoringState {
             // As for someone who keeps windows when quitting an app.
             app.launchArguments += ["-ApplePersistenceIgnoreState", "NO", "-NSQuitAlwaysKeepsWindows", "YES"]
@@ -44,7 +74,22 @@ class AppUITestCase: XCTestCase {
         self.app = app
         self.dataHome = dataHome
         XCTAssertTrue(statusItem.waitForExistence(timeout: 10), "the status item appears")
+        waitForTheMenuBarToSettle()
         XCTAssertEqual(app.windows.count, 0, "a menu bar app opens no window at launch: \(app.windows.debugDescription)")
+    }
+
+    /// The menu bar lays its items out again as an app's item comes or goes,
+    /// such as the one of the copy a test before this one quit; a click while
+    /// it does lands where the item was. Wait until it stays put.
+    func waitForTheMenuBarToSettle() {
+        var last = statusItem.frame
+        var still = 0
+        for _ in 0..<20 where still < 2 {
+            Thread.sleep(forTimeInterval: 0.25)
+            let frame = statusItem.frame
+            still = frame == last ? still + 1 : 0
+            last = frame
+        }
     }
 
     /// The saved queue, as the engine wrote it.

@@ -16,7 +16,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// keyboard back to when it closes.
     private var previousApp: NSRunningApplication?
 
-    init(model: QueueModel, loginItem: LoginItem, defaults: UserDefaults, quit: @escaping () -> Void) {
+    init(model: QueueModel, loginItem: LoginItem, windows: AppWindows, defaults: UserDefaults, quit: @escaping () -> Void) {
         self.model = model
         self.defaults = defaults
         super.init()
@@ -26,6 +26,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.action = #selector(clicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.setAccessibilityIdentifier(Self.identifier)
+            // Always in a window, so SwiftUI's window actions reach AppKit.
+            button.addSubview(NSHostingView(rootView: WindowActionsBridge(windows: windows)))
         }
         item.autosaveName = "QueueFocusStatusItem"
 
@@ -95,12 +97,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
+    var isPopoverShown: Bool { popover.isShown }
+
     func showPopover() {
         guard let button = item.button else { return }
-        // An accessory app must be active for the add field to take the keys.
+        // An accessory app must be active for the add field to take the keys,
+        // and a global shortcut, unlike a click, is not reason enough for the
+        // system to let it be.
         previousApp = NSWorkspace.shared.frontmostApplication
         if previousApp == .current { previousApp = nil }
-        NSApp.activate()
+        Activation.takeFront()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
     }
