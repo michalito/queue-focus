@@ -490,3 +490,22 @@ test that followed one which quits and restarts the app sometimes clicked
 the menu bar while it was laying its items out again; tests now wait for
 the status item to stay put after launch.
 
+Second pass, not green: six ways for answers that arrive late to mislead,
+and one wrong reason.
+1. A retry note could be posted after the queue had moved on.
+2. An older completion's note, answered last, could replace the newer one
+   and then be withdrawn with it.
+3. A late Undo on an older note withdrew the newer note.
+4. A failed undo with no note to show lost its Undo once the popover's eight
+   seconds were up.
+5. Two failures answered out of order left the older reason on the message
+   line.
+6. A failed completion's reason could be cleared by a request in between.
+7. Add a Task with blank text gave whatever reason an earlier failure left.
+Notices now handles one request at a time, in the order they came, and
+whatever waited checks the queue again before it says anything; an Undo
+withdraws only its own note; the fallback renews the popover's offer and
+shows the reason it kept; the intent says blank text is nothing to add.
+Each has a test that fails with its fix undone; the stand-in Notification
+Center holds back permission answers and posts to make the races happen.
+

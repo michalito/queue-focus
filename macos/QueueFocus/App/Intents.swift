@@ -8,7 +8,7 @@ enum IntentHost {
 }
 
 /// Why an intent could not do what it was asked.
-enum IntentFailure: Error, CustomLocalizedStringResourceConvertible {
+enum IntentFailure: Error, Equatable, CustomLocalizedStringResourceConvertible {
     case notOpen
     case failed(String)
 
@@ -34,8 +34,13 @@ struct AddTaskIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let model = IntentHost.model else { throw IntentFailure.notOpen }
+        // Blank text asks nothing of the engine, so it leaves no reason of
+        // its own: an earlier one would be wrong.
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw IntentFailure.failed("There was nothing to add.")
+        }
         guard model.add(text, asCurrent: asCurrent) else {
-            throw IntentFailure.failed(model.actionError ?? "There was nothing to add.")
+            throw IntentFailure.failed(model.actionError ?? "The task could not be added.")
         }
         return .result(dialog: "Added.")
     }

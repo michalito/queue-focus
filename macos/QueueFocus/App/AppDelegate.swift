@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The record a Done note from before could undo went with the app.
         notices.withdrawDone()
         model.didReport = { problems in
-            Task { await notices.report(problems) }
+            notices.report(problems)
         }
         Hotkey.install { [weak self] in self?.perform($0) }
         model.didChange = { [weak self] in self?.modelDidChange() }
@@ -86,8 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard UserDefaults.standard.string(forKey: "notifications") != "off" else { return SilentNotifier() }
         let notifier = SystemNotifier()
         notifier.onUndo = { [weak self] id in
-            guard let notices = self?.notices else { return }
-            Task { await notices.undo(id: id) }
+            self?.notices?.undo(id: id)
         }
         return notifier
     }
@@ -101,8 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .quickAdd:
             quickAdd?.show()
         case .completeCurrent:
-            guard let notices else { return }
-            Task { await notices.completeCurrent() }
+            notices?.completeCurrent()
         }
     }
 
@@ -119,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .quickAdd: self?.quickAdd?.show()
             }
         }, failed: { title, reason in
-            Task { await notices.failed(title, reason) }
+            notices.failed(title, reason)
         }).follow(link)
     }
 

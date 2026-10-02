@@ -27,8 +27,10 @@ import Testing
         add.asCurrent = true
         _ = try await add.perform()
         #expect(model.snapshot.current?.title == "ship")
+        // Blank text says so, not whatever failed before it.
+        model.actionError = "could not save, earlier"
         add.text = "  "
-        await #expect(throws: IntentFailure.self) { try await add.perform() }
+        await #expect(throws: IntentFailure.failed("There was nothing to add.")) { try await add.perform() }
     }
 
     @Test func completingOffersUndoAndSaysWhenNowIsEmpty() async throws {

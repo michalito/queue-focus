@@ -133,10 +133,16 @@ final class QueueModel {
     /// Offer to undo the completion of `task`, which has just been made. Only
     /// the latest completion can be undone, so this replaces any other offer.
     func offerUndo(for task: QueueTask) {
+        offerUndo(id: task.id, title: task.title)
+    }
+
+    /// Offer to undo the completion of task `id` again, for another eight
+    /// seconds: the engine still has it, though the first offer ran out.
+    func offerUndo(id: UInt64, title: String) {
         now = clock()
         undoOffer = UndoOffer(
-            id: task.id,
-            title: task.title,
+            id: id,
+            title: title,
             revision: snapshot.revision,
             expires: now.addingTimeInterval(Self.undoWindow)
         )
