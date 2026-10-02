@@ -354,7 +354,8 @@ struct SectionHeading: View {
     }
 }
 
-/// Why the last request failed, or the latest problem the engine reported.
+/// Why the last request failed, that the settings cannot be written, or
+/// the latest problem the engine reported.
 struct MessageLine: View {
     @Environment(QueueModel.self) private var model
 
@@ -362,6 +363,10 @@ struct MessageLine: View {
         if let error = model.actionError {
             message(error, color: .red, systemImage: "exclamationmark.circle") {
                 model.actionError = nil
+            }
+        } else if let problem = model.settingsProblem {
+            message(problem, color: .orange, systemImage: "exclamationmark.triangle") {
+                model.dismissSettingsProblem()
             }
         } else if let problem = model.problems.last {
             message(problem, color: .orange, systemImage: "exclamationmark.triangle") {

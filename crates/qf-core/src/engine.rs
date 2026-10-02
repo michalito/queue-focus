@@ -69,6 +69,8 @@ pub struct Tick {
     pub flash: Option<FlashEvent>,
     /// The settings could not be written. Reported once per outage.
     pub settings_problem: Option<String>,
+    /// A write worked after an outage was reported: what it said is over.
+    pub settings_outage_ended: bool,
 }
 
 #[derive(Debug)]
@@ -283,7 +285,9 @@ impl Engine {
     /// is the unix time, `local_time` the time of day the quiet hours read,
     /// and `random` any number.
     pub fn tick(&mut self, now: u64, local_time: TimeOfDay, random: u32) -> Tick {
+        let was_out = self.settings.in_outage();
         let settings_problem = self.settings.tick();
+        let settings_outage_ended = was_out && !self.settings.in_outage();
         let flash = self.reminder.tick(
             self.tasks.store(),
             self.settings.get(),
@@ -294,6 +298,7 @@ impl Engine {
         Tick {
             flash,
             settings_problem,
+            settings_outage_ended,
         }
     }
 
@@ -723,6 +728,27 @@ mod tests {
             assert_eq!(engine.tick(NOON + second, noon(), 0), Tick::default());
         }
         assert!(engine.flush().is_none(), "one outage, one complaint");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_tick_says_once_when_a_settings_outage_ends() {
+        let dir = temp_dir("tick-outage-ends");
+        let mut engine = open(&dir);
+        fs::create_dir_all(dir.join("settings.json")).unwrap();
+        engine.update_settings(|s| s.vary = false);
+        assert!(engine.tick(NOON, noon(), 0).settings_problem.is_some());
+        fs::remove_dir_all(dir.join("settings.json")).unwrap();
+        let ended: Vec<u64> = (1..=40)
+            .filter(|second| engine.tick(NOON + second, noon(), 0).settings_outage_ended)
+            .collect();
+        assert_eq!(ended.len(), 1, "once, on the write that worked: {ended:?}");
+        assert!(
+            !crate::load_settings(&dir.join("settings.json"))
+                .unwrap()
+                .vary,
+            "and it wrote the change"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 

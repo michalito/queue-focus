@@ -315,16 +315,19 @@ impl QueueEngine {
         let local_time = local_time.try_into().map_err(invalid)?;
         let mut state = self.lock();
         let mut flash = None;
+        let mut settings_problem = None;
+        let mut settings_outage_ended = false;
         if state.damaged.is_none() {
             let tick = state.engine.tick(now, local_time, random);
-            if let Some(problem) = tick.settings_problem {
-                state.report(problem);
-            }
+            settings_problem = tick.settings_problem;
+            settings_outage_ended = tick.settings_outage_ended;
             flash = tick.flash.map(Into::into);
         }
         Ok(TickResult {
             flash,
             problems: std::mem::take(&mut state.problems),
+            settings_problem,
+            settings_outage_ended,
         })
     }
 

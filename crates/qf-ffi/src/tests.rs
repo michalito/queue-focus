@@ -378,13 +378,31 @@ fn a_settings_write_failure_is_one_problem_per_outage() {
     settings.vary = false;
     engine.set_settings(settings).unwrap();
 
-    let problems = engine.tick(0, noon(), 0).unwrap().problems;
-    assert_eq!(problems.len(), 1);
-    assert!(problems[0].contains("settings.json"), "{problems:?}");
+    let tick = engine.tick(0, noon(), 0).unwrap();
+    assert!(
+        tick.problems.is_empty(),
+        "the outage is not one of the one-off problems"
+    );
+    let problem = tick.settings_problem.unwrap();
+    assert!(problem.contains("settings.json"), "{problem}");
     for second in 1..=40 {
-        assert!(engine.tick(second, noon(), 0).unwrap().problems.is_empty());
+        let tick = engine.tick(second, noon(), 0).unwrap();
+        assert!(tick.problems.is_empty() && tick.settings_problem.is_none());
+        assert!(!tick.settings_outage_ended);
     }
     assert!(engine.flush().is_empty(), "one outage, one complaint");
+
+    // The file can be written again: the next attempt works, and says so.
+    fs::remove_dir_all(dir.join("settings.json")).unwrap();
+    let ended: Vec<u64> = (41..=80)
+        .filter(|&second| {
+            engine
+                .tick(second, noon(), 0)
+                .unwrap()
+                .settings_outage_ended
+        })
+        .collect();
+    assert_eq!(ended.len(), 1, "{ended:?}");
     fs::remove_dir_all(dir).unwrap();
 }
 

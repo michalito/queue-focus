@@ -275,8 +275,13 @@ pub struct TickResult {
     /// A flash to draw now.
     pub flash: Option<FlashEvent>,
     /// Failures to report, one notification each: changes saved without
-    /// being made crash-safe, and settings that could not be written.
+    /// being made crash-safe, and internal errors.
     pub problems: Vec<String>,
+    /// The settings could not be written: said once an outage, and so until
+    /// `settings_outage_ended`.
+    pub settings_problem: Option<String>,
+    /// A write worked after `settings_problem`: what it said is over.
+    pub settings_outage_ended: bool,
 }
 
 /// The range of the "flash every" slider, in minutes.
