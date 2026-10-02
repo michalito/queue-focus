@@ -815,3 +815,14 @@ and the core, bindings and app tests run here. Each finding, checked:
     documented: recovery after a panic reloads from the files, dropping a
     settings change not yet written; and while the files cannot be read,
     each call tries again, which is how it recovers when they can.
+
+GPT on these answers, first pass, not green: two of them fell short.
+1. The dimmed colour, `labelColor.withAlphaComponent(0.7)`, was fixed when
+   made: black at 70%, unreadable on a dark menu bar. It is now worked out
+   for the appearance it is drawn in, the menu bar's text colour at 70%;
+   a test resolves it in the light, dark and vibrant appearances, and fails
+   on the old colour.
+2. A reload after an internal error drops the settings change, and with it
+   the outage, but nothing said so: the old problem stayed. The next tick
+   now says the outage is over, and a new one begun on that tick is still
+   told; a test starts the engine over mid-outage, and fails without it.
