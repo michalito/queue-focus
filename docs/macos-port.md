@@ -826,3 +826,9 @@ GPT on these answers, first pass, not green: two of them fell short.
    the outage, but nothing said so: the old problem stayed. The next tick
    now says the outage is over, and a new one begun on that tick is still
    told; a test starts the engine over mid-outage, and fails without it.
+
+Second pass: green, no findings. GPT resolved the colour in the light,
+dark, vibrant and high-contrast appearances and in a highlighted draw, and
+saw both new tests fail without their fixes. Still to run: the UI tests,
+the second click on the status item among them, once the screen is
+unlocked.
