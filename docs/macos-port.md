@@ -121,7 +121,7 @@ because this Mac cannot build the GTK crate.
 - [x] 6. Overlay on a second display and over full screen; crowded menu bar
       (by hand: see the hand checks below)
 - [x] Review: GPT phase review green (sixth pass, with the test runs)
-- [ ] Review: Fable approves the Phase 8 design
+- [x] Review: Fable approves the Phase 8 design (with changes, all taken)
 
 ## Phase 8. Release
 
@@ -132,7 +132,7 @@ because this Mac cannot build the GTK crate.
 - [ ] 4. GitHub Release — the user's to make, with the certificate and
       after the hand checks; Homebrew cask and Sparkle later
 - [x] 5. README macOS section and Source layout
-- [ ] Review: GPT phase review green
+- [x] Review: GPT phase review green (second pass)
 
 ## Notes
 
@@ -751,3 +751,8 @@ First pass, not green:
    which drop any build metadata; they now say which is which.
 8. The macOS job cached a directory the engine is not built in; it caches
    the two per-target ones.
+
+Second pass: green, no findings. GPT reran the version tests, the engine
+and Swift binding tests and the dry run, and saw Gatekeeper reject the ad
+hoc app with exit code 3. Not run: XCTest (see Phase 7), and the real
+signing and notarization, which need the Developer ID.
