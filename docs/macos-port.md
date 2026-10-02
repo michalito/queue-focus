@@ -224,7 +224,7 @@ Hand checks, which a test cannot make here:
 | Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
 | Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
 | Quick add window | A floating panel: ⌃⌥⇧Q or ⌘N; Return adds, ⌘Return adds as current, Escape closes. | QuickAddTests, QuickAddUITests |
-| Install, update, uninstall, choose the version | Not yet: Phase 8 (a notarized app). | — |
+| Install, update, uninstall, choose the version | A signed, notarized disk image from the GitHub release, checked with its checksum; updated by replacing the app; no installer, so no version to choose beyond the release downloaded. Uninstalling turns off Launch at Login and deletes the app, and optionally the data and the defaults domain. | `release-mac.sh` checks, the release dry run, hand checks |
 | Global shortcuts | ⌃⌥Q, ⌃⌥⇧Q, ⌃⌥B, ⌃⌥D, changed in Settings rather than with `queue-focus-setup`; no Accessibility permission. | HotkeyTests, HotkeyUITests |
 | The flash reminder | The same six styles, envelopes and card, on the screen with the menu bar; the top bar styles colour the menu bar; Reduce Motion holds it still for 1.5 s, as GNOME does with animations off. | FlashPlanTests, FlashStageTests, FlashControllerTests, FlashUITests |
 | Add tasks | The same markers: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, WindowUITests |
