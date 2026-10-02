@@ -338,24 +338,21 @@ struct BucketList: View {
         } else {
             VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: style.gap) {
-                ForEach(tasks, id: \.id) { task in
-                    TaskRow(task: task, style: style, focus: focus)
-                        .rowFrame(task.id, in: space)
-                        .overlay(alignment: .top) {
-                            if drag.marks(.before(task.id), in: context.page) {
-                                InsertionLine().offset(y: -style.gap / 2 - 1)
+                    ForEach(tasks, id: \.id) { task in
+                        TaskRow(task: task, style: style, focus: focus)
+                            .rowFrame(task.id, in: space)
+                            .overlay(alignment: .top) {
+                                if drag.marks(.before(task.id), in: context.page) {
+                                    InsertionLine().offset(y: -style.gap / 2 - 1)
+                                }
                             }
-                        }
-                        .overlay(alignment: .bottom) {
-                            if drag.marks(.end(bucket), in: context.page), task.id == tasks.last?.id {
-                                InsertionLine().offset(y: style.gap / 2 + 1)
+                            .overlay(alignment: .bottom) {
+                                if drag.marks(.end(bucket), in: context.page), task.id == tasks.last?.id {
+                                    InsertionLine().offset(y: style.gap / 2 + 1)
+                                }
                             }
-                        }
+                    }
                 }
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(BucketName.of(bucket))
-                .accessibilityIdentifier("list-\(BucketName.of(bucket).lowercased())")
                 // The room under the rows, which takes a drop at the end.
                 Spacer(minLength: 0)
             }
@@ -367,6 +364,17 @@ struct BucketList: View {
                 page: context.page, bucket: bucket, rows: tasks.map(\.id), frames: frames, drag: drag, model: model
             ))
         }
+    }
+}
+
+extension View {
+    /// A bucket's heading and its rows, as one group VoiceOver reads by the
+    /// bucket's name. The heading belongs inside: SwiftUI drops a group's
+    /// only element, so a bucket holding one task would lose its row.
+    func bucketGroup(_ bucket: Bucket) -> some View {
+        accessibilityElement(children: .contain)
+            .accessibilityLabel(BucketName.of(bucket))
+            .accessibilityIdentifier("list-\(BucketName.of(bucket).lowercased())")
     }
 }
 
