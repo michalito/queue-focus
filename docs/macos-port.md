@@ -125,11 +125,13 @@ because this Mac cannot build the GTK crate.
 
 ## Phase 8. Release
 
-- [ ] 1. `scripts/set-version` also sets the Xcode marketing version
-- [ ] 2. macOS CI job
-- [ ] 3. `scripts/release-mac.sh`: archive, export, notarize, staple, DMG
-- [ ] 4. GitHub Release; Homebrew cask and Sparkle later
-- [ ] 5. README macOS section and Source layout
+- [x] 1. `scripts/set-version` also sets the Xcode marketing version
+- [x] 2. macOS CI job (and a Linux one: there was none)
+- [x] 3. `scripts/release-mac.sh`: archive, sign, notarize, staple, DMG
+      (dry run checked here; the real run needs the Developer ID)
+- [ ] 4. GitHub Release — the user's to make, with the certificate and
+      after the hand checks; Homebrew cask and Sparkle later
+- [x] 5. README macOS section and Source layout
 - [ ] Review: GPT phase review green
 
 ## Notes
@@ -693,4 +695,34 @@ text's and the background's, which would pass for edges: hence notes only.
 
 Sixth pass: green, no findings. With it the unit tests pass (122, one
 known issue), and so do all 45 UI tests and the four picture tests.
+
+### Phase 8 design, Fable
+
+Approved with changes, all taken. An ad hoc universal archive of the app,
+made in /tmp, showed what the release has to handle: the hardened runtime,
+no entitlements, a stripped universal binary, an unsigned resource bundle
+for KeyboardShortcuts, the App Intents metadata, and an export that needs a
+team to run at all.
+1. The app is signed with Developer ID when it is archived, and taken from
+   the archive, so the dry run (ad hoc) and the release take one path.
+2. The dry run skips only notarizing and stapling, and expects Gatekeeper's
+   rejection rather than ignoring it.
+3. With `CI` set, the hosted tests fail on a shortcut the system holds
+   (`TEST_RUNNER_CI`).
+4. macOS CI on Apple silicon and Intel, Xcode 26.6 pinned, Rust with both
+   targets, caches, the UI tests by hand only.
+5. `set-version` writes the project's version (prerelease kept, quoted;
+   build metadata dropped) and build number (the extension's revision),
+   requires both Debug and Release lines, and checks the result with plutil.
+6. The script checks everything it can, resolves the identity from the team,
+   takes notary credentials from a keychain profile or an API key, and
+   leaves the checksum, debug symbols and a build record.
+7. A Linux job for what needs no GTK.
+8. The README covers Gatekeeper, the first run, sharing data with Linux,
+   updating, uninstalling, and the release steps.
+
+Found while building it: the first dry run failed to link the Intel half,
+because a Debug build run alongside it in the same worktree rewrote the
+engine library for this Mac alone; run on its own, it passed. It also
+showed a Swift 6.4 warning in quick add, now gone.
 
