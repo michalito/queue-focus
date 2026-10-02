@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/qf-core", "crates/qf-ffi", "crates/queue-focus", "crates/uniffi-bindgen"]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 authors = ["Michael Sinoplis"]
