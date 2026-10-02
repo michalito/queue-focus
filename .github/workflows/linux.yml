@@ -1,0 +1,50 @@
+# What runs on a stock Linux machine: the engine (no GTK), versioning, the
+# extension's tests against a stubbed GNOME Shell, and the scripts' syntax.
+# The GTK app and the real GNOME Shell suites need GTK 4.16, libadwaita 1.6
+# and GNOME Shell 50; they run by hand (see README, Developer commands).
+name: Linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Engine, versioning and extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+          key: cargo-linux-${{ hashFiles('Cargo.lock') }}
+      # cargo itself, not scripts/cargo, which looks for GTK: the engine
+      # needs none.
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p qf-core -p qf-ffi -p uniffi-bindgen --all-targets -- -D warnings
+      - run: cargo test -p qf-core -p qf-ffi
+      - run: make test-version
+      - run: make test-extension
+      - name: Script syntax
+        run: |
+          bash -n scripts/*.sh
+          python3 -m py_compile scripts/set-version
+          for js in extension/queue-focus@queuefocus.org/*.js; do node --check "$js"; done

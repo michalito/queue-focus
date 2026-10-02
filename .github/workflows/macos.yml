@@ -1,0 +1,71 @@
+# The engine, its Swift bindings and the macOS app, on Apple silicon and on
+# Intel (the universal app's other half), and a release dry run. The UI tests
+# drive the pointer and keyboard for a quarter of an hour, so they run only
+# when asked for.
+name: macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ui:
+        description: Also run the UI tests
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      # Pinned: the image's default Xcode moves. 26 or newer builds the app.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+          components: clippy, rustfmt
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/release-ffi
+          key: cargo-${{ matrix.runner }}-${{ hashFiles('Cargo.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: target/xcode/SourcePackages
+          key: spm-${{ matrix.runner }}-${{ hashFiles('macos/QueueFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      - run: make check-core
+      - run: make test-core
+      - run: make test-mac-core
+      - run: make test-mac-app
+      - name: UI tests
+        if: github.event_name == 'workflow_dispatch' && inputs.ui
+        run: make test-mac-ui
+      - name: Release dry run
+        if: matrix.runner == 'macos-26'
+        run: make release-mac-dry-run
+      # The test plan keeps no screenshots, so the results hold none.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-${{ matrix.runner }}
+          path: target/xcode/Logs/Test/*.xcresult
+          retention-days: 7
