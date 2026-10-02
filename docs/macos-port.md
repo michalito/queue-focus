@@ -108,7 +108,7 @@ because this Mac cannot build the GTK crate.
 - [x] 3. Empty Now reports nothing to complete
 - [x] 4. One notification per durability or settings failure
 - [x] 5. Optional: URL scheme (add, show) and App Intents
-- [ ] Review: GPT phase review green
+- [x] Review: GPT phase review green (fourth pass)
 - [ ] Review: Fable approves the Phase 7 design
 
 ## Phase 7. Quality
@@ -515,3 +515,4 @@ the popover after its offer had run out; it is renewed as the popover
 opens. A stale Undo with no note to say so said nothing; it now says so on
 the popover's message line. Each has a test that fails without its fix.
 
+Fourth pass: green, no findings.
