@@ -678,3 +678,16 @@ the dark run never showed.
    changed between listing a scroll view's text and reading one. Each pass
    now reads the app from one snapshot.
 
+Fifth pass, not green: the re-measure took the commonest colour apart from
+the background as the text's, so text in two greys could pass on the
+darker one, and a dark frame in the picture could stand in for pale text.
+It now answers only for Settings' notes, which the app marks as one Text
+in one colour, and only for a picture of one colour of text on one
+background, every other pixel a blend of the two and none common enough
+to be more text; otherwise the audit's verdict stands. Pictures drawn in
+the test hold it to that: one grey measures 5.78 to 1, a faint grey under
+4.5, and two greys, or pale text in a dark frame, get no answer. Taking out
+the check for strays, or for a second grey, or the notes' mark, fails a
+test each time. What it cannot see is a few words in a grey between the
+text's and the background's, which would pass for edges: hence notes only.
+

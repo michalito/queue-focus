@@ -66,7 +66,7 @@ struct SettingsView: View {
             globalShortcuts
             Section("Keyboard") {
                 LabeledContent("In the Queue and the Board") {
-                    ShortcutLines(spacing: 3).settingNote()
+                    ShortcutLines(spacing: 3).foregroundStyle(Color.readableGrey)
                 }
             }
             Section("General") {
@@ -248,12 +248,14 @@ private struct TryIt: View {
     }
 }
 
-private extension View {
+private extension Text {
     /// A line that explains a setting, or a row's own words beside its
     /// control: grey, but a grey that reads, where the system's own for such
     /// lines (and LabeledContent's for its content) measures under 4.5 to 1.
+    /// Text only: the accessibility audit's verdict on a note is checked
+    /// against its pixels, which holds only for text of one colour.
     func settingNote() -> some View {
-        foregroundStyle(Color.readableGrey)
+        foregroundStyle(Color.readableGrey).accessibilityIdentifier("setting-note")
     }
 }
 

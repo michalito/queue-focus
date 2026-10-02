@@ -30,48 +30,15 @@ final class AccessibilityUITests: AppUITestCase {
         [node] + node.children.flatMap { everything(in: $0) }
     }
 
-    /// One piece of text from pass to pass: its identifier where it has one
-    /// (which also holds while a countdown's words change), otherwise its
-    /// words where they start across the line, which scrolling up and down
-    /// does not move.
-    private func key(identifier: String, text: String, frame: CGRect) -> String {
-        identifier.isEmpty ? "\(text) @\(Int(frame.minX.rounded()))" : identifier
-    }
+    /// What the app names a note of Settings: one Text in one colour.
+    private static let settingNote = "setting-note"
 
-    /// Text's contrast as its own pixels show it, by WCAG's formula: the
-    /// commonest colour (the background) against the commonest of those
-    /// clearly apart from it (the glyphs; their edges blend, but each blend
-    /// is rare).
-    private func measuredContrast(of element: XCUIElement) -> Double? {
-        let image = element.screenshot().image
-        guard let picture = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(data: nil, width: picture.width, height: picture.height, bitsPerComponent: 8,
-                                      bytesPerRow: picture.width * 4, space: space,
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
-              let bytes = context.data?.assumingMemoryBound(to: UInt8.self)
-        else { return nil }
-        context.draw(picture, in: CGRect(x: 0, y: 0, width: picture.width, height: picture.height))
-        var counts: [UInt32: Int] = [:]
-        for pixel in 0..<(picture.width * picture.height) {
-            let rgb = (UInt32(bytes[pixel * 4]) << 16) | (UInt32(bytes[pixel * 4 + 1]) << 8) | UInt32(bytes[pixel * 4 + 2])
-            counts[rgb, default: 0] += 1
-        }
-        func luminance(_ rgb: UInt32) -> Double {
-            func linear(_ byte: UInt32) -> Double {
-                let value = Double(byte & 0xFF) / 255
-                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-            }
-            return 0.2126 * linear(rgb >> 16) + 0.7152 * linear(rgb >> 8) + 0.0722 * linear(rgb)
-        }
-        func contrast(_ a: UInt32, _ b: UInt32) -> Double {
-            let (x, y) = (luminance(a), luminance(b))
-            return (max(x, y) + 0.05) / (min(x, y) + 0.05)
-        }
-        guard let background = counts.max(by: { $0.value < $1.value })?.key,
-              let glyphs = counts.filter({ contrast($0.key, background) >= 1.5 }).max(by: { $0.value < $1.value })?.key
-        else { return nil }
-        return contrast(glyphs, background)
+    /// One piece of text from pass to pass: its identifier where it has one
+    /// of its own (which also holds while a countdown's words change),
+    /// otherwise its words where they start across the line, which scrolling
+    /// up and down does not move.
+    private func key(identifier: String, text: String, frame: CGRect) -> String {
+        identifier.isEmpty || identifier == Self.settingNote ? "\(text) @\(Int(frame.minX.rounded()))" : identifier
     }
 
     /// XCTest's audit of what is on screen, for the two kinds of issue worth
@@ -79,9 +46,10 @@ final class AccessibilityUITests: AppUITestCase {
     /// tell apart. What is let through is named. The system's: the root
     /// group of a window's hosting view, the Touch Bar and its items, a text
     /// field's completions window, the thumb of a named slider, a window's
-    /// own title, and text with no part inside any window. And text whose
-    /// own pixels measure 4.5 to 1 or more: the audit misjudges some wrapped
-    /// lines, so its verdict is checked, and the measure logged. Text its
+    /// own title, and text with no part inside any window. And a note of
+    /// Settings whose own pixels measure 4.5 to 1 or more: the audit
+    /// misjudges some wrapped notes, so its verdict on them is checked
+    /// (`PixelContrast`), and the measure logged. Text its
     /// scroll view shows only part of is set aside, to be measured whole in
     /// another pass (`expectClean` holds the test to that). Every issue goes
     /// to the log, so a new one is seen; an audit that fails attaches
@@ -145,9 +113,10 @@ final class AccessibilityUITests: AppUITestCase {
                             && window.frame.contains(frame) && frame.maxY <= window.frame.minY + 34
                     }) {
                         reason = "the window's title"
-                    } else if element.elementType == .staticText, element.exists,
-                              let measured = self.measuredContrast(of: element),
-                              measured >= 4.5 {
+                    } else if element.elementType == .staticText, element.identifier == Self.settingNote,
+                              element.exists,
+                              let picture = element.screenshot().image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                              let measured = PixelContrast.measure(picture), measured >= 4.5 {
                         reason = String(format: "its pixels measure %.2f to 1", measured)
                     }
                 default:
