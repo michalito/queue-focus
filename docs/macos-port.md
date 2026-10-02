@@ -656,6 +656,8 @@ chips reading "P" could stand in for each other. A surface audited once
 may now set nothing aside, and across Settings' passes a line is matched
 by its identifier, or by its words and where they start across the line.
 
+Fourth pass: green, no findings, pending the test runs.
+
 After the second pass's changes the unit tests passed; since then neither
 the unit nor the UI tests could run: an authentication prompt on the
 screen (macOS's coreautha) keeps XCTest's runner from connecting, and it
