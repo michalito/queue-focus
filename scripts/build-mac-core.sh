@@ -66,15 +66,20 @@ readonly WORK="$TARGET_DIR/mac-core"
 readonly STAMP="$PACKAGE/QfCoreFFI.inputs"
 
 # Everything the library and its bindings are made from, and the targets.
+# Each step is checked: `set -e` does not reach into a command substitution
+# (and the bash macOS ships cannot be told to), so a failure would otherwise
+# leave a hash of part of the inputs, stamped as if it were the whole.
 inputs() {
-  {
-    printf '%s\n' "${TARGETS[@]}"
-    find crates/qf-core crates/qf-ffi crates/uniffi-bindgen -type f \
-      \( -name '*.rs' -o -name '*.toml' \) -print | LC_ALL=C sort | xargs shasum
-    shasum Cargo.toml Cargo.lock scripts/build-mac-core.sh scripts/cargo
-  } | shasum | cut -d' ' -f1
+  local files sums
+  files=$(find crates/qf-core crates/qf-ffi crates/uniffi-bindgen -type f \
+    \( -name '*.rs' -o -name '*.toml' \) -print | LC_ALL=C sort) || return
+  [ -n "$files" ] || return
+  sums=$(printf '%s\n' "$files" | xargs shasum) || return
+  sums+=$'\n'$(shasum Cargo.toml Cargo.lock scripts/build-mac-core.sh scripts/cargo) || return
+  printf '%s\n' "${TARGETS[@]}" "$sums" | shasum | cut -d' ' -f1
 }
-readonly INPUTS=$(inputs)
+INPUTS=$(inputs) || die "could not hash the engine's inputs"
+readonly INPUTS
 if $if_changed && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$INPUTS" ] &&
   [ -d "$PACKAGE/QfCoreFFI.xcframework" ] && [ -f "$PACKAGE/lib/libqf_ffi.a" ] &&
   [ -f "$PACKAGE/include/module.modulemap" ] && [ -f "$PACKAGE/Sources/QfCore/QfCore.swift" ]; then
