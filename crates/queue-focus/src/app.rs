@@ -3,9 +3,7 @@
 //! bus name — so a method call that D-Bus-activates the service is never lost.
 
 use crate::dbus;
-use crate::flash::{FlashClock, SharedFlash};
-use crate::settings::SharedSettings;
-use crate::state::SharedState;
+use crate::service::SharedService;
 use crate::ui::Ui;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -18,9 +16,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct QfApplication {
-        pub state: OnceCell<SharedState>,
-        pub settings: OnceCell<SharedSettings>,
-        pub flash: OnceCell<SharedFlash>,
+        pub service: OnceCell<SharedService>,
         pub ui: OnceCell<Rc<Ui>>,
         registration: RefCell<Option<gio::RegistrationId>>,
     }
@@ -41,15 +37,10 @@ mod imp {
             object_path: &str,
         ) -> Result<(), glib::Error> {
             self.parent_dbus_register(connection, object_path)?;
-            let (Some(state), Some(settings), Some(flash), Some(ui)) = (
-                self.state.get(),
-                self.settings.get(),
-                self.flash.get(),
-                self.ui.get(),
-            ) else {
+            let (Some(service), Some(ui)) = (self.service.get(), self.ui.get()) else {
                 return Ok(());
             };
-            let id = dbus::export(connection, state, settings, flash, ui)?;
+            let id = dbus::export(connection, service, ui)?;
             *self.registration.borrow_mut() = Some(id);
             Ok(())
         }
@@ -73,25 +64,17 @@ glib::wrapper! {
 }
 
 impl QfApplication {
-    pub fn new(app_id: &str, state: SharedState, settings: SharedSettings) -> Self {
+    pub fn new(app_id: &str, service: SharedService) -> Self {
         let app: Self = glib::Object::builder()
             .property("application-id", app_id)
             .property("flags", gio::ApplicationFlags::HANDLES_COMMAND_LINE)
             .build();
-        let flash = FlashClock::new(state.clone(), settings.clone());
-        let ui = Ui::new(
-            app.clone().upcast(),
-            state.clone(),
-            settings.clone(),
-            flash.clone(),
-        );
-        app.imp().state.set(state).ok().expect("state set once");
+        let ui = Ui::new(app.clone().upcast(), service.clone());
         app.imp()
-            .settings
-            .set(settings)
+            .service
+            .set(service)
             .ok()
-            .expect("settings set once");
-        app.imp().flash.set(flash).ok().expect("flash set once");
+            .expect("service set once");
         app.imp().ui.set(ui).ok().expect("ui set once");
         app
     }
@@ -100,11 +83,7 @@ impl QfApplication {
         self.imp().ui.get().expect("ui").clone()
     }
 
-    pub fn state(&self) -> SharedState {
-        self.imp().state.get().expect("state").clone()
-    }
-
-    pub fn settings(&self) -> SharedSettings {
-        self.imp().settings.get().expect("settings").clone()
+    pub fn service(&self) -> SharedService {
+        self.imp().service.get().expect("service").clone()
     }
 }
