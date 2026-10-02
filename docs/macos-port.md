@@ -639,3 +639,20 @@ First pass, not green:
 8. Quick add now has the display options in its environment.
 9. Two rows of the README table were stale.
 
+Second pass, not green: four smaller things.
+1. The title-bar exemption covered popovers and any text in the band; it
+   now takes only a window's own title text.
+2. Text a scroll view cut off was let through with no promise it would be
+   measured: horizontally cut text is no longer let through at all, and
+   text cut off at the top or bottom of its own scroll view is set aside,
+   with the test failing unless each such line was seen whole, and so
+   measured, in some pass.
+3. The pause test could still meet a second boundary: the model reads the
+   clock it is given on a tick, so it ticks before the first reading.
+4. The light Settings audit followed the Mac's appearance; it is now light.
+
+The unit tests pass. The accessibility UI tests could not be run after
+these changes: an authentication prompt on the screen (macOS's coreautha)
+kept XCTest's runner from connecting, and it is the user's to answer. They
+are to be run again before this phase is called green.
+

@@ -102,8 +102,10 @@ private final class Fixture {
         let f = try Fixture()
         f.model.add("ship", asCurrent: true)
         // The engine stamped the task with the real time: start the test's
-        // clock there, so the first reading is not cut short at zero.
+        // clock there, and let the model read it, so the first reading is
+        // not cut short at zero.
         f.clock.date = Date()
+        f.model.tick()
         let task = { try #require(f.model.snapshot.current) }
         let running = try #require(f.model.elapsed(of: try task()))
         f.clock.advance(120)
