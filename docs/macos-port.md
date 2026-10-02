@@ -766,3 +766,9 @@ three modes step by step, the README's ways to open an app that is not
 notarized against Apple's guidance for macOS 15 and 14, and that the
 version is 0.6.0 everywhere, build 11; it reran the version tests and the
 dry run.
+
+CI's first macOS run, on the stacked PRs, failed on both runners: Xcode
+26.6's Swift 6.3.3 crashed generating code for the Launch at Login toggles,
+which passed the method `loginItem.set` as Binding's `@isolated(any)
+@Sendable` setter. A closure gives the setter its type; the next run passed
+on Apple silicon and Intel, and on Linux. Swift 6.4, here, had compiled it.
