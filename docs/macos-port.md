@@ -88,17 +88,17 @@ because this Mac cannot build the GTK crate.
 - [x] 5. Shared row component with context menu, inline rename and tooltips
       only on cut titles
 - [x] Review: GPT phase review green (third pass)
-- [ ] Review: Fable approves the Phase 5 design
+- [x] Review: Fable approves the Phase 5 design (with changes, all taken)
 
 ## Phase 5. Flash overlay
 
-- [ ] 1. Click-through, non-activating panel above everything on the main screen
-- [ ] 2. Six styles from the `flash.js` tables
-- [ ] 3. The card: NOW, capped title, timer
-- [ ] 4. Reduce Motion: still for 1.5 s
-- [ ] 5. A new flash replaces a running one; panel released at the end
-- [ ] 6. Hidden launch argument to render a style; Flash now uses the engine
-- [ ] Review: GPT phase review green
+- [x] 1. Click-through, non-activating panel above everything on the main screen
+- [x] 2. Six styles from the `flash.js` tables
+- [x] 3. The card: NOW, capped title, timer
+- [x] 4. Reduce Motion: still for 1.5 s
+- [x] 5. A new flash replaces a running one; panel released at the end
+- [x] 6. Hidden launch argument to render a style; Flash now uses the engine
+- [x] Review: GPT phase review green (second pass)
 - [ ] Review: Fable approves the Phase 6 design
 
 ## Phase 6. Hotkeys, notifications, automation
@@ -142,6 +142,13 @@ Deliberate differences from GNOME, so far:
   has Top bar; Mac-only settings live in UserDefaults.
 - The windows' controls sit beside the add field, not in a toolbar: a
   toolbar rebuilt with every tick of the clock crashed AppKit's layout.
+- The flash is drawn on the screen with the menu bar, as GNOME draws it on
+  the primary monitor; the top bar styles colour the menu bar (or the notch
+  row, which is taller). Reduce Motion holds it still for 1.5 s, as GNOME
+  does with animations off.
+- `-flashPreview <style>` (`all` for the six in turn), with
+  `-flashIntensity` and `-flashPalette`, draws a flash with a sample task
+  two seconds after launch, for checking a style by eye.
 
 Known gaps, to close later:
 - XCTest cannot type into the quick add panel: its accessibility does not
@@ -150,6 +157,8 @@ Known gaps, to close later:
 - SwiftUI's accessibility folds a list's only row into the list, so that row
   loses its identifier and VoiceOver reads the list's frame. Phase 7 audits
   accessibility.
+- The flash over a full-screen app, on a second display, and under Reduce
+  Transparency (an opaque card) are Phase 7 checks.
 - ⌘1 never reaches the app on the Mac these tests were written on: something
   outside the app takes it (the same menu item on ⌘3 fires at once, and ⌘2
   and ⌘N work). The UI tests go back to the Queue by its button; check ⌘1 by
@@ -336,3 +345,63 @@ Second pass, not green:
 
 Third pass: green. The answer to the first finding was accepted; no
 further findings.
+
+### Phase 5 design, Fable
+
+Approved with changes, all taken. Two scratch AppKit probes backed them: a
+borderless non-activating panel at the screen saver's level stays the size
+of the screen, never activates the app or takes the keyboard, and sits over
+the menu bar; the menu bar here is 30 points while the status bar's
+thickness says 22; Core Animation's ease-in-ease-out is not Clutter's quad;
+and a transaction's completion fires at once for a panel not yet on screen.
+1. The plan follows flash.js exactly: the edges dip to 0.5 (not wash2's
+   0.45), the card takes the intensity's scale, every step eases with
+   Clutter's quad curve, the soft edges breathe, the beam, glow and timer
+   keep flash.js's guards, and the title is bounded as `safeTitle` bounds
+   it, by code point.
+2. The stage is built where its run ends, put on screen, and only then
+   played; the end of a superseded flash does nothing; no animation
+   delegate holds the controller.
+3. The stage is flipped, so the plan keeps GNOME's coordinates; it sits one
+   layer below the view's own, since AppKit sets the flip of a layer a view
+   hosts. (The first try hosted it directly; the top bar came out at the
+   bottom of the screen, and a test now pins the orientation in the panel.)
+4. The menu bar's height comes from the screen, or the notch, or the main
+   menu; the status bar's thickness only as a last resort.
+5. The panel never hides on deactivation, adds no fade of its own, stays
+   out of the Window menu, takes the screen's frame on every flash, and is
+   not drawn with no screen at all.
+6. The card is SwiftUI, drawn once into a picture at the screen's scale.
+7. The Reduce Motion hold is cancelled when a flash replaces it.
+8. The preview goes through the normal launch; the flash is an
+   accessibility group, `flash-overlay`, labelled with what it says.
+9. The layer tree and its animations are tested without a window, and the
+   controller with a stand-in surface and clock.
+
+Validation: plan tests ported from the GNOME flash tests case by case;
+layer tests that read the animations and render the stage off screen (the
+top bar at the top, the beam below it, each glow strip fading inwards, the
+card upright and sliding down); a panel test for orientation, accessibility
+and level; controller tests for replacing, holding still and clearing; UI
+tests that the preview and Flash now draw a flash that goes, and that the
+keyboard stays where it was. Each style was looked at by capturing the
+flash's own window, never the screen.
+
+### Phase 5, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. Where two glow strips overlap, Clutter dims each on its own as the glow
+   fades, while Core Animation dimmed the pair as a group, so the corners
+   came out darker mid-fade (0.45 against 0.56 at half way). Each part now
+   fades on its own and the layer only moves, which also spares an
+   offscreen pass. (Turning group opacity off was tried first; the off
+   screen renderer ignores that flag, so the test could not see it.)
+2. The ease was the usual cubic stand-in for Clutter's quadratic, 1.5%
+   off at the middle of each step. Each step is now split at its middle
+   into the two quadratics, which cubics draw exactly; the test samples
+   every step against Clutter's formula.
+3. `safeTitle` folded U+0085, which JavaScript's `\s` leaves alone.
+
+Second pass: green, no findings. It sampled every easing step against
+Clutter's formula and checked `safeTitle` against JavaScript's white space
+for every Unicode scalar.
