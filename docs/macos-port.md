@@ -658,9 +658,23 @@ by its identifier, or by its words and where they start across the line.
 
 Fourth pass: green, no findings, pending the test runs.
 
-After the second pass's changes the unit tests passed; since then neither
-the unit nor the UI tests could run: an authentication prompt on the
-screen (macOS's coreautha) keeps XCTest's runner from connecting, and it
-is the user's to answer. The tests build. Both suites are to be run again
-before this phase is called green.
+For a while neither the unit nor the UI tests could run: an
+authentication prompt on the screen (macOS's coreautha) kept XCTest's
+runner from connecting, until the user answered it. Then the unit tests
+passed (122, one known issue), and the UI tests all but one (44 of 45):
+the light Settings audit, light at last since the second pass, found grey
+the dark run never showed.
+1. LabeledContent draws its content in the system's secondary grey, 3.9
+   to 1 here: the interval's minutes, the title width's points, the "and"
+   between the quiet hours and the keyboard lines. They take the readable
+   grey.
+2. Two wrapped notes were failed by the audit at 5.8 and 6.2 to 1, as
+   measured from a picture of the Settings window alone; a wrapped note
+   beside them, of the same grey, passed. Text the audit fails is now
+   measured from its own pixels, and let through, logged, only at 4.5 to 1
+   or more. With the readable grey made too faint (white 0.56), every grey
+   line in Settings fails, these two included.
+3. The popover's audit once failed reading its own bookkeeping: the clock
+   changed between listing a scroll view's text and reading one. Each pass
+   now reads the app from one snapshot.
 

@@ -46,6 +46,7 @@ struct SettingsView: View {
                         .accessibilityValue("\(Int(titleWidth)) points")
                     Text("\(Int(titleWidth)) pt")
                         .monospacedDigit()
+                        .settingNote()
                         .frame(width: 52, alignment: .trailing)
                 }
                 .help("macOS hides menu bar items that do not fit, so a long title is cut here.")
@@ -65,7 +66,7 @@ struct SettingsView: View {
             globalShortcuts
             Section("Keyboard") {
                 LabeledContent("In the Queue and the Board") {
-                    ShortcutLines(spacing: 3)
+                    ShortcutLines(spacing: 3).settingNote()
                 }
             }
             Section("General") {
@@ -96,6 +97,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("setting-interval")
                 Text("\(model.settings.intervalMin) min")
                     .monospacedDigit()
+                    .settingNote()
                     .frame(width: 56, alignment: .trailing)
             }
             Toggle(isOn: setting(\.vary)) {
@@ -173,7 +175,7 @@ struct SettingsView: View {
                 DatePicker("Flash from", selection: time(\.quietFrom), displayedComponents: .hourAndMinute)
                     .labelsHidden()
                     .accessibilityIdentifier("setting-quiet-from")
-                Text("and")
+                Text("and").settingNote()
                 DatePicker("Flash until", selection: time(\.quietTo), displayedComponents: .hourAndMinute)
                     .labelsHidden()
                     .accessibilityIdentifier("setting-quiet-to")
@@ -247,8 +249,9 @@ private struct TryIt: View {
 }
 
 private extension View {
-    /// A line that explains a setting: grey, but a grey that reads, where
-    /// the system's own for such lines measures under 4.5 to 1.
+    /// A line that explains a setting, or a row's own words beside its
+    /// control: grey, but a grey that reads, where the system's own for such
+    /// lines (and LabeledContent's for its content) measures under 4.5 to 1.
     func settingNote() -> some View {
         foregroundStyle(Color.readableGrey)
     }

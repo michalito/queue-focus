@@ -21,8 +21,13 @@ final class AccessibilityUITests: AppUITestCase {
         var seenWhole: Set<String> = []
     }
 
-    private func text(of element: XCUIElement) -> String {
+    private func text(of element: any XCUIElementAttributes) -> String {
         (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
+    }
+
+    /// An element of one snapshot of the app, and everything inside it.
+    private func everything(in node: any XCUIElementSnapshot) -> [any XCUIElementSnapshot] {
+        [node] + node.children.flatMap { everything(in: $0) }
     }
 
     /// One piece of text from pass to pass: its identifier where it has one
@@ -33,12 +38,50 @@ final class AccessibilityUITests: AppUITestCase {
         identifier.isEmpty ? "\(text) @\(Int(frame.minX.rounded()))" : identifier
     }
 
+    /// Text's contrast as its own pixels show it, by WCAG's formula: the
+    /// commonest colour (the background) against the commonest of those
+    /// clearly apart from it (the glyphs; their edges blend, but each blend
+    /// is rare).
+    private func measuredContrast(of element: XCUIElement) -> Double? {
+        let image = element.screenshot().image
+        guard let picture = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: picture.width, height: picture.height, bitsPerComponent: 8,
+                                      bytesPerRow: picture.width * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+              let bytes = context.data?.assumingMemoryBound(to: UInt8.self)
+        else { return nil }
+        context.draw(picture, in: CGRect(x: 0, y: 0, width: picture.width, height: picture.height))
+        var counts: [UInt32: Int] = [:]
+        for pixel in 0..<(picture.width * picture.height) {
+            let rgb = (UInt32(bytes[pixel * 4]) << 16) | (UInt32(bytes[pixel * 4 + 1]) << 8) | UInt32(bytes[pixel * 4 + 2])
+            counts[rgb, default: 0] += 1
+        }
+        func luminance(_ rgb: UInt32) -> Double {
+            func linear(_ byte: UInt32) -> Double {
+                let value = Double(byte & 0xFF) / 255
+                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(rgb >> 16) + 0.7152 * linear(rgb >> 8) + 0.0722 * linear(rgb)
+        }
+        func contrast(_ a: UInt32, _ b: UInt32) -> Double {
+            let (x, y) = (luminance(a), luminance(b))
+            return (max(x, y) + 0.05) / (min(x, y) + 0.05)
+        }
+        guard let background = counts.max(by: { $0.value < $1.value })?.key,
+              let glyphs = counts.filter({ contrast($0.key, background) >= 1.5 }).max(by: { $0.value < $1.value })?.key
+        else { return nil }
+        return contrast(glyphs, background)
+    }
+
     /// XCTest's audit of what is on screen, for the two kinds of issue worth
     /// failing on: text too faint to read, and controls VoiceOver cannot
-    /// tell apart. What is let through is named, and is the system's: the
-    /// root group of a window's hosting view, the Touch Bar and its items, a
-    /// text field's completions window, the thumb of a named slider, a
-    /// window's own title, and text with no part inside any window. Text its
+    /// tell apart. What is let through is named. The system's: the root
+    /// group of a window's hosting view, the Touch Bar and its items, a text
+    /// field's completions window, the thumb of a named slider, a window's
+    /// own title, and text with no part inside any window. And text whose
+    /// own pixels measure 4.5 to 1 or more: the audit misjudges some wrapped
+    /// lines, so its verdict is checked, and the measure logged. Text its
     /// scroll view shows only part of is set aside, to be measured whole in
     /// another pass (`expectClean` holds the test to that). Every issue goes
     /// to the log, so a new one is seen; an audit that fails attaches
@@ -46,13 +89,15 @@ final class AccessibilityUITests: AppUITestCase {
     /// gathered here instead.
     private func auditPass(_ surface: String) throws -> AuditPass {
         var pass = AuditPass()
-        let touchBar = app.touchBars.firstMatch
-        let touchBarFrame = touchBar.exists ? touchBar.frame.insetBy(dx: -4, dy: -4) : .null
-        let windows = app.windows.allElementsBoundByIndex.map { (frame: $0.frame, title: $0.title) }
-        let surfaces = windows.map(\.frame) + app.popovers.allElementsBoundByIndex.map(\.frame)
-        let namedSliders = app.sliders.allElementsBoundByIndex.filter { !$0.label.isEmpty }.map(\.frame)
-        let scrolling = app.scrollViews.allElementsBoundByIndex.map { view in
-            (frame: view.frame, texts: view.staticTexts.allElementsBoundByIndex.map { element in
+        // One snapshot, so text that changes each second (the clock) cannot
+        // go between reading the list and reading an element of it.
+        let nodes = everything(in: try app.snapshot())
+        let touchBarFrame = nodes.first { $0.elementType == .touchBar }.map { $0.frame.insetBy(dx: -4, dy: -4) } ?? .null
+        let windows = nodes.filter { $0.elementType == .window }.map { (frame: $0.frame, title: $0.title) }
+        let surfaces = windows.map(\.frame) + nodes.filter { $0.elementType == .popover }.map(\.frame)
+        let namedSliders = nodes.filter { $0.elementType == .slider && !$0.label.isEmpty }.map(\.frame)
+        let scrolling = nodes.filter { $0.elementType == .scrollView }.map { view in
+            (frame: view.frame, texts: everything(in: view).filter { $0.elementType == .staticText }.map { element in
                 (frame: element.frame, text: text(of: element), key: key(identifier: element.identifier, text: text(of: element),
                                                                          frame: element.frame))
             })
@@ -100,6 +145,10 @@ final class AccessibilityUITests: AppUITestCase {
                             && window.frame.contains(frame) && frame.maxY <= window.frame.minY + 34
                     }) {
                         reason = "the window's title"
+                    } else if element.elementType == .staticText, element.exists,
+                              let measured = self.measuredContrast(of: element),
+                              measured >= 4.5 {
+                        reason = String(format: "its pixels measure %.2f to 1", measured)
                     }
                 default:
                     break
