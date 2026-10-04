@@ -57,6 +57,21 @@ final class MenuBarUITests: AppUITestCase {
                        "nothing was added, so nothing was saved")
     }
 
+    /// The popover closes on a click outside it, and the item is outside it:
+    /// a second click on the item leaves it closed, not closed and opened
+    /// again on the same click.
+    func testClickingTheItemAgainClosesThePopover() throws {
+        try launch()
+        let field = openPopover()
+        statusItem.click()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "the second click closes the popover")
+        let reopened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in MainActor.assumeIsolated { field.exists } },
+                                                 object: nil)
+        reopened.isInverted = true
+        wait(for: [reopened], timeout: 2)
+        _ = openPopover()
+    }
+
     func testASideCardOffersItsActionsAndCompletesWithUndo() throws {
         try launch()
         openPopover().typeText("beside it @side\r")

@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "qf-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "libc",
  "serde",
@@ -772,7 +772,7 @@ dependencies = [
 
 [[package]]
 name = "qf-ffi"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "qf-core",
  "uniffi",
@@ -780,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "queue-focus"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "gio",
  "gtk4",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "uniffi-bindgen"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "uniffi",
 ]

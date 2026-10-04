@@ -19,8 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var quickAdd: QuickAddController?
     private var flash: FlashController?
     private var notices: Notices?
+    // Any web page can open a link: what it holds stays out of the log,
+    // which keeps only a hash to match repeats by.
     private lazy var links = Links { [log] url in
-        log.notice("ignored a link it does not know: \(url.absoluteString, privacy: .public)")
+        log.notice("ignored a link it does not know: \(url.absoluteString, privacy: .private(mask: .hash))")
     }
     private var ticker: Timer?
     private var theme: Theme?

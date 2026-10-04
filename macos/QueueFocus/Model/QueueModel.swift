@@ -54,9 +54,11 @@ final class QueueModel {
     private(set) var undoOffer: UndoOffer?
     /// Why the last request from a view failed, for the popover's message line.
     var actionError: String?
-    /// Changes saved without being made crash-safe, and settings that could
-    /// not be written, oldest first.
+    /// Changes saved without being made crash-safe, and internal errors,
+    /// oldest first.
     private(set) var problems: [String] = []
+    /// The settings cannot be written: shown until a write works again.
+    private(set) var settingsProblem: String?
 
     /// Told after every change and every tick, for what SwiftUI does not
     /// draw: the status item.
@@ -266,6 +268,13 @@ final class QueueModel {
         now = clock()
         do {
             let tick = try engine.tick(now: unixNow, localTime: localTime(now), random: .random(in: 0..<30))
+            if tick.settingsOutageEnded {
+                settingsProblem = nil
+            }
+            if let problem = tick.settingsProblem {
+                settingsProblem = problem
+                tell([problem])
+            }
             report(tick.problems)
             if let flash = tick.flash {
                 presentFlash(flash)
@@ -285,15 +294,25 @@ final class QueueModel {
     /// Show a problem the engine reported, and log it.
     func report(_ problems: [String]) {
         guard !problems.isEmpty else { return }
+        self.problems = Array((self.problems + problems).suffix(Self.keptProblems))
+        tell(problems)
+    }
+
+    /// Log problems, and pass them on to be notified.
+    private func tell(_ problems: [String]) {
         for problem in problems {
             log.error("\(problem, privacy: .public)")
         }
-        self.problems = Array((self.problems + problems).suffix(Self.keptProblems))
         didReport(problems)
     }
 
     func dismissProblems() {
         problems = []
+    }
+
+    /// Put the settings problem away; it does not come back for this outage.
+    func dismissSettingsProblem() {
+        settingsProblem = nil
     }
 
     // MARK: Plumbing

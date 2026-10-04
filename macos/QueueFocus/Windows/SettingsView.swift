@@ -70,7 +70,7 @@ struct SettingsView: View {
                 }
             }
             Section("General") {
-                Toggle("Launch at login", isOn: Binding(get: { loginItem.isEnabled }, set: loginItem.set))
+                Toggle("Launch at login", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.set($0) }))
                 if loginItem.needsApproval {
                     Button("Allow in System Settings…", action: loginItem.openSystemSettings)
                 }
