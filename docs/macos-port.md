@@ -214,7 +214,11 @@ Hand checks, which a test cannot make here:
   is drawn on the screen with the menu bar).
 - The status item with a crowded menu bar (macOS hides items that do not
   fit; the title width setting is the defence).
-- A VoiceOver walk through the popover, the Queue, the Board and Settings.
+- A paused task's dimmed title with the clock hidden, on a light menu bar
+  and a dark one.
+- A VoiceOver walk through the popover, the Queue, the Board and Settings,
+  and VoiceOver's press on the status item with the popover open, which
+  should close it.
 - Shortcuts and Spotlight listing Add a Task, Complete the Current Task and
   Get the Current Task.
 
@@ -223,7 +227,7 @@ Hand checks, which a test cannot make here:
 | README section | On the Mac | Covered by |
 | --- | --- | --- |
 | The four buckets | The same: the shared engine. | QfCore EngineTests, QueueModelTests |
-| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, the clock with `❚❚` while paused. Right-click pauses. The popover is fixed-width, with tooltips; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, MenuBarUITests, NoticesTests, HotkeyUITests |
+| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, dimmed while paused, and the clock with `❚❚` then. Right-click pauses. The popover is fixed-width, with tooltips; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, MenuBarUITests, NoticesTests, HotkeyUITests |
 | Queue view | The same three bands; its own window. | WindowUITests, AccessibilityUITests |
 | Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
 | Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
@@ -793,8 +797,15 @@ and the core, bindings and app tests run here. Each finding, checked:
 4. The quick add test failed on a locked screen, where no window can take
    the keyboard; it now skips there and says why.
 5. A click on the status item while the popover is open might close and
-   reopen it. A UI test now clicks it twice; it could not run yet, the
-   screen being locked.
+   reopen it. It does not: a UI test clicks it twice, and the popover
+   closes and stays closed. On macOS 27 that click never reaches the item's
+   action: the popover, being transient, closes itself and takes the click
+   with it. A probe logged the action for the first click and the third,
+   not the second, and the test passes with the action's own `isShown`
+   branch taken out; that branch is for a press that does arrive,
+   VoiceOver's, or a system that passes the click on. Not checked on
+   macOS 14 to 26: CI's UI tests, on macOS 26, can be asked for once the
+   workflow is on main.
 6. A settings write that failed stayed on the message line after a later
    one worked. The engine's tick now says when an outage ends; the
    bindings carry the settings problem apart from the one-off ones, and
@@ -829,6 +840,12 @@ GPT on these answers, first pass, not green: two of them fell short.
 
 Second pass: green, no findings. GPT resolved the colour in the light,
 dark, vibrant and high-contrast appearances and in a highlighted draw, and
-saw both new tests fail without their fixes. Still to run: the UI tests,
-the second click on the status item among them, once the screen is
-unlocked.
+saw both new tests fail without their fixes.
+
+The suites after that, with the screen unlocked: 126 unit tests, the quick
+add among them and none skipped; 50 UI tests, 49 in one run and the
+fiftieth alone. That one, the quiet hours read off the screen, ended the
+full run without failing a check: the disk had 13 GB free of 926, and as
+Vision compiled its text model macOS purged the test runner's caches and
+ended the runner to do it (`CacheDeleteAppContainerCaches`, in the log).
+With 10 GB of old build output deleted, it passed.

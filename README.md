@@ -247,7 +247,7 @@ There is no automatic update yet. To update, quit Queue Focus and replace the ap
 
 ### First run on macOS
 
-Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. The gear in the menu opens Settings, turns on Launch at Login, and quits.
+Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. While the timer is paused the title is dimmed, the time stops, and a `❚❚` leads the clock. The gear in the menu opens Settings, turns on Launch at Login, and quits.
 
 macOS may ask you to allow Launch at Login in System Settings › General › Login Items. Queue Focus asks to show notifications the first time it has one to show; without them, the menu opens instead. It needs no Accessibility permission.
 
