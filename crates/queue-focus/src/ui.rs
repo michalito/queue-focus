@@ -451,8 +451,7 @@ impl Ui {
             .build();
         let this = self.clone();
         entry.connect_activate(move |e| {
-            let default = this.service.engine().default_bucket();
-            if this.submit(e, default) {
+            if this.submit(e, None) {
                 this.hide();
             }
         });
@@ -465,7 +464,7 @@ impl Ui {
             match key {
                 gdk::Key::Escape => this.hide(),
                 gdk::Key::Return | gdk::Key::KP_Enter if is_ctrl(mods) => {
-                    if this.submit(&e, Bucket::Now) {
+                    if this.submit(&e, Some(Bucket::Now)) {
                         this.hide();
                     }
                 }
@@ -551,8 +550,7 @@ impl Ui {
         entry_bar.append(&entry);
         let this = self.clone();
         entry.connect_activate(move |e| {
-            let default = this.service.engine().default_bucket();
-            this.submit(e, default);
+            this.submit(e, None);
         });
         let this = self.clone();
         let keys = gtk::EventControllerKey::new();
@@ -562,7 +560,7 @@ impl Ui {
             };
             match key {
                 gdk::Key::Return | gdk::Key::KP_Enter if is_ctrl(mods) => {
-                    this.submit(&e, Bucket::Now);
+                    this.submit(&e, Some(Bucket::Now));
                 }
                 gdk::Key::Escape if !e.text().is_empty() => e.set_text(""),
                 gdk::Key::Escape => this.focus_first_row(),
@@ -620,10 +618,15 @@ impl Ui {
         win
     }
 
-    /// Add the entry's text (quick-add syntax) to `default` bucket; clears on success.
-    fn submit(&self, e: &gtk::Entry, default: Bucket) -> bool {
+    /// Add the entry's text (quick-add syntax): to `bucket`, or with none,
+    /// where the engine puts such a task. Clears the entry on success. Text
+    /// with no title in it adds nothing, and is no error to show.
+    fn submit(&self, e: &gtk::Entry, bucket: Option<Bucket>) -> bool {
         let text = e.text();
-        let added = matches!(self.update(|s| s.quick_add(&text, default)), Ok(Some(_)));
+        let added = match self.service.request(|engine| engine.add(&text, bucket)) {
+            Err(EngineError::InvalidArgument(_)) => false,
+            result => self.report(result).is_ok(),
+        };
         if added {
             e.set_text("");
         }

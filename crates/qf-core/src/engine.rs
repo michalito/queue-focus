@@ -140,23 +140,18 @@ impl Engine {
         Ok(self.tasks.update(f)?)
     }
 
-    /// Where a task added without a bucket goes: where Settings says, or
-    /// Now while Now is empty, so that the first task is the one being done.
-    pub fn default_bucket(&self) -> Bucket {
-        match self.store().current() {
-            Some(_) => self.settings().default_bucket,
-            None => Bucket::Now,
-        }
-    }
-
     /// `Add(text, bucket)`: parse the add markers and create a task. Without
-    /// a bucket the task goes to `default_bucket`; a marker in the text wins
-    /// either way. Returns the new task's id.
+    /// a bucket the task goes where Settings says, or to Now while Now is
+    /// empty, so that the first task is the one being done; a marker in the
+    /// text wins either way. Returns the new task's id.
     pub fn add(&mut self, text: &str, bucket: Option<Bucket>) -> Result<Outcome<u64>, EngineError> {
         if text.len() > MAX_QUICK_ADD_BYTES {
             return Err(invalid("task text is too long"));
         }
-        let default = bucket.unwrap_or_else(|| self.default_bucket());
+        let default = bucket.unwrap_or_else(|| match self.store().current() {
+            Some(_) => self.settings().default_bucket,
+            None => Bucket::Now,
+        });
         let outcome = self.update(|s| s.quick_add(text, default))?;
         match outcome.value {
             Some(id) => Ok(outcome.map(|_| id)),

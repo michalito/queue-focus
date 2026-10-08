@@ -175,6 +175,8 @@ expect_reply Hide '()'
 # ---- adding -------------------------------------------------------------------
 
 expect_reply Add '(uint64 1,)' 'fix login #w' ''
+# Nothing was being done, so the task with no bucket is the one to do.
+expect_state 's["current"]["id"]' 1
 expect_reply Add '(uint64 2,)' '!ship it' ''
 expect_reply Add '(uint64 3,)' 'call mum' 'later'
 expect_reply Add '(uint64 4,)' 'marker wins @side' 'later'
