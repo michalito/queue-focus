@@ -138,6 +138,21 @@ because this Mac cannot build the GTK crate.
 - [x] 5. README macOS section and Source layout
 - [x] Review: GPT phase review green (third pass, with the unsigned release)
 
+## Phase 9. After the hand checks
+
+The hand checks on the first 0.6.0 build passed but for three points, which
+are answered here before the release.
+
+- [ ] 1. A task added while Now is empty is the current one (the engine, so
+      both apps)
+- [ ] 2. The popover points at the status item's right end, the one part
+      that stays still when the title changes, and stays put
+- [ ] 3. The task in the centre of the menu bar, a setting: a label over the
+      menu bar, the status item kept as a dot
+- [ ] Review: Fable approves the design
+- [ ] Review: GPT review green
+- [ ] 4. 0.6.0 built again, and the hand checks of what changed
+
 ## Notes
 
 Deliberate differences from GNOME, so far:

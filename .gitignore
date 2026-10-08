@@ -19,3 +19,5 @@
 /macos/QueueFocus.xcodeproj/xcuserdata/
 # What scripts/release-mac.sh makes.
 /dist
+# Finder
+.DS_Store
