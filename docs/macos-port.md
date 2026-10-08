@@ -836,6 +836,42 @@ the centre with changes, all taken but one.
    which the answer changes; the UI tests' count of windows leaves the
    panel out; the limits in the README and under the switch.
 
+### Phase 9, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green: one major finding and eight minor, all taken. It ran
+the engine's and the bindings' tests, and saw the engine's fail with the new
+default undone; the app's tests it was asked to leave, a UI run being due.
+1. Major: the label took the menu bar's appearance whole, a vibrant one,
+   whose colours are made to be blended by the material under them; on the
+   label's bare panel they are drawn as they are: black at 70% on a light
+   menu bar, and for the dot of no tag a grey near black on a dark one. The
+   label now takes the menu bar's light or dark and the plain colours of
+   that; a test resolves the words, a paused task's and the dot against a
+   dark and a light bar, and fails on the vibrant names.
+2. The popover's anchor was the last 44 points or the whole of a narrower
+   item, so its middle moved as the item narrowed past 44. It is now 16
+   points in from the right whatever the width, the dot's own middle.
+3. The UI tests took the user's setting for the centre, kept in the defaults
+   the app under test shares: every launch now says off, and the title
+   width, unless the test says otherwise.
+4. The UI test of a full-screen space could not work: the app's windows have
+   no full-screen mode. Gone; the handoff it was for is a hosted test (7)
+   and a hand check.
+5. The popover's UI test skips its telling assertions where a screen edge
+   holds the popover, and what is left passed on the old code. A unit test
+   now holds the anchor to the right edge at every width, and fails on the
+   old one; the UI test tells where there is room, as on this Mac.
+6. The hosted test kept its controller for good, through the model's change
+   closure: held weakly now.
+7. Nothing held the item to the dot only while the label is in view. A
+   hosted test puts the label in the real menu bar, moves it off the screen
+   and back, and reads the item each time; with `isVisible` for the
+   occlusion test it fails.
+8. The switch's caption said "where the centre is free", as if other apps'
+   menus were seen: it says they are not, and what follows.
+9. The README's two entries said Enter adds to Next; they add to the bucket
+   chosen in Settings.
+
 ### Cross-phase review (the user's, after the stack went up)
 
 A review of the whole stack, with the GNOME suites run in the Linux harness

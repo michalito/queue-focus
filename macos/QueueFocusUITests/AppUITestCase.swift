@@ -73,6 +73,11 @@ class AppUITestCase: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["XDG_DATA_HOME"] = dataHome.path
         app.launchArguments += ["-allowSecondInstance", "YES"] + arguments
+        // The Mac's own settings are the user's, in the defaults the app
+        // under test shares: a test says what it needs of them.
+        for (key, value) in [("-menuBarTitleCentred", "NO"), ("-menuBarTitleWidth", "200")] where !arguments.contains(key) {
+            app.launchArguments += [key, value]
+        }
         // Asking for notifications would put the system's prompt on screen.
         app.launchArguments += ["-notifications", "off"]
         for shortcut in Self.testShortcuts {

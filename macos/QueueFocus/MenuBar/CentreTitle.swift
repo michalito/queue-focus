@@ -32,6 +32,16 @@ enum CentreTitle {
         }
     }
 
+    /// The appearance the label takes from the menu bar's. The menu bar's
+    /// is a vibrant one, whose colours are made to be blended by the
+    /// material under them: drawn as they are, on the label's bare panel,
+    /// its greys come out too faint or too dark. The label keeps the menu
+    /// bar's light or dark, and the plain colours of that.
+    @MainActor
+    static func appearance(matching menuBar: NSAppearance) -> NSAppearance.Name {
+        menuBar.bestMatch(from: [.aqua, .darkAqua]) ?? .aqua
+    }
+
     /// The label's frame on `screen`: in the menu bar, its middle on the
     /// screen's, as wide as `words` and its padding. `nil` where it cannot
     /// go: on a screen that keeps no menu bar in view, or whose middle a

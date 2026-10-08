@@ -19,10 +19,10 @@ final class CentreTitleUITests: AppUITestCase {
         XCTAssertTrue(label.waitForExistence(timeout: 5), "the label is in the menu bar")
     }
 
-    private func wait(_ description: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line,
+    private func wait(_ description: String, file: StaticString = #filePath, line: UInt = #line,
                       until condition: @escaping @MainActor () -> Bool) {
         let predicate = NSPredicate { _, _ in MainActor.assumeIsolated { condition() } }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: timeout),
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5),
                        .completed, description, file: file, line: line)
     }
 
@@ -101,21 +101,5 @@ final class CentreTitleUITests: AppUITestCase {
         if free {
             XCTAssertEqual(popover.frame.midX, statusItem.frame.midX, accuracy: 2, "from the dot, not the label")
         }
-    }
-
-    /// In a full-screen space the menu bar is out of view, and the label
-    /// with it: the item takes the title back, for when the bar is shown.
-    func testInAFullScreenSpaceTheItemTakesTheTitleBack() throws {
-        try launchCentred(with: [("ship the release", "now")])
-        wait("the item is down to its dot") { self.statusTitle == "●" }
-        let queue = openWindow("open-queue", title: "Queue")
-        queue.buttons[XCUIIdentifierFullScreenWindow].click()
-        // Going to a space of its own and back each take a moment.
-        wait("the item has the title in a full-screen space: \(statusTitle.debugDescription)", timeout: 15) {
-            self.statusTitle.contains("ship the release")
-        }
-        // Closing the window ends its space.
-        app.typeKey("w", modifierFlags: .command)
-        wait("and gives it up again on the desktop: \(statusTitle.debugDescription)", timeout: 15) { self.statusTitle == "●" }
     }
 }

@@ -70,7 +70,7 @@ The gear button in the header bar opens Settings in the same window. `Ctrl+,` do
 
 ### Quick add window
 
-The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next, or to Now while Now is empty. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
+The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to the bucket chosen in Settings, which starts as Next, or to Now while Now is empty. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
 
 All views use the same service and task file. A change in one view appears in the others.
 
@@ -419,7 +419,7 @@ The accepted bucket markers are `@now`, `@next`, `@later`, and `@side`. Their sh
 
 Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task. To keep a task out of an empty Now, give it a bucket, such as `@next`.
 
-In the main window, Enter adds to Next, or to Now while Now is empty, and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
+In the main window, Enter adds to the bucket chosen in Settings, which starts as Next, or to Now while Now is empty, and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
 
 ## Use the app window
 

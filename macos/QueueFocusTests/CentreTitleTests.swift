@@ -84,6 +84,39 @@ private func task(_ title: String, tag: TaskTag? = nil, paused: UInt64? = nil) -
         }
     }
 
+    /// The menu bar's appearance is a vibrant one, its colours made for the
+    /// material under them; the label is on a bare panel. It takes the menu
+    /// bar's light or dark and the plain colours of that, which read: the
+    /// vibrant dark's grey for no tag is near black, on a dark menu bar.
+    @Test @MainActor func theLabelTakesTheMenuBarsLightOrDarkWithoutItsVibrancy() throws {
+        func luminance(_ colour: NSColor, in name: NSAppearance.Name, over ground: CGFloat) throws -> CGFloat {
+            var resolved: NSColor?
+            try #require(NSAppearance(named: name)).performAsCurrentDrawingAppearance {
+                resolved = colour.usingColorSpace(.sRGB)
+            }
+            let c = try #require(resolved)
+            let channel = { (value: CGFloat) -> CGFloat in
+                let mixed = value * c.alphaComponent + ground * (1 - c.alphaComponent)
+                return mixed <= 0.03928 ? mixed / 12.92 : pow((mixed + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(c.redComponent) + 0.7152 * channel(c.greenComponent) + 0.0722 * channel(c.blueComponent)
+        }
+        for (menuBar, plain, ground) in [(NSAppearance.Name.vibrantDark, NSAppearance.Name.darkAqua, CGFloat(0)),
+                                         (.vibrantLight, .aqua, 1), (.darkAqua, .darkAqua, 0), (.aqua, .aqua, 1)] {
+            let name = CentreTitle.appearance(matching: try #require(NSAppearance(named: menuBar)))
+            #expect(name == plain, "\(menuBar.rawValue)")
+            // The words, a paused task's, and the dot of no tag, against the
+            // menu bar at its darkest or lightest.
+            let bar = ground == 0 ? CGFloat(0) : 1
+            for (colour, least) in [(NSColor.labelColor, CGFloat(7)), (StatusItemController.pausedTitleColor, 4.5),
+                                    (TagStyle.dot(nil), 1.3)] {
+                let ink = try luminance(colour, in: name, over: ground)
+                let contrast = (max(ink, bar) + 0.05) / (min(ink, bar) + 0.05)
+                #expect(contrast >= least, "\(colour) on a \(plain.rawValue) menu bar: \(contrast)")
+            }
+        }
+    }
+
     /// While the label carries the title the item keeps the dot, and the
     /// tag's letter where colour should not be the only difference.
     @Test @MainActor func theItemKeepsTheDot() {
@@ -105,6 +138,16 @@ private final class NoLoginItems: LoginItemService {
     func unregister() throws {}
 }
 
+/// Where the label goes, which a test can move.
+@MainActor
+private final class Place {
+    var screen: CentreTitle.Screen?
+
+    init(_ screen: CentreTitle.Screen?) {
+        self.screen = screen
+    }
+}
+
 /// The setting puts the label up and takes it down, on defaults of the
 /// test's own and a screen of its own, far from the real one, where nothing
 /// is seen. One at a time: each looks for the label among the app's windows.
@@ -112,6 +155,12 @@ private final class NoLoginItems: LoginItemService {
 @Suite(.serialized) struct CentreTitleSettingTests {
     private static let screen = CentreTitle.Screen(frame: CGRect(x: 50_000, y: 50_000, width: 2000, height: 1000),
                                                    visibleFrame: CGRect(x: 50_000, y: 50_000, width: 2000, height: 975))
+
+    /// The real screen has a place for the label, and it can be seen there.
+    private static var theMenuBarsCentreIsFree: Bool {
+        guard QuickAddTests.screenIsUnlocked, let screen = NSScreen.screens.first else { return false }
+        return CentreTitle.frame(on: CentreTitle.Screen(screen), words: 150, dotMinX: nil) != nil
+    }
 
     private func eventually(_ condition: () -> Bool) async throws -> Bool {
         for _ in 0..<40 {
@@ -139,8 +188,9 @@ private final class NoLoginItems: LoginItemService {
         let controller = StatusItemController(model: model, loginItem: LoginItem(service: NoLoginItems()), windows: AppWindows(),
                                               display: Display(defaults: defaults), defaults: defaults,
                                               screen: { Self.screen }, quit: {})
-        model.didChange = { controller.update() }
+        model.didChange = { [weak controller] in controller?.update() }
         #expect(label == nil, "off unless chosen")
+        #expect(controller.itemWords.contains("ship the release"))
 
         // Settings writes the defaults, and nothing else tells the menu bar.
         defaults.set(true, forKey: Preferences.menuBarTitleCentredKey)
@@ -158,8 +208,49 @@ private final class NoLoginItems: LoginItemService {
         #expect(panel.frame.midX == Self.screen.frame.midX)
         #expect(panel.frame.width >= panel.label.title.size().width + 2 * CentreTitle.padding)
 
+        // Off the real screens, the label is in no one's view.
+        #expect(controller.itemWords.contains("write the notes"), "a label out of view leaves the item its title")
+
         defaults.set(false, forKey: Preferences.menuBarTitleCentredKey)
         #expect(try await eventually { label == nil }, "and takes it down")
+    }
+
+    /// The item gives its title up only to a label in view, and takes it
+    /// back from one that is not: here, one moved off the screen, as a
+    /// full-screen space or Mission Control takes it out of view.
+    @Test(.enabled("this Mac's menu bar has no free centre in view") { await theMenuBarsCentreIsFree })
+    func theItemKeepsTheDotOnlyWhileTheLabelIsInView() async throws {
+        let suite = "qf-centre-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        defaults.set(true, forKey: Preferences.menuBarTitleCentredKey)
+        let model = QueueModel(engine: try QueueEngine(dir: dir.path))
+        model.add("hand over", asCurrent: true)
+        let place = Place(NSScreen.screens.first.map { CentreTitle.Screen($0) })
+        let controller = StatusItemController(model: model, loginItem: LoginItem(service: NoLoginItems()), windows: AppWindows(),
+                                              display: Display(defaults: defaults), defaults: defaults,
+                                              screen: { place.screen }, quit: {})
+        try #require(try await eventually { label != nil }, "no room for the label beside this menu bar's icons")
+        #expect(try await eventually { controller.itemWords == "●" }, "in view, the label has the title: \(controller.itemWords)")
+
+        place.screen = Self.screen
+        controller.update()
+        #expect(label != nil, "still up, where no one sees it")
+        #expect(try await eventually { controller.itemWords.contains("hand over") },
+                "out of view, the item has the title: \(controller.itemWords)")
+
+        place.screen = NSScreen.screens.first.map { CentreTitle.Screen($0) }
+        controller.update()
+        #expect(try await eventually { controller.itemWords == "●" }, "and back in view, the dot")
+
+        defaults.set(false, forKey: Preferences.menuBarTitleCentredKey)
+        #expect(try await eventually { label == nil })
+        #expect(controller.itemWords.contains("hand over"))
     }
 
     /// Where the label has no place, there is none, and the item keeps the

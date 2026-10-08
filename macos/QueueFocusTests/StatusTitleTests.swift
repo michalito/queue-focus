@@ -73,6 +73,21 @@ private func task(_ title: String, tag: TaskTag? = nil, started: UInt64? = 0, pa
         #expect(title.timer == nil)
     }
 
+    /// The popover points a fixed way in from the item's right edge, the
+    /// edge that stays when a new title changes the item's width; so the
+    /// popover stays where it is. Its middle, where it pointed before, moves.
+    @Test @MainActor func thePopoverPointsTheSameWayInFromTheRightWhateverTheWidth() {
+        let right: CGFloat = 500
+        for width: CGFloat in [32, 40, 44, 70, 130, 300] {
+            let item = NSRect(x: right - width, y: 0, width: width, height: 22)
+            let anchor = StatusItemController.anchor(in: item)
+            #expect(anchor.midX == right - StatusItemController.arrowInset, "an item \(width) points wide")
+            #expect(anchor.maxX == right && anchor.height == item.height)
+        }
+        // The dot alone, the narrowest the item gets: its middle.
+        #expect(StatusItemController.anchor(in: NSRect(x: 0, y: 0, width: 32, height: 22)).midX == 16)
+    }
+
     /// GNOME dims a paused task's label whether or not its clock shows; so
     /// does the menu bar, so a pause shows with the clock hidden too.
     @Test @MainActor func aPausedTitleIsDimmedWithOrWithoutItsClock() throws {

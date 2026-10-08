@@ -102,7 +102,7 @@ final class MenuBarUITests: AppUITestCase {
         // A popover a screen edge holds back is not centred on what it points at.
         let free = opened.minX > screen.minX + 40 && opened.maxX < screen.maxX - 40
         if free {
-            XCTAssertEqual(opened.midX, item.maxX - 22, accuracy: 2, "it points at the item's right end")
+            XCTAssertEqual(opened.midX, item.maxX - 16, accuracy: 2, "it points at the item's right end")
         }
 
         click(app.buttons["done-current"])

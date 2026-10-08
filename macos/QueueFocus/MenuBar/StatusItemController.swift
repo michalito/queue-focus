@@ -17,7 +17,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         var label: CGRect?
         /// The item is down to its dot, the label carrying the title.
         var asDot = false
-        /// The menu bar's appearance, which the label takes.
+        /// The menu bar's light or dark, which the label takes.
         var appearance: NSAppearance.Name?
     }
 
@@ -121,14 +121,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             ? Self.render(title, font: font, options: next.options, color: .labelColor) : nil
         if let words {
             next.label = labelFrame(for: words, dot: Self.renderDot(title, font: font, options: next.options), button: button)
-            next.appearance = button.effectiveAppearance.name
+            next.appearance = CentreTitle.appearance(matching: button.effectiveAppearance)
         }
         // The label first: the item gives its title up only to one in view.
         if let words, let frame = next.label {
             let panel = centre ?? makeCentre()
             if shown?.label != frame || shown?.title != title || shown?.options != next.options
                 || shown?.appearance != next.appearance {
-                panel.appearance = button.effectiveAppearance
+                panel.appearance = next.appearance.flatMap { NSAppearance(named: $0) }
                 panel.label.title = words
                 panel.label.spokenTitle = "Queue Focus: \(title.accessibilityLabel)"
                 panel.label.toolTip = title.fullTitle
@@ -289,11 +289,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     var isPopoverShown: Bool { popover.isShown }
+    /// What the item says now: the title, or the dot alone.
+    var itemWords: String { item.button?.attributedTitle.string ?? "" }
     /// The popover is open from the label in the centre, not the item.
     private var popoverIsOnLabel = false
 
-    /// How far in from the item's right edge the popover's arrow points.
-    static let arrowInset: CGFloat = 22
+    /// How far in from the item's right edge the popover's arrow points:
+    /// the middle of the item at its narrowest, the dot alone.
+    static let arrowInset: CGFloat = 16
 
     /// What the popover points at: the item's right end. macOS packs the
     /// status items from the right, so when a new title changes the item's
@@ -302,8 +305,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// (An item to the right that changes width moves this one whole, and
     /// the popover, as before, stays where it opened.)
     static func anchor(in bounds: NSRect) -> NSRect {
-        let width = min(bounds.width, arrowInset * 2)
-        return NSRect(x: bounds.maxX - width, y: bounds.minY, width: width, height: bounds.height)
+        NSRect(x: bounds.maxX - arrowInset * 2, y: bounds.minY, width: arrowInset * 2, height: bounds.height)
     }
 
     /// Open the popover where the title is: under the label in the centre

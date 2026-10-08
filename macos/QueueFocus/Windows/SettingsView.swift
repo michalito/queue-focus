@@ -54,7 +54,7 @@ struct SettingsView: View {
                 .help("macOS hides menu bar items that do not fit, so a long title is cut here.")
                 Toggle(isOn: $titleCentred) {
                     Text("Task in the centre of the menu bar")
-                    Text("Where the centre is free. The item keeps a dot, and the task where it is not.").settingNote()
+                    Text("The item keeps a dot. Other apps' menus and icons are not seen: on a full menu bar the title can cover them.").settingNote()
                 }
                 .accessibilityIdentifier("setting-title-centred")
             }
