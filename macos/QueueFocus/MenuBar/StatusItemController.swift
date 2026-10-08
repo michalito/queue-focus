@@ -31,6 +31,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.setAccessibilityIdentifier(Self.identifier)
             // Always in a window, so SwiftUI's window actions reach AppKit.
             button.addSubview(NSHostingView(rootView: WindowActionsBridge(windows: windows)))
+            NotificationCenter.default.addObserver(self, selector: #selector(buttonDidResize),
+                                                   name: NSView.frameDidChangeNotification, object: button)
         }
         item.autosaveName = "QueueFocusStatusItem"
 
@@ -126,6 +128,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     var isPopoverShown: Bool { popover.isShown }
 
+    /// How far in from the item's right edge the popover's arrow points.
+    static let arrowInset: CGFloat = 22
+
+    /// What the popover points at: the item's right end. macOS packs the
+    /// status items from the right, so when a new title changes the item's
+    /// width its left edge moves and its right edge stays; pointing there,
+    /// the popover stays on the item without moving under the pointer.
+    /// (An item to the right that changes width moves this one whole, and
+    /// the popover, as before, stays where it opened.)
+    static func anchor(in bounds: NSRect) -> NSRect {
+        let width = min(bounds.width, arrowInset * 2)
+        return NSRect(x: bounds.maxX - width, y: bounds.minY, width: width, height: bounds.height)
+    }
+
     func showPopover() {
         guard let button = item.button else { return }
         // An accessory app must be active for the add field to take the keys,
@@ -134,8 +150,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         previousApp = NSWorkspace.shared.frontmostApplication
         if previousApp == .current { previousApp = nil }
         Activation.takeFront()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.show(relativeTo: Self.anchor(in: button.bounds), of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+
+    /// The anchor is in the button's coordinates, which a new width moves:
+    /// say again where it is, or the popover's next layout would use the
+    /// place it was.
+    @objc private func buttonDidResize(_ notification: Notification) {
+        guard popover.isShown, let button = item.button else { return }
+        popover.positioningRect = Self.anchor(in: button.bounds)
     }
 
     func closePopover() {

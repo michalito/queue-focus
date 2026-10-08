@@ -88,6 +88,45 @@ final class MenuBarUITests: AppUITestCase {
         _ = openPopover()
     }
 
+    /// macOS packs the status items from the right, so a new title moves the
+    /// item's left edge and leaves its right one. The popover points at the
+    /// right end, and so stays where it is, still on the item.
+    func testThePopoverStaysPutWhenTheTitleChanges() throws {
+        try launch(with: [("a task with quite a long title to it", "now")])
+        _ = openPopover()
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: 5))
+        let item = statusItem.frame
+        let opened = popover.frame
+        let screen = try XCTUnwrap(NSScreen.screens.first).frame
+        // A popover a screen edge holds back is not centred on what it points at.
+        let free = opened.minX > screen.minX + 40 && opened.maxX < screen.maxX - 40
+        if free {
+            XCTAssertEqual(opened.midX, item.maxX - 22, accuracy: 2, "it points at the item's right end")
+        }
+
+        click(app.buttons["done-current"])
+        waitForTitle(containing: "no task")
+        waitForTheMenuBarToSettle()
+        XCTAssertLessThan(statusItem.frame.width, item.width - 40, "the item is narrower: \(statusItem.frame) from \(item)")
+        XCTAssertEqual(statusItem.frame.maxX, item.maxX, accuracy: 1, "its right end stayed")
+        XCTAssertTrue(app.buttons["undo"].waitForExistence(timeout: 5))
+        XCTAssertEqual(popover.frame.midX, opened.midX, accuracy: 1, "the popover did not move")
+        XCTAssertEqual(popover.frame.minY, opened.minY, accuracy: 1)
+        if free {
+            // Pointing at the item's middle, it would now point at where the item was.
+            let narrow = statusItem.frame
+            XCTAssertTrue((narrow.minX...narrow.maxX).contains(popover.frame.midX),
+                          "and still points at the item: \(popover.frame.midX) in \(narrow)")
+        }
+
+        // Undo makes the item wider again, and the popover is still in place.
+        app.buttons["undo"].click()
+        waitForTitle(containing: "a task with")
+        waitForTheMenuBarToSettle()
+        XCTAssertEqual(popover.frame.midX, opened.midX, accuracy: 1, "nor when the title came back")
+    }
+
     func testASideCardOffersItsActionsAndCompletesWithUndo() throws {
         try launch()
         openPopover().typeText("beside it @side\r")
