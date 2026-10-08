@@ -138,8 +138,8 @@ fn completing_undoing_and_pausing_go_through_the_engine() {
 fn moving_tagging_and_renaming_go_through_the_engine() {
     let dir = temp_dir("move");
     let engine = open(&dir);
-    let a = engine.add("a".into(), None).unwrap();
-    let b = engine.add("b".into(), None).unwrap();
+    let a = engine.add("a".into(), Some(Bucket::Next)).unwrap();
+    let b = engine.add("b".into(), Some(Bucket::Next)).unwrap();
     let c = engine.add("c".into(), Some(Bucket::Later)).unwrap();
 
     engine.move_task(c, Bucket::Next, Some(0)).unwrap();
@@ -178,7 +178,7 @@ fn moving_tagging_and_renaming_go_through_the_engine() {
 fn refusals_are_invalid_arguments_and_change_nothing() {
     let dir = temp_dir("refusals");
     let engine = open(&dir);
-    let a = engine.add("a".into(), None).unwrap();
+    let a = engine.add("a".into(), Some(Bucket::Next)).unwrap();
     let revision = engine.snapshot().revision;
     assert_eq!(
         invalid_message(engine.add(" #w ".into(), None)),
@@ -250,7 +250,10 @@ fn settings_round_trip_through_the_record_and_the_file() {
     assert!(json.contains("\"quiet_to\": \"06:05\""), "{json}");
     assert_eq!(open(&dir).settings(), settings);
 
-    // The chosen bucket is where an unmarked task goes.
+    // An unmarked task goes to the chosen bucket, but for the first, which
+    // is the one to do.
+    let first = engine.add("first".into(), None).unwrap();
+    assert_eq!(engine.snapshot().current.map(|t| t.id), Some(first));
     let id = engine.add("beside".into(), None).unwrap();
     assert_eq!(ids(&engine.snapshot().side), [id]);
     fs::remove_dir_all(dir).unwrap();
@@ -477,12 +480,12 @@ fn titles(engine: &QueueEngine) -> Vec<String> {
 fn a_panic_mid_change_starts_again_from_the_files() {
     let dir = temp_dir("panic");
     let engine = open(&dir);
-    engine.add("kept".into(), None).unwrap();
+    engine.add("kept".into(), Some(Bucket::Next)).unwrap();
     panic_mid_change(&engine);
 
     assert_eq!(titles(&engine), ["kept"], "the half-made change is gone");
     assert!(!engine.state.is_poisoned());
-    engine.add("after".into(), None).unwrap();
+    engine.add("after".into(), Some(Bucket::Next)).unwrap();
     let stored = fs::read_to_string(dir.join("tasks.json")).unwrap();
     assert!(!stored.contains("half made"), "{stored}");
     assert!(stored.contains("after"), "{stored}");
@@ -500,12 +503,12 @@ fn a_panic_mid_change_starts_again_from_the_files() {
 fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
     let dir = temp_dir("panic-unreadable");
     let engine = open(&dir);
-    engine.add("kept".into(), None).unwrap();
+    engine.add("kept".into(), Some(Bucket::Next)).unwrap();
     let good = fs::read(dir.join("tasks.json")).unwrap();
     fs::write(dir.join("tasks.json"), b"{ broken").unwrap();
     panic_mid_change(&engine);
 
-    match engine.add("refused".into(), None) {
+    match engine.add("refused".into(), Some(Bucket::Next)) {
         Err(QfError::Persistence { message }) => {
             assert!(message.contains("cannot reload the queue"), "{message}")
         }
@@ -524,7 +527,7 @@ fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
 
     fs::write(dir.join("tasks.json"), &good).unwrap();
     assert_eq!(titles(&engine), ["kept"]);
-    engine.add("after".into(), None).unwrap();
+    engine.add("after".into(), Some(Bucket::Next)).unwrap();
     assert_eq!(titles(&engine), ["kept", "after"]);
     let problems = engine.tick(2, noon(), 0).unwrap().problems;
     assert!(problems[0].contains("reloaded the queue"), "{problems:?}");
@@ -538,7 +541,7 @@ fn a_panic_with_unreadable_files_refuses_changes_until_they_read_again() {
 fn a_reload_ends_a_settings_outage() {
     let dir = temp_dir("panic-outage");
     let engine = open(&dir);
-    engine.add("kept".into(), None).unwrap();
+    engine.add("kept".into(), Some(Bucket::Next)).unwrap();
     let blocker = dir.join("settings.json");
     let change = |engine: &QueueEngine| {
         let mut settings = engine.settings();
@@ -581,7 +584,7 @@ fn a_reload_ends_a_settings_outage() {
 fn a_panic_with_unreadable_settings_refuses_changes_until_they_read_again() {
     let dir = temp_dir("panic-settings");
     let engine = open(&dir);
-    engine.add("kept".into(), None).unwrap();
+    engine.add("kept".into(), Some(Bucket::Next)).unwrap();
     let mut settings = engine.settings();
     settings.interval_min = 42;
     engine.set_settings(settings).unwrap();
@@ -590,7 +593,7 @@ fn a_panic_with_unreadable_settings_refuses_changes_until_they_read_again() {
     fs::write(dir.join("settings.json"), b"[]").unwrap();
     panic_mid_change(&engine);
 
-    let message = match engine.add("refused".into(), None) {
+    let message = match engine.add("refused".into(), Some(Bucket::Next)) {
         Err(QfError::Persistence { message }) => message,
         other => panic!("expected a refusal, got {other:?}"),
     };
@@ -604,7 +607,7 @@ fn a_panic_with_unreadable_settings_refuses_changes_until_they_read_again() {
         42,
         "the user's own came back"
     );
-    engine.add("after".into(), None).unwrap();
+    engine.add("after".into(), Some(Bucket::Next)).unwrap();
     assert_eq!(titles(&engine), ["kept", "after"]);
     fs::remove_dir_all(dir).unwrap();
 }

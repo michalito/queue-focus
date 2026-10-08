@@ -97,9 +97,10 @@ private final class QuickAddPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-/// The field. Return adds where Settings says; Command-Return adds the task
-/// as the current one; Escape closes. A task added closes the panel; one
-/// that could not be added stays, with the reason under it.
+/// The field. Return adds where Settings says, or to Now while it is empty;
+/// Command-Return adds the task as the current one; Escape closes. A task
+/// added closes the panel; one that could not be added stays, with the
+/// reason under it.
 private struct QuickAddView: View {
     @Environment(QueueModel.self) private var model
     let close: () -> Void

@@ -20,7 +20,7 @@ Queue Focus supports GNOME Shell 48, 49, and 50. It also runs on macOS 14 or new
 
 Promoting a task puts it in Now. The task that was there steps back to the front of Next, so completing the new one brings it straight back. This happens however a task reaches Now: promoting it, dropping it on the current task, moving it with `1`, or adding it with `!`. A task starts a new timer whenever it becomes current, and any pause is cleared.
 
-Moving or deleting the current task leaves Now empty. Only completing a task pulls the next one in.
+Moving or deleting the current task leaves Now empty. Only completing a task pulls the next one in. A task added while Now is empty becomes the current task, unless a marker sends it elsewhere.
 
 ## What you can open
 
@@ -70,7 +70,7 @@ The gear button in the header bar opens Settings in the same window. `Ctrl+,` do
 
 ### Quick add window
 
-The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
+The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next, or to Now while Now is empty. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
 
 All views use the same service and task file. A change in one view appears in the others.
 
@@ -390,7 +390,7 @@ New extension code is only loaded when GNOME Shell starts. On Wayland that means
 
 ## Add tasks
 
-An entry adds to Next by default. Use markers anywhere in the text to set a tag or bucket.
+An entry adds to Next by default, or to the bucket chosen in Settings. While Now is empty it adds to Now instead, so the first task is the one you are doing. Use markers anywhere in the text to set a tag or bucket; a bucket marker wins over both.
 
 Task titles are limited to 256 characters. Longer titles and titles in older hand-edited task files are truncated to that limit; excessively large quick-add requests are rejected before parsing.
 
@@ -411,7 +411,7 @@ The accepted bucket markers are `@now`, `@next`, `@later`, and `@side`. Their sh
 
 Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task.
 
-In the main window, Enter adds to Next and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
+In the main window, Enter adds to Next, or to Now while Now is empty, and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
 
 ## Use the app window
 
@@ -563,7 +563,7 @@ The service exports these methods:
 
 1. `GetState()` returns the same JSON snapshot as `queue-focus status`.
 
-2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence. A task added to `now` becomes the current task, as with `Promote`.
+2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses Now while Now is empty, and otherwise the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence. A task added to `now` becomes the current task, as with `Promote`.
 
 3. `CompleteCurrent()` deletes the current task and returns its id and title. When Now is empty it returns `0` and an empty string.
 

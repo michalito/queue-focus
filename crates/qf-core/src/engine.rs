@@ -140,14 +140,23 @@ impl Engine {
         Ok(self.tasks.update(f)?)
     }
 
+    /// Where a task added without a bucket goes: where Settings says, or
+    /// Now while Now is empty, so that the first task is the one being done.
+    pub fn default_bucket(&self) -> Bucket {
+        match self.store().current() {
+            Some(_) => self.settings().default_bucket,
+            None => Bucket::Now,
+        }
+    }
+
     /// `Add(text, bucket)`: parse the add markers and create a task. Without
-    /// a bucket the task goes where Settings says; a marker in the text wins
+    /// a bucket the task goes to `default_bucket`; a marker in the text wins
     /// either way. Returns the new task's id.
     pub fn add(&mut self, text: &str, bucket: Option<Bucket>) -> Result<Outcome<u64>, EngineError> {
         if text.len() > MAX_QUICK_ADD_BYTES {
             return Err(invalid("task text is too long"));
         }
-        let default = bucket.unwrap_or(self.settings().default_bucket);
+        let default = bucket.unwrap_or_else(|| self.default_bucket());
         let outcome = self.update(|s| s.quick_add(text, default))?;
         match outcome.value {
             Some(id) => Ok(outcome.map(|_| id)),
@@ -444,6 +453,7 @@ mod tests {
     fn add_parses_markers_and_falls_back_to_the_chosen_bucket() {
         let dir = temp_dir("add");
         let mut engine = open(&dir);
+        let current = engine.add("now #p", Some(Bucket::Now)).unwrap().value;
         let next = engine.add("plain", None).unwrap().value;
         assert_eq!(ids(&engine, Bucket::Next), vec![next]);
 
@@ -457,12 +467,40 @@ mod tests {
             .add("marker wins @next", Some(Bucket::Later))
             .unwrap()
             .value;
-        let current = engine.add("now #p", Some(Bucket::Now)).unwrap().value;
         assert_eq!(ids(&engine, Bucket::Side), vec![side]);
         assert_eq!(ids(&engine, Bucket::Later), vec![later]);
         assert_eq!(ids(&engine, Bucket::Next), vec![next, marked]);
         assert_eq!(engine.store().current().unwrap().id, current);
         assert_eq!(engine.store().current().unwrap().tag, Some(Tag::Personal));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// With nothing being done, a task added without a bucket is the one to
+    /// do, whatever Settings says. A bucket that was asked for is kept.
+    #[test]
+    fn a_task_added_while_now_is_empty_is_the_current_one() {
+        let dir = temp_dir("add-first");
+        let mut engine = open(&dir);
+        engine.update_settings(|s| s.default_bucket = Bucket::Later);
+        let asked = engine.add("asked for", Some(Bucket::Next)).unwrap().value;
+        let marked = engine.add("marked @side", None).unwrap().value;
+        assert!(engine.store().current().is_none(), "a named bucket is kept");
+        assert_eq!(ids(&engine, Bucket::Next), vec![asked]);
+        assert_eq!(ids(&engine, Bucket::Side), vec![marked]);
+
+        let first = engine.add("first #w", None).unwrap().value;
+        let current = engine.store().current().unwrap();
+        assert_eq!((current.id, current.tag), (first, Some(Tag::Work)));
+        assert!(current.started_at.is_some(), "and its clock runs");
+        let second = engine.add("second", None).unwrap().value;
+        assert_eq!(ids(&engine, Bucket::Now), vec![first]);
+        assert_eq!(ids(&engine, Bucket::Later), vec![second], "Settings again");
+
+        // Emptied by hand, as a completion with Next empty would leave it.
+        engine.remove(first).unwrap();
+        let third = engine.add("third", None).unwrap().value;
+        assert_eq!(ids(&engine, Bucket::Now), vec![third]);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -508,8 +546,8 @@ mod tests {
     fn a_window_s_requests_answer_whether_they_did_anything() {
         let dir = temp_dir("window");
         let mut engine = open(&dir);
-        let a = engine.add("a", None).unwrap().value;
-        let b = engine.add("b", None).unwrap().value;
+        let a = engine.add("a", Some(Bucket::Next)).unwrap().value;
+        let b = engine.add("b", Some(Bucket::Next)).unwrap().value;
         let side = engine.add("side", Some(Bucket::Side)).unwrap().value;
 
         engine.cycle_tag(a).unwrap();

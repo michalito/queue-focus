@@ -164,9 +164,9 @@ private struct WindowButtons: View {
     }
 }
 
-/// The window's add field. Return adds where Settings says; Command-Return
-/// adds the task as the current one. Escape clears a draft, then hands the
-/// keyboard back to the tasks.
+/// The window's add field. Return adds where Settings says, or to Now while
+/// it is empty; Command-Return adds the task as the current one. Escape
+/// clears a draft, then hands the keyboard back to the tasks.
 private struct WindowAddField: View {
     @Environment(QueueModel.self) private var model
     var focus: FocusState<FocusTarget?>.Binding

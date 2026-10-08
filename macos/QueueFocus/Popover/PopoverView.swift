@@ -238,8 +238,9 @@ private struct QueueColumn: View {
     }
 }
 
-/// The add field. Return adds where Settings says; Command-Return adds the
-/// task as the current one. A task added closes the popover, as in GNOME.
+/// The add field. Return adds where Settings says, or to Now while it is
+/// empty; Command-Return adds the task as the current one. A task added
+/// closes the popover, as in GNOME.
 private struct AddField: View {
     @Environment(QueueModel.self) private var model
     let actions: PopoverActions

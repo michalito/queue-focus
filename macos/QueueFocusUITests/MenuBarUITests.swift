@@ -7,7 +7,7 @@ final class MenuBarUITests: AppUITestCase {
         try launch()
         waitForTitle(containing: "no task")
 
-        // Return adds to Next; the `!` marker makes it the current task.
+        // The `!` marker makes it the current task, wherever Return adds.
         let field = openPopover()
         field.typeText("first task !\r")
         waitForTitle(containing: "first task")
@@ -22,16 +22,32 @@ final class MenuBarUITests: AppUITestCase {
         XCTAssertEqual(try storedTitles(), ["first task"], "the engine saved the queue in the test's directory")
     }
 
-    func testCommandReturnAddsTheTaskAsCurrent() throws {
+    /// With nothing being done, the task added is the one to do; the next
+    /// one goes where Settings says.
+    func testTheFirstTaskAddedIsTheCurrentOne() throws {
         try launch()
+        waitForTitle(containing: "no task")
+        openPopover().typeText("first\r")
+        waitForTitle(containing: "first")
+        openPopover().typeText("second\r")
+        waitForStore("the second went to Next") {
+            try self.stored("now") == ["first"] && self.stored("next") == ["second"]
+        }
+        waitForTitle(containing: "first")
+    }
+
+    func testCommandReturnAddsTheTaskAsCurrent() throws {
+        try launch(with: [("doing", "now")])
         let field = openPopover()
         field.typeText("queued\r")
-        waitForTitle(containing: "no task")
+        waitForStore("Return adds to Next") {
+            try self.stored("next") == ["queued"]
+        }
         let again = openPopover()
         again.typeText("right now")
         again.typeKey(.return, modifierFlags: .command)
         waitForTitle(containing: "right now")
-        XCTAssertEqual(try storedTitles().sorted(), ["queued", "right now"], "one press, one task")
+        XCTAssertEqual(try storedTitles().sorted(), ["doing", "queued", "right now"], "one press, one task")
     }
 
     func testARightClickPausesTheTimer() throws {

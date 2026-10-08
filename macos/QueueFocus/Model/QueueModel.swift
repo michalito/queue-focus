@@ -108,8 +108,9 @@ final class QueueModel {
 
     // MARK: The queue
 
-    /// Add a task from the add field: to the bucket Settings chose, or as the
-    /// current task. Returns whether one was added; blank text adds nothing.
+    /// Add a task from the add field: where the engine puts a task with no
+    /// bucket (Settings' choice, or Now while it is empty), or as the current
+    /// task. Returns whether one was added; blank text adds nothing.
     @discardableResult
     func add(_ text: String, asCurrent: Bool = false) -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)

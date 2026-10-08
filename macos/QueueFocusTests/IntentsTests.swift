@@ -21,12 +21,17 @@ import Testing
         add.text = "write notes #w"
         add.asCurrent = false
         _ = try await add.perform()
-        #expect(model.snapshot.next.map(\.title) == ["write notes"])
-        #expect(model.snapshot.next.first?.tag == .work)
+        // Nothing was being done, so it is the one to do.
+        #expect(model.snapshot.current?.title == "write notes")
+        #expect(model.snapshot.current?.tag == .work)
+        add.text = "read the mail"
+        _ = try await add.perform()
+        #expect(model.snapshot.next.map(\.title) == ["read the mail"])
         add.text = "ship"
         add.asCurrent = true
         _ = try await add.perform()
         #expect(model.snapshot.current?.title == "ship")
+        #expect(model.snapshot.next.map(\.title) == ["write notes", "read the mail"])
         // Blank text says so, not whatever failed before it.
         model.actionError = "could not save, earlier"
         add.text = "  "

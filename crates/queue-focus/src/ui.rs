@@ -451,7 +451,7 @@ impl Ui {
             .build();
         let this = self.clone();
         entry.connect_activate(move |e| {
-            let default = this.service.settings().default_bucket;
+            let default = this.service.engine().default_bucket();
             if this.submit(e, default) {
                 this.hide();
             }
@@ -551,7 +551,7 @@ impl Ui {
         entry_bar.append(&entry);
         let this = self.clone();
         entry.connect_activate(move |e| {
-            let default = this.service.settings().default_bucket;
+            let default = this.service.engine().default_bucket();
             this.submit(e, default);
         });
         let this = self.clone();
@@ -1031,7 +1031,7 @@ impl Ui {
         self.choice_row(
             &card,
             "⏎ adds to",
-            Some("Ctrl+⏎ always goes to Now; @markers still win."),
+            Some("To Now while Now is empty. Ctrl+⏎ always goes to Now; @markers still win."),
             &BUCKET_ORDER.map(|b| (b, b.label())),
             |s| s.default_bucket,
             |s, v| s.default_bucket = v,

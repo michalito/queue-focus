@@ -150,7 +150,8 @@ fn handle(
             let Some((text, bucket)) = params.get::<(String, String)>() else {
                 return bad(inv, "expected (ss)");
             };
-            // An unnamed bucket is the one the user chose in Settings.
+            // An unnamed bucket is the engine's choice: Now while it is empty,
+            // else the one the user chose in Settings.
             let result = service.request(|e| e.add(&text, Bucket::parse(&bucket)));
             reply(conn, inv, result, |id| Some((id,).to_variant()));
         }

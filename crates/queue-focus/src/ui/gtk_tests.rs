@@ -59,6 +59,7 @@ fn real_widgets_drive_placement_drops_focus_and_drag_feedback() {
     placement_drops_and_focus();
     drag_feedback();
     hero_dressing();
+    entries_add_to_now_while_it_is_empty();
 }
 
 /// Every widget under `root`, depth first.
@@ -652,5 +653,60 @@ fn drag_feedback() {
     assert!(!hero.has_css_class("drop-into"));
 
     ui.win.borrow().as_ref().unwrap().destroy();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Enter in the window's entry, and in the quick add window's, adds where the
+/// engine says: to Now while nothing is being done, whatever Settings chose,
+/// and to that bucket after.
+fn entries_add_to_now_while_it_is_empty() {
+    let dir = std::env::temp_dir().join(format!("qf-entries-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (service, _) = crate::service::Service::open_in(&dir).unwrap();
+    service.update_settings(|s| s.default_bucket = Bucket::Later);
+    let app = adw::Application::builder()
+        .application_id("org.queuefocus.EntryTest")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gtk::gio::Cancellable>).unwrap();
+    let ui = Ui::new(app, service.clone());
+    ui.show(Page::Queue);
+    settle();
+    let titles = |bucket: Bucket| -> Vec<String> {
+        let store = service.store();
+        store.in_bucket(bucket).map(|t| t.title.clone()).collect()
+    };
+    let enter = |entry: &gtk::Entry, text: &str| {
+        entry.set_text(text);
+        entry.emit_by_name::<()>("activate", &[]);
+        settle();
+    };
+
+    let entry = ui.entry.borrow().clone().unwrap();
+    enter(&entry, "first");
+    assert_eq!(titles(Bucket::Now), ["first"]);
+    enter(&entry, "second");
+    assert_eq!(titles(Bucket::Now), ["first"]);
+    assert_eq!(titles(Bucket::Later), ["second"]);
+    enter(&entry, "third @next");
+    assert_eq!(titles(Bucket::Next), ["third"]);
+
+    // Now emptied by hand: the quick add window fills it the same way.
+    let first = service.store().current().unwrap().id;
+    ui.update(|s| s.remove(first)).unwrap();
+    assert!(service.store().current().is_none());
+    ui.quick_add_dialog();
+    settle();
+    let quick = ui.quick.borrow().as_ref().unwrap().1.clone();
+    enter(&quick, "fourth @side");
+    assert!(service.store().current().is_none(), "a marker is kept");
+    ui.quick_add_dialog();
+    settle();
+    enter(&quick, "fifth");
+    assert_eq!(titles(Bucket::Now), ["fifth"]);
+    assert_eq!(titles(Bucket::Side), ["fourth"]);
+
+    ui.win.borrow().as_ref().unwrap().destroy();
+    ui.quick.borrow().as_ref().unwrap().0.destroy();
     std::fs::remove_dir_all(dir).unwrap();
 }

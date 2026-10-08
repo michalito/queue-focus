@@ -62,6 +62,8 @@ import Testing
             }
             #expect(try await eventually { !quickAdd.isShown }, "round \(round): a task added closes the panel")
         }
-        #expect(model.snapshot.next.map(\.title) == (1...5).map { "task \($0)" })
+        // The first, added while nothing was being done, is the one to do.
+        #expect(model.snapshot.current?.title == "task 1")
+        #expect(model.snapshot.next.map(\.title) == (2...5).map { "task \($0)" })
     }
 }

@@ -45,12 +45,16 @@ private final class Fixture {
 @Suite struct QueueModelTests {
     @Test func addingGoesWhereSettingsSayOrToNow() throws {
         let f = try Fixture()
+        // Nothing is being done yet: the first task is the one to do.
+        #expect(f.model.add("read the mail"))
+        #expect(f.model.snapshot.current?.title == "read the mail")
         #expect(f.model.add("write notes"))
         #expect(f.model.snapshot.next.map(\.title) == ["write notes"])
         #expect(f.model.add("  ship it #w  ", asCurrent: true))
         #expect(f.model.snapshot.current?.title == "ship it")
         #expect(f.model.snapshot.current?.tag == .work)
-        #expect(f.changes >= 2)
+        #expect(f.model.snapshot.next.map(\.title) == ["read the mail", "write notes"])
+        #expect(f.changes >= 3)
     }
 
     @Test func completingTheCurrentTaskSaysWhatCameOfIt() throws {
@@ -317,8 +321,8 @@ private final class Fixture {
 
     @Test func theWindowsRequestsReachTheEngine() throws {
         let f = try Fixture()
-        f.model.add("a")
-        f.model.add("b")
+        f.model.add("a @next")
+        f.model.add("b @next")
         f.model.add("c @later")
         let ids = f.model.snapshot.next.map(\.id)
         let later = try #require(f.model.snapshot.later.first)
@@ -344,7 +348,7 @@ private final class Fixture {
 
     @Test func aBlankRenameAsksNothingOfTheEngine() throws {
         let f = try Fixture()
-        f.model.add("kept")
+        f.model.add("kept @next")
         let id = try #require(f.model.snapshot.next.first?.id)
         let revision = f.model.snapshot.revision
         #expect(!f.model.rename(id: id, to: "   "))

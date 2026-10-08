@@ -218,8 +218,8 @@ impl QueueEngine {
     // ---- the queue -----------------------------------------------------
 
     /// Parse the add markers and create a task. Without a bucket it goes
-    /// where the settings say; a marker in the text wins either way. Returns
-    /// the new task's id.
+    /// where the settings say, or to Now while Now is empty; a marker in the
+    /// text wins either way. Returns the new task's id.
     pub fn add(&self, text: String, bucket: Option<Bucket>) -> Result<u64, QfError> {
         self.change(|e| e.add(&text, bucket.map(Into::into)))
     }

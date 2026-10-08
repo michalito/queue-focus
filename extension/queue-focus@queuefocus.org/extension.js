@@ -580,7 +580,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
             const text = entry.get_text().trim();
             if (!text) return;
             this._quickAddPending = true;
-            // An empty bucket means "wherever Settings says".
+            // An empty bucket means "Now if it is empty, else wherever Settings says".
             this._connection.request('Add', [text, ''], (_res, err) => {
                 this._quickAddPending = false;
                 if (err) {

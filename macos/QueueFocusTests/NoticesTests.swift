@@ -82,11 +82,11 @@ private final class Setup {
         notices = Notices(model: model, notifier: bell, popoverIsShown: { [unowned self] in popoverShown },
                           showPopover: { [unowned self] in popoverOpenings += 1 })
         model.didChange = { [unowned self] in notices.modelDidChange() }
-        for title in next {
-            model.add(title)
-        }
         if let current {
             model.add(current, asCurrent: true)
+        }
+        for title in next {
+            model.add("\(title) @next")
         }
     }
 

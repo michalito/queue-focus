@@ -59,7 +59,7 @@ struct SettingsView: View {
                     Text("Later").tag(Bucket.later)
                 } label: {
                     Text("⏎ adds to")
-                    Text("⌘⏎ always goes to Now; @markers still win.").settingNote()
+                    Text("To Now while Now is empty. ⌘⏎ always goes to Now; @markers still win.").settingNote()
                 }
                 .accessibilityIdentifier("setting-default-bucket")
             }

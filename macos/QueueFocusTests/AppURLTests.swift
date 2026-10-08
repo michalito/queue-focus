@@ -64,7 +64,7 @@ private func link(_ string: String) -> AppURL? {
         #expect(failures.count == 1)
         #expect(failures.first?.0 == "Could not add the task")
         #expect(failures.first?.1?.isEmpty == false, "with its reason, read before the next link cleared it")
-        #expect(model.snapshot.next.map(\.title) == ["write notes"])
+        #expect(model.snapshot.current?.title == "write notes", "the first task is the one to do")
         #expect(shown == [.board])
     }
 }
