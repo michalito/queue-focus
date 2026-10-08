@@ -184,6 +184,16 @@ final class AccessibilityUITests: AppUITestCase {
     }
 
     /// Settings scrolls: each part is audited once in view.
+    /// The label in the centre of the menu bar is a button with a name.
+    func testTheTitleInTheCentreOfTheMenuBarPassesTheAudit() throws {
+        try XCTSkipIf(NSScreen.screens[0].safeAreaInsets.top > 0, "a notch takes the centre of this screen's menu bar")
+        try launch(with: [("ship the release #w", "now")], arguments: ["-menuBarTitleCentred", "YES"])
+        let label = app.buttons["queue-focus-centre-title"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        XCTAssertTrue(label.label.hasPrefix("Queue Focus: ship the release"), label.label)
+        try audit("the title in the centre")
+    }
+
     private func auditSettings(_ name: String) throws {
         let settings = openSettings()
         let form = settings.scrollViews.firstMatch

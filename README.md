@@ -247,9 +247,17 @@ There is no automatic update yet. To update, quit Queue Focus and replace the ap
 
 ### First run on macOS
 
-Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. While the timer is paused the title is dimmed, the time stops, and a `❚❚` leads the clock. The gear in the menu opens Settings, turns on Launch at Login, and quits.
+Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. While the timer is paused the title is dimmed, the time stops, and a `❚❚` leads the clock. The menu points at the right end of the title, the end that stays where it is when the title changes, so the menu does not move while it is open. The gear in the menu opens Settings, turns on Launch at Login, and quits.
 
 macOS may ask you to allow Launch at Login in System Settings › General › Login Items. Queue Focus asks to show notifications the first time it has one to show; without them, the menu opens instead. It needs no Accessibility permission.
+
+### The task in the centre of the menu bar
+
+macOS decides where a menu bar item sits: among the other icons, at the right. On a wide display that can be a long way from where you look. Turn on Task in the centre of the menu bar in Settings, and the title and its clock are drawn in the middle of the menu bar instead, where they stay still however long the title is. Click the title for the menu, which opens under it, and right-click it to pause, as with the item. The item stays among the icons as a dot in the tag's colour, and still opens the menu.
+
+The task goes back to the item wherever the centre cannot be used: on a display with a notch, in a full-screen space, in Mission Control, when the menu bar hides itself, and when the title would reach the dot. With more than one display the title is centred on the main one.
+
+Queue Focus cannot see other apps' menus or icons, so on a narrow or crowded menu bar the title can cover them. Keep the dot at the left end of the icons (Command-drag it there) and the title gives way before it reaches an icon. It cannot make way for an app with a long row of menus; where that happens, turn the setting off.
 
 ### Shortcuts and automation on macOS
 
@@ -272,7 +280,7 @@ open "queuefocus://add?text=ship%200.6&now=1"
 open "queuefocus://show?view=board"
 ```
 
-`view` is `queue`, `board`, or `add`. No link completes a task, since any web page can open a link. The Shortcuts app has Add a Task, Complete the Current Task, and Get the Current Task; to print the current task in a terminal, make a shortcut in Shortcuts with the Get the Current Task action, name it, say, What Now, and run `shortcuts run "What Now"`.
+`view` is `queue`, `board`, or `add`. No link completes a task, since any web page can open a link. A link can add one, and a task added while Now is empty becomes the current task, as with `now=1`. The Shortcuts app has Add a Task, Complete the Current Task, and Get the Current Task; to print the current task in a terminal, make a shortcut in Shortcuts with the Get the Current Task action, name it, say, What Now, and run `shortcuts run "What Now"`.
 
 ### Data on macOS
 
@@ -283,13 +291,13 @@ Tasks and settings are stored at:
 ~/Library/Application Support/queue-focus/settings.json
 ```
 
-They are the files described under [Task data](#task-data) and [Settings data](#settings-data). The settings only a Mac has, the menu bar title width and the global shortcuts, are kept in the defaults domain `org.queuefocus.QueueFocus`.
+They are the files described under [Task data](#task-data) and [Settings data](#settings-data). The settings only a Mac has, the menu bar title's width and place and the global shortcuts, are kept in the defaults domain `org.queuefocus.QueueFocus`.
 
 To move your tasks between a Mac and a Linux machine, quit Queue Focus on both and copy the two files. Do not point two running copies at one synced folder: each writes whole files, so the last one to save wins.
 
 ### Differences from GNOME
 
-1. The menu bar shows the title cut to a width you choose in Settings, since macOS hides menu bar items that do not fit. A right click pauses the timer.
+1. The menu bar shows the title cut to a width you choose in Settings, since macOS hides menu bar items that do not fit. A right click pauses the timer. Settings can put the task in the centre of the menu bar instead.
 2. The menu is a fixed width; titles cut short show the whole title in a tooltip.
 3. The Queue, the Board, and Settings are separate windows, not views of one.
 4. The flash is drawn on the screen with the menu bar. With Reduce Motion it holds still for a second and a half.
@@ -409,7 +417,7 @@ The accepted tag markers are:
 
 The accepted bucket markers are `@now`, `@next`, `@later`, and `@side`. Their short forms are `@n`, `@x`, `@l`, and `@s`.
 
-Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task.
+Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task. To keep a task out of an empty Now, give it a bucket, such as `@next`.
 
 In the main window, Enter adds to Next, or to Now while Now is empty, and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
 

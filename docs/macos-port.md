@@ -237,20 +237,32 @@ Hand checks, which a test cannot make here:
 - Shortcuts and Spotlight listing Add a Task, Complete the Current Task and
   Get the Current Task.
 
+They were made on 8 October 2026, on the first 0.6.0 build and a Mac with
+one display (so not the second display), and passed but for the three
+points Phase 9 answers. What Phase 9 adds, to check by eye on its build:
+- The title in the centre of the menu bar: its words level with the menu
+  bar's own and in its colour, on a light and a dark menu bar, and with the
+  app's theme set against the system's.
+- That it goes, and the item takes the title, in Mission Control and in a
+  full-screen space (with the menu bar brought down by the pointer too),
+  and comes back after.
+- The popover from the item pointing at its right end, and staying there
+  through Done and Undo; from the centre, staying under the title.
+
 ### README, section by section
 
 | README section | On the Mac | Covered by |
 | --- | --- | --- |
 | The four buckets | The same: the shared engine. | QfCore EngineTests, QueueModelTests |
-| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, dimmed while paused, and the clock with `❚❚` then. Right-click pauses. The popover is fixed-width, with tooltips; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, MenuBarUITests, NoticesTests, HotkeyUITests |
+| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, dimmed while paused, and the clock with `❚❚` then. Right-click pauses. A setting draws the title in the centre of the menu bar instead, the item kept as a dot. The popover is fixed-width, with tooltips, and points at the item's right end, which stays put when the title changes; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, CentreTitleTests, MenuBarUITests, CentreTitleUITests, NoticesTests, HotkeyUITests |
 | Queue view | The same three bands; its own window. | WindowUITests, AccessibilityUITests |
 | Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
 | Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
-| Quick add window | A floating panel: ⌃⌥⇧Q or ⌘N; Return adds, ⌘Return adds as current, Escape closes. | QuickAddTests, QuickAddUITests |
+| Quick add window | A floating panel: ⌃⌥⇧Q or ⌘N; Return adds (to Now while Now is empty), ⌘Return adds as current, Escape closes. | QuickAddTests, QuickAddUITests |
 | Install, update, uninstall, choose the version | A disk image from the GitHub release, checked with its checksum; signed ad hoc and not notarized until there is a Developer ID, so its first launch is allowed in System Settings (macOS 15) or with Control-click Open (macOS 14); updated by replacing the app; no installer, so no version to choose beyond the release downloaded. Uninstalling turns off Launch at Login and deletes the app, and optionally the data and the defaults domain. | `release-mac.sh` checks, the release dry run, hand checks |
 | Global shortcuts | ⌃⌥Q, ⌃⌥⇧Q, ⌃⌥B, ⌃⌥D, changed in Settings rather than with `queue-focus-setup`; no Accessibility permission. | HotkeyTests, HotkeyUITests |
 | The flash reminder | The same six styles, envelopes and card, on the screen with the menu bar; the top bar styles colour the menu bar; Reduce Motion holds it still for 1.5 s, as GNOME does with animations off. | FlashPlanTests, FlashStageTests, FlashControllerTests, FlashUITests |
-| Add tasks | The same markers: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, WindowUITests |
+| Add tasks | The same markers, and the same first task into an empty Now: the shared engine. ⌘Return where GNOME has Ctrl+Enter. | QueueModelTests, MenuBarUITests, WindowUITests |
 | Keyboard | The same task keys in the Queue and the Board; ⌘1 and ⌘2 where GNOME has Ctrl+1 and Ctrl+2; ⌘, for Settings; Escape and ⌘W close a window, ⌘Q quits. Settings is a window of its own, so `q` and `b` do not lead from it to the Queue and the Board; ⌘1 and ⌘2 do. | PlacementTests, WindowUITests |
 | Mouse | The same: double-click promotes, drags and drops, tooltips only on cut titles. | WindowUITests |
 | Command line use | No command; `queuefocus://add` and `queuefocus://show` links, and Shortcuts actions (`shortcuts run` for the current task). | AppURLTests, IntentsTests, HotkeyUITests |
@@ -792,6 +804,37 @@ CI's first macOS run, on the stacked PRs, failed on both runners: Xcode
 which passed the method `loginItem.set` as Binding's `@isolated(any)
 @Sendable` setter. A closure gives the setter its type; the next run passed
 on Apple silicon and Intel, and on Linux. Swift 6.4, here, had compiled it.
+
+### Phase 9 design, Fable
+
+Approved: the new default as built; the popover's anchor and the label in
+the centre with changes, all taken but one.
+1. The new default. Named for what it is: the rule is inside `Engine::add`
+   and the GTK entries call that, where they called the store with a default
+   of their own, so there is one way in. The service test asks over D-Bus,
+   the extension's only way, that a task with no bucket lands in an empty
+   Now. The README says how to keep a task out of an empty Now (`@next`) and
+   that a link can now start a task, as `now=1` always could. Not taken: an
+   "Added as the current task" from the Shortcuts action, which says "Added"
+   and is right.
+2. The popover. The test as first written passed on the old code, whose
+   popover did not move either: it now asks that the popover still points
+   inside the item once the item has shrunk. That the popover would follow
+   an item moved by a neighbour was claimed and not so: nothing tells of
+   such a move, and the comment says what happens.
+3. The label. Suggested: a label that only shows, with every click left to
+   the dot. Not taken: the user chose the menu opening under the title. So
+   what a label that takes clicks needs was taken: it answers on the way
+   down, as a menu bar item does, and a click made before the popover last
+   closed, which is the click that closed it, does not open it again; it
+   takes a first click; a right click is its own. `.transient` for
+   `.stationary`, so that Mission Control hides it; the window's occlusion
+   for `isOnActiveSpace` as the test of whether it is in view, which also
+   tells at once; the panel's settings as the flash panel's; one screen, the
+   main one, since no other could be tried here; the dot's place judged
+   from the item's right edge and a fixed width, not from its width now,
+   which the answer changes; the UI tests' count of windows leaves the
+   panel out; the limits in the README and under the switch.
 
 ### Cross-phase review (the user's, after the stack went up)
 

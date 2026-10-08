@@ -9,6 +9,8 @@ struct SettingsView: View {
     @Environment(LoginItem.self) private var loginItem
     @AppStorage(Preferences.menuBarTitleWidthKey)
     private var titleWidth = Preferences.defaultMenuBarTitleWidth
+    @AppStorage(Preferences.menuBarTitleCentredKey)
+    private var titleCentred = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,6 +52,11 @@ struct SettingsView: View {
                         .frame(width: 52, alignment: .trailing)
                 }
                 .help("macOS hides menu bar items that do not fit, so a long title is cut here.")
+                Toggle(isOn: $titleCentred) {
+                    Text("Task in the centre of the menu bar")
+                    Text("Where the centre is free. The item keeps a dot, and the task where it is not.").settingNote()
+                }
+                .accessibilityIdentifier("setting-title-centred")
             }
             Section("Quick add") {
                 Picker(selection: setting(\.defaultBucket)) {

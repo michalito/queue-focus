@@ -94,7 +94,13 @@ class AppUITestCase: XCTestCase {
         self.dataHome = dataHome
         XCTAssertTrue(statusItem.waitForExistence(timeout: 10), "the status item appears")
         waitForTheMenuBarToSettle()
-        XCTAssertEqual(app.windows.count, 0, "a menu bar app opens no window at launch: \(app.windows.debugDescription)")
+        XCTAssertEqual(openWindows.count, 0, "a menu bar app opens no window at launch: \(app.windows.debugDescription)")
+    }
+
+    /// The app's windows, but for the label in the centre of the menu bar,
+    /// which is a panel of its own and no window to the user.
+    var openWindows: XCUIElementQuery {
+        app.windows.matching(NSPredicate(format: "identifier != %@", "centre-title-panel"))
     }
 
     /// The menu bar lays its items out again as an app's item comes or goes,

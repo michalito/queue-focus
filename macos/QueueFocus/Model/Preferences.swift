@@ -18,4 +18,12 @@ enum Preferences {
         let width = defaults.double(forKey: menuBarTitleWidthKey)
         return min(max(width, menuBarTitleWidthRange.lowerBound), menuBarTitleWidthRange.upperBound)
     }
+
+    /// Whether the task is shown in the centre of the menu bar, in a label
+    /// of its own, where macOS would put no status item. Off unless chosen.
+    static let menuBarTitleCentredKey = "menuBarTitleCentred"
+
+    static func menuBarTitleCentred(in defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: menuBarTitleCentredKey)
+    }
 }
