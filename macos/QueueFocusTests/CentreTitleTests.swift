@@ -262,42 +262,4 @@ private final class Place {
         #expect(try await eventually { label == nil })
         #expect(words(of: controller).contains("hand over"))
     }
-
-    /// The popover points at a sliver at the item's right end, which must
-    /// keep its place there when a new title changes the item's width: in
-    /// the item's coordinates, measured from the left, that place moves.
-    /// (Nothing opens here: a hosted test's items are in no menu bar.)
-    @Test func theItemsAnchorKeepsToItsRightEndWhateverItsWidth() async throws {
-        let suite = "qf-centre-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer {
-            defaults.removePersistentDomain(forName: suite)
-            try? FileManager.default.removeItem(at: dir)
-        }
-        let model = QueueModel(engine: try QueueEngine(dir: dir.path))
-        model.add("a task with quite a long title to it", asCurrent: true)
-        let controller = StatusItemController(model: model, loginItem: LoginItem(service: NoLoginItems()), windows: AppWindows(),
-                                              display: Display(defaults: defaults), defaults: defaults,
-                                              screen: { Self.screen }, quit: {})
-        model.didChange = { [weak controller] in controller?.update() }
-        let button = try #require(controller.item.button)
-        #expect(try await eventually { button.bounds.width > 100 }, "the item has its title: \(button.bounds)")
-        let wide = button.bounds
-        controller.showPopover()
-        defer { controller.closePopover() }
-        #expect(controller.itemAnchor.superview === button)
-        #expect(controller.itemAnchor.frame == StatusItemController.anchor(in: wide))
-
-        _ = model.completeCurrent()
-        #expect(try await eventually { button.bounds.width < wide.width - 40 }, "the item is narrower: \(button.bounds)")
-        #expect(controller.itemAnchor.frame == StatusItemController.anchor(in: button.bounds),
-                "the anchor is at the narrower item's right end: \(controller.itemAnchor.frame) in \(button.bounds)")
-
-        model.add("and a long title once again, longer than before", asCurrent: true)
-        #expect(try await eventually { button.bounds.width > wide.width }, "wider: \(button.bounds)")
-        #expect(controller.itemAnchor.frame == StatusItemController.anchor(in: button.bounds),
-                "and at the wider one's: \(controller.itemAnchor.frame) in \(button.bounds)")
-    }
 }

@@ -119,29 +119,21 @@ final class CentreTitleView: NSView {
     }
 }
 
-/// The label's window: a borderless panel over the menu bar, which never
-/// takes the keyboard or the app's turn in front. It keeps out of
-/// full-screen spaces, where the menu bar is out of view, and of Mission
-/// Control.
-final class CentreTitlePanel: NSPanel {
-    static let identifier = NSUserInterfaceItemIdentifier("centre-title-panel")
-
-    let label = CentreTitleView()
-
+/// A borderless panel over the menu bar, which never takes the keyboard or
+/// the app's turn in front: a place of the app's own in the menu bar, where
+/// every window is the system's.
+class MenuBarPanel: NSPanel {
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        identifier = Self.identifier
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
         level = .statusBar
-        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         isExcludedFromWindowsMenu = true
         isRestorable = false
         animationBehavior = .none
-        contentView = label
     }
 
     override var canBecomeKey: Bool { false }
@@ -151,10 +143,49 @@ final class CentreTitlePanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
     }
+}
+
+/// The label's window. It keeps out of full-screen spaces, where the menu
+/// bar is out of view, and of Mission Control.
+final class CentreTitlePanel: MenuBarPanel {
+    static let identifier = NSUserInterfaceItemIdentifier("centre-title-panel")
+
+    let label = CentreTitleView()
+
+    override init() {
+        super.init()
+        identifier = Self.identifier
+        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+        // Said outright: left unsaid, a window that is not opaque lets a
+        // click through wherever it has drawn nothing, and a click between
+        // two letters of the title would go to whatever is under it.
+        ignoresMouseEvents = false
+        contentView = label
+        // No title bar says what this window is; VoiceOver is told here.
+        setAccessibilityLabel("Queue Focus in the menu bar")
+    }
 
     /// Whether the label can be seen: not in a full-screen space, nor in
     /// Mission Control, nor under something else.
     var isShowing: Bool {
         isVisible && occlusionState.contains(.visible)
+    }
+}
+
+/// What the popover points at when it opens from the status item: a sliver
+/// of nothing over the item's right end, which takes no clicks. The item's
+/// own window is the system's, and no place to hang a popover that must
+/// stay where it is: when the item's width changes, its contents move
+/// before its window does, and a popover on it is put a whole width off, or
+/// loses its hold.
+final class PopoverAnchorPanel: MenuBarPanel {
+    override init() {
+        super.init()
+        ignoresMouseEvents = true
+        // Wherever the menu bar is, a full-screen space with the menu bar
+        // brought down too.
+        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
+        contentView = NSView()
+        setAccessibilityLabel("Queue Focus menu")
     }
 }

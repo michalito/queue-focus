@@ -10,6 +10,17 @@ enum TestEnvironment {
     static var isAuditBaseline: Bool {
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 27
     }
+
+    /// Reading text off the screen has the system build its model, in the
+    /// test runner's caches; on a disk nearly full macOS empties those
+    /// caches, and ends the runner to do it (13 GB free was too little, 23
+    /// enough). A test that reads the screen is skipped there, not killed.
+    static var hasRoomToReadTheScreen: Bool {
+        let values = try? URL(fileURLWithPath: NSTemporaryDirectory())
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        guard let free = values?.volumeAvailableCapacityForImportantUsage else { return true }
+        return free >= 20_000_000_000
+    }
 }
 
 /// The app launched on a data directory of the test's own, and what the

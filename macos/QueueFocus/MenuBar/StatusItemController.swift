@@ -24,9 +24,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     // The item is the controller's to drive; the tests read what it says.
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
-    /// What the popover points at in the item: a sliver that keeps its
-    /// place at the item's right end as the item's width changes.
-    let itemAnchor = ItemAnchor()
+    /// What the popover points at when it opens from the item.
+    private lazy var itemAnchor = PopoverAnchorPanel()
     private let model: QueueModel
     private let display: Display
     private let defaults: UserDefaults
@@ -56,7 +55,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if let button = item.button {
             button.target = self
             button.action = #selector(clicked)
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // On the way down, as the menu bar's own items answer, and so
+            // that the click is the event in hand when the popover it
+            // closed says so.
+            button.sendAction(on: [.leftMouseDown, .rightMouseDown])
             button.setAccessibilityIdentifier(Self.identifier)
             // Always in a window, so SwiftUI's window actions reach AppKit.
             button.addSubview(NSHostingView(rootView: WindowActionsBridge(windows: windows)))
@@ -65,7 +67,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             let watcher = AppearanceWatcher()
             watcher.didChange = { [weak self] in self?.update() }
             button.addSubview(watcher)
-            button.addSubview(itemAnchor)
         }
         item.autosaveName = "QueueFocusStatusItem"
         // What moves the label or changes its words without the queue
@@ -263,9 +264,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
-        let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true
+        let secondary = event?.type == .rightMouseDown || event?.modifierFlags.contains(.control) == true
         if secondary {
             secondaryClick()
+        } else if closedThePopover(event) {
+            return
         } else if popover.isShown {
             closePopover()
         } else {
@@ -273,17 +276,30 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// Whether `event` is the click that closed the popover. The popover is
+    /// transient: a click outside it closes it, and the item and the label
+    /// are outside it. That click then comes on to the item or the label,
+    /// and must not open the popover again. A click on the label is timed
+    /// when it was made, before the close; one on the item is handed on by
+    /// the menu bar, timed when it was handed on, some hundredths of a
+    /// second after it (26 and 77 thousandths, measured on macOS 27). (A
+    /// press from VoiceOver is no click, and always acts.)
+    private func closedThePopover(_ event: NSEvent?) -> Bool {
+        guard let event, event.type == .leftMouseDown, let closedAt else { return false }
+        return event.timestamp <= closedAt + Self.handingOn
+    }
+
+    /// The longest the menu bar is taken to need to hand a click on.
+    static let handingOn: TimeInterval = 0.3
+
     private func secondaryClick() {
         closePopover()
         model.togglePause()
     }
 
-    /// A click on the label, or VoiceOver's press, which is no event. The
-    /// popover is transient: a click outside it closes it, and the label is
-    /// outside it. A click made before the popover last closed is the one
-    /// that closed it, and must not open it again.
+    /// A click on the label, or VoiceOver's press, which is no event.
     private func labelClicked(_ event: NSEvent?) {
-        if let event, let closedAt, event.timestamp <= closedAt { return }
+        if closedThePopover(event) { return }
         if popover.isShown {
             closePopover()
         } else if let label = centre?.label {
@@ -302,9 +318,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// Where in the item the popover points: its right end. macOS packs the
     /// status items from the right, so when a new title changes the item's
     /// width its left edge moves and its right edge stays; pointing there,
-    /// the popover stays on the item without moving under the pointer.
-    /// (An item to the right that changes width moves this one whole, and
-    /// the popover, as before, stays where it opened.)
+    /// the popover stays on the item without moving under the pointer. (An
+    /// item to the right that changes width moves this one whole, and the
+    /// popover stays where it opened.)
     static func anchor(in bounds: NSRect) -> NSRect {
         // A sliver about that point, kept inside an item too narrow for it.
         let width = min(2, bounds.width)
@@ -329,15 +345,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         previousApp = NSWorkspace.shared.frontmostApplication
         if previousApp == .current { previousApp = nil }
         Activation.takeFront()
-        // The label's middle stays where it is whatever its words; the
-        // item's does not, and its anchor is what stays.
+        // The label's middle stays where it is whatever its words. The
+        // item's does not, and its right end is what stays: that place on
+        // the screen is marked, and the popover points at the mark.
         popoverIsOnLabel = view !== item.button
-        let pointsAt = popoverIsOnLabel ? view : itemAnchor
-        if !popoverIsOnLabel {
-            itemAnchor.frame = Self.anchor(in: view.bounds)
+        var pointsAt = view
+        if !popoverIsOnLabel, let window = view.window, let mark = itemAnchor.contentView {
+            itemAnchor.setFrame(window.convertToScreen(view.convert(Self.anchor(in: view.bounds), to: nil)), display: false)
+            itemAnchor.orderFrontRegardless()
+            pointsAt = mark
         }
         popover.show(relativeTo: pointsAt.bounds, of: pointsAt, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        let window = popover.contentViewController?.view.window
+        // Hung on a window of the app's own, the popover has no name of its
+        // own for VoiceOver: the status item gave it one.
+        window?.setAccessibilityLabel("Queue Focus")
+        window?.makeKey()
     }
 
     func closePopover() {
@@ -347,6 +370,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     nonisolated func popoverDidClose(_ notification: Notification) {
         MainActor.assumeIsolated {
             popoverIsOnLabel = false
+            itemAnchor.orderOut(nil)
             closedAt = ProcessInfo.processInfo.systemUptime
             model.actionError = nil
             // Escape or a button closed it while we were still in front: give
@@ -359,24 +383,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             previousApp = nil
         }
     }
-}
-
-/// What the popover points at in the status item: nothing to see or to
-/// click, it keeps its distance from the item's right edge when the item's
-/// width changes, where a rectangle in the item's own coordinates, measured
-/// from its left, would be left behind.
-final class ItemAnchor: NSView {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        autoresizingMask = [.minXMargin, .height]
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("not made from a nib")
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// Tells when the menu bar turns light or dark: it sits in the status item's

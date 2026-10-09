@@ -86,7 +86,8 @@ final class AccessibilityUITests: AppUITestCase {
                     if element.elementType == .touchBar || touchBarFrame.contains(frame) {
                         reason = "the Touch Bar"
                     } else if element.elementType == .group, element.identifier.isEmpty,
-                              surfaces.contains(where: { same($0, frame) }) {
+                              surfaces.contains(where: { same($0, frame) || same($0.insetBy(dx: 13, dy: 13), frame) }) {
+                        // A popover's is inside its border and arrow.
                         reason = "a window's hosting root"
                     } else if element.elementType == .window, element.identifier.hasPrefix("SafariPlatformSupport") {
                         reason = "a text field's completions"

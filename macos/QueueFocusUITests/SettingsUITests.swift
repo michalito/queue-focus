@@ -68,6 +68,7 @@ final class SettingsUITests: AppUITestCase {
     /// wherever the Mac is. Their accessibility value is a moment, not what
     /// is on screen, so the screen is read.
     func testQuietHoursShowTheTimesStored() throws {
+        try XCTSkipUnless(TestEnvironment.hasRoomToReadTheScreen, "the disk is too full for the system to read text off the screen")
         try launch(settings: ["quiet_hours": true, "quiet_from": "02:30", "quiet_to": "18:45"])
         let settings = openSettings()
         let from = settings.datePickers["setting-quiet-from"]

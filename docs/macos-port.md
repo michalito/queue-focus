@@ -248,6 +248,8 @@ points Phase 9 answers. What Phase 9 adds, to check by eye on its build:
   and comes back after.
 - The popover from the item pointing at its right end, and staying there
   through Done and Undo; from the centre, staying under the title.
+- The popover from the item in a full-screen space, with the menu bar
+  brought down by the pointer: it hangs on a window of the app's own now.
 
 ### README, section by section
 
@@ -885,10 +887,48 @@ Second pass, not green: seven answered, and three points left, all taken.
    right end when the item's width changed, and nothing could: no popover
    opens from a hosted test's item, and telling a closed popover where to
    point raises an exception, as a try at it showed. So the code that said
-   the anchor again on every new width is gone. The popover points at a
-   sliver of a view in the item that keeps its distance from the item's
-   right edge by itself, which a hosted test reads at three widths; without
-   the margin that does it, the test fails.
+   the anchor again on every new width went, for a sliver of a view in the
+   item that keeps its distance from the item's right edge by itself. The
+   UI tests then showed that neither would do (below).
+
+Third pass, on that: the three answered, and one minor point, that the test
+of the sliver opened a popover and so asked for the app's turn in front.
+The sliver and its test are gone (below).
+
+What the UI tests found, once they could run (macOS asks the user's
+password to let them drive the pointer, and the night's run timed out
+unanswered). Each is a fault no review saw:
+1. A popover hung on the status item does not stay where it is when the
+   item's width changes. macOS moves the item in two steps, its contents and
+   then its window: told of the first (the sliver that moves, or the
+   rectangle said again), the popover lands a whole width to the left, 175
+   points in the test; told nothing, it drops four points and points where
+   the item's right end was. So the popover hangs on a window of the app's
+   own, a sliver two points wide put over the item's right end when the
+   popover opens (`PopoverAnchorPanel`), as the popover from the label in
+   the centre hangs on the label's, which stayed put from the first run.
+   It stays through Done and Undo, to the point.
+2. With the popover off the item, a second click on the item opened it
+   again: macOS had been keeping that click to itself (the cross-phase
+   review's point 5), and now hands it on, after the close, and timed when
+   it was handed on, 26 and 77 thousandths of a second late, not when it
+   was made. The item answers on the way down, as the label does, and a
+   click within three tenths of a second of the close is taken for the one
+   that closed it.
+3. A click between two letters of the label in the centre went to whatever
+   was under it: a window that is not opaque lets clicks through where it
+   has drawn nothing, unless told outright that it takes them. The test
+   with a short title, whose middle is a gap, failed four times running;
+   the one with a long title, whose middle is a letter, passed.
+4. The label's window had no name for VoiceOver, which the audit asks of
+   every window; nor had the popover, once off the item, which had named
+   it. Both are named.
+
+The whole UI suite then ran on that: 57 tests passed, the popover's audit
+failed for want of the name (4), and the test that reads the quiet hours
+off the screen was ended by the system once more, the disk being down to
+7 GB free. That test is now skipped, with its reason, where the disk has
+under 20 GB. The audit and its neighbours passed when run again.
 
 ### Cross-phase review (the user's, after the stack went up)
 
