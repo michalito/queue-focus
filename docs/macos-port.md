@@ -957,6 +957,20 @@ three minor, all taken.
 And the anchor's window is made when the popover first opens from the item,
 not when a popover from the label closes.
 
+Fifth pass, not green: two of the four not wholly answered, both taken.
+1. Major: the close was kept after its click was dropped, so every click on
+   the item within the half second was dropped, a second one of the user's
+   own with it. One close has one click: the close is used up by the click
+   that matches it, and by the popover opening. A unit test drops the click
+   handed on and lets through the one a fifth of a second after; it fails
+   with the close kept.
+2. The audit let through any unnamed group with the frame of what a popover
+   holds directly, which a group nested in the root and filling it would
+   have too. The app names the popover's root, by an identifier, and the
+   audit lets through the group so named; an unnamed group is let through
+   only with a window's own frame, as before.
+On keeping the popover transient, with the reasons given: agreed.
+
 One hosted test, of the item keeping the dot only while the label is in
 view, failed while this was done: the label was up in the real menu bar and
 not in view, the user being at work in front of it. The test takes that for

@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     static let identifier = "queue-focus-status-item"
+    static let popoverRootIdentifier = "popover-root"
 
     /// What is drawn, to draw again only when it changes.
     private struct Shown: Equatable {
@@ -87,6 +88,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 .environment(loginItem)
         })
         host.sizingOptions = [.preferredContentSize]
+        // SwiftUI's root is a group with no name, and nothing to name: the
+        // accessibility audit is told which one it is.
+        host.view.setAccessibilityIdentifier(Self.popoverRootIdentifier)
         popover.contentViewController = host
         popover.behavior = .transient
         popover.animates = false
@@ -320,13 +324,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             default: false
             }
         }
+
+        /// Whether the click is the one that closed the popover, as
+        /// `closing` tells it; if so `closing` is used up, one close having
+        /// one click: the next click, however soon, is a click to open.
+        static func claims(_ closing: inout Closing?, clickAt time: TimeInterval, on opener: Opener) -> Bool {
+            guard closing?.wasMade(by: time, on: opener) == true else { return false }
+            closing = nil
+            return true
+        }
     }
 
     /// Whether `event` is the click that closed the popover. (A press from
     /// VoiceOver is no click, and always acts.)
     private func closedThePopover(_ event: NSEvent?, on opener: Opener) -> Bool {
-        guard let event, event.type == .leftMouseDown, let closing else { return false }
-        return closing.wasMade(by: event.timestamp, on: opener)
+        guard let event, event.type == .leftMouseDown else { return false }
+        return Closing.claims(&closing, clickAt: event.timestamp, on: opener)
     }
 
     /// Which of the two the pointer is on.
@@ -392,6 +405,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // A popover cannot open from a view in no window, and says so with
         // an exception.
         guard let window = view.window else { return }
+        closing = nil
         // An accessory app must be active for the add field to take the keys,
         // and a global shortcut, unlike a click, is not reason enough for the
         // system to let it be.

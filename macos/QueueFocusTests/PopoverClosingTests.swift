@@ -28,6 +28,24 @@ import Testing
         #expect(!closing.wasMade(by: 776.457, on: .label), "and so is one somewhere else")
     }
 
+    /// One close has one click. A click the menu bar handed on used it up:
+    /// another straight after it is a click to open, not dropped as well.
+    @Test func theClickAfterTheOneThatClosedItOpensIt() {
+        var closing: Closing? = Closing(at: 100, by: .appKitDefined, eventTime: 99.95, over: .item)
+        #expect(Closing.claims(&closing, clickAt: 100.033, on: .item), "the click handed on")
+        #expect(closing == nil)
+        #expect(!Closing.claims(&closing, clickAt: 100.2, on: .item), "and a click of the user's own, a moment after")
+
+        closing = Closing(at: 100.004, by: .leftMouseDown, eventTime: 100, over: .label)
+        #expect(Closing.claims(&closing, clickAt: 100, on: .label))
+        #expect(!Closing.claims(&closing, clickAt: 100, on: .label), "once")
+
+        // A click that is not the one leaves the close as it was.
+        closing = Closing(at: 100, by: .appKitDefined, eventTime: 99.95, over: .item)
+        #expect(!Closing.claims(&closing, clickAt: 100.033, on: .label))
+        #expect(closing != nil)
+    }
+
     /// A click in another app closes the popover in the same way, the
     /// pointer nowhere near the item.
     @Test func aClickElsewhereLeavesTheNextOneToOpenIt() {
