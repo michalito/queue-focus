@@ -24,8 +24,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     // The item is the controller's to drive; the tests read what it says.
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
-    /// What the popover points at when it opens from the item.
-    private lazy var itemAnchor = PopoverAnchorPanel()
+    /// What the popover points at when it opens from the item, made when
+    /// it first does.
+    private var itemAnchor: PopoverAnchorPanel?
     private let model: QueueModel
     private let display: Display
     private let defaults: UserDefaults
@@ -37,8 +38,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private var redrawAgain = false
     /// The label in the centre of the menu bar, made when first asked for.
     private var centre: CentreTitlePanel?
-    /// When the popover last closed, on the clock that times events.
-    private var closedAt: TimeInterval?
+    /// How the popover last closed.
+    private var closing: Closing?
     /// The app that was in front when the popover opened, to hand the
     /// keyboard back to when it closes.
     private var previousApp: NSRunningApplication?
@@ -267,7 +268,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let secondary = event?.type == .rightMouseDown || event?.modifierFlags.contains(.control) == true
         if secondary {
             secondaryClick()
-        } else if closedThePopover(event) {
+        } else if closedThePopover(event, on: .item) {
             return
         } else if popover.isShown {
             closePopover()
@@ -276,21 +277,70 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Whether `event` is the click that closed the popover. The popover is
-    /// transient: a click outside it closes it, and the item and the label
-    /// are outside it. That click then comes on to the item or the label,
-    /// and must not open the popover again. A click on the label is timed
-    /// when it was made, before the close; one on the item is handed on by
-    /// the menu bar, timed when it was handed on, some hundredths of a
-    /// second after it (26 and 77 thousandths, measured on macOS 27). (A
-    /// press from VoiceOver is no click, and always acts.)
-    private func closedThePopover(_ event: NSEvent?) -> Bool {
-        guard let event, event.type == .leftMouseDown, let closedAt else { return false }
-        return event.timestamp <= closedAt + Self.handingOn
+    /// The two things in the menu bar a click opens the popover from.
+    enum Opener {
+        case item, label
     }
 
-    /// The longest the menu bar is taken to need to hand a click on.
-    static let handingOn: TimeInterval = 0.3
+    /// How the popover closed, kept to tell the click that closed it from a
+    /// click to open it. The popover is transient: a click outside it
+    /// closes it, and the item and the label are outside it. That click
+    /// then comes on to the item or the label, and must not open the
+    /// popover again.
+    struct Closing: Equatable {
+        /// When it closed, on the clock that times events.
+        var at: TimeInterval
+        /// The event in hand as it closed: its kind, and when it was made.
+        var by: NSEvent.EventType?
+        var eventTime: TimeInterval = 0
+        /// What the pointer was on.
+        var over: Opener?
+
+        /// The longest the menu bar is taken to need to hand a click on.
+        static let handingOn: TimeInterval = 0.5
+
+        /// Whether a left click made at `time` on `opener` is the one that
+        /// closed the popover.
+        ///
+        /// Where a click comes straight to the app, the popover closes on
+        /// that very event, and the click has its time. But macOS keeps the
+        /// menu bar to itself (from 26 on): a click on the item first has
+        /// AppKit close the popover, on an event of its own, and is handed
+        /// on after, timed when it was handed on (26 and 77 thousandths of
+        /// a second after the close, measured on macOS 27). So a popover
+        /// closed by AppKit with the pointer on the opener, and a click on
+        /// that opener straight after, are taken for one click.
+        ///
+        /// Escape, Return, a button in the popover, a click elsewhere: the
+        /// next click is none of theirs, and opens the popover.
+        func wasMade(by time: TimeInterval, on opener: Opener) -> Bool {
+            switch by {
+            case .leftMouseDown: time == eventTime
+            case .appKitDefined: over == opener && time <= at + Self.handingOn
+            default: false
+            }
+        }
+    }
+
+    /// Whether `event` is the click that closed the popover. (A press from
+    /// VoiceOver is no click, and always acts.)
+    private func closedThePopover(_ event: NSEvent?, on opener: Opener) -> Bool {
+        guard let event, event.type == .leftMouseDown, let closing else { return false }
+        return closing.wasMade(by: event.timestamp, on: opener)
+    }
+
+    /// Which of the two the pointer is on.
+    private var pointerIsOver: Opener? {
+        let pointer = NSEvent.mouseLocation
+        if let centre, centre.isVisible, centre.frame.contains(pointer) {
+            return .label
+        }
+        if let button = item.button, let window = button.window,
+           window.convertToScreen(button.convert(button.bounds, to: nil)).contains(pointer) {
+            return .item
+        }
+        return nil
+    }
 
     private func secondaryClick() {
         closePopover()
@@ -299,7 +349,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     /// A click on the label, or VoiceOver's press, which is no event.
     private func labelClicked(_ event: NSEvent?) {
-        if closedThePopover(event) { return }
+        if closedThePopover(event, on: .label) { return }
         if popover.isShown {
             closePopover()
         } else if let label = centre?.label {
@@ -339,6 +389,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func showPopover(from view: NSView) {
+        // A popover cannot open from a view in no window, and says so with
+        // an exception.
+        guard let window = view.window else { return }
         // An accessory app must be active for the add field to take the keys,
         // and a global shortcut, unlike a click, is not reason enough for the
         // system to let it be.
@@ -350,17 +403,19 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // the screen is marked, and the popover points at the mark.
         popoverIsOnLabel = view !== item.button
         var pointsAt = view
-        if !popoverIsOnLabel, let window = view.window, let mark = itemAnchor.contentView {
-            itemAnchor.setFrame(window.convertToScreen(view.convert(Self.anchor(in: view.bounds), to: nil)), display: false)
-            itemAnchor.orderFrontRegardless()
-            pointsAt = mark
+        if !popoverIsOnLabel {
+            let anchor = itemAnchor ?? PopoverAnchorPanel()
+            itemAnchor = anchor
+            anchor.setFrame(window.convertToScreen(view.convert(Self.anchor(in: view.bounds), to: nil)), display: false)
+            anchor.orderFrontRegardless()
+            pointsAt = anchor.mark
         }
         popover.show(relativeTo: pointsAt.bounds, of: pointsAt, preferredEdge: .minY)
-        let window = popover.contentViewController?.view.window
+        let shown = popover.contentViewController?.view.window
         // Hung on a window of the app's own, the popover has no name of its
         // own for VoiceOver: the status item gave it one.
-        window?.setAccessibilityLabel("Queue Focus")
-        window?.makeKey()
+        shown?.setAccessibilityLabel("Queue Focus")
+        shown?.makeKey()
     }
 
     func closePopover() {
@@ -370,8 +425,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     nonisolated func popoverDidClose(_ notification: Notification) {
         MainActor.assumeIsolated {
             popoverIsOnLabel = false
-            itemAnchor.orderOut(nil)
-            closedAt = ProcessInfo.processInfo.systemUptime
+            itemAnchor?.orderOut(nil)
+            let event = NSApp.currentEvent
+            closing = Closing(at: ProcessInfo.processInfo.systemUptime, by: event?.type, eventTime: event?.timestamp ?? 0,
+                              over: pointerIsOver)
             model.actionError = nil
             // Escape or a button closed it while we were still in front: give
             // the keyboard back, unless one of our own windows is where the

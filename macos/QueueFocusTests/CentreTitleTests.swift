@@ -246,6 +246,14 @@ private final class Place {
             #expect(words(of: controller).contains("hand over"))
             return
         }
+        let panel = try #require(label)
+        guard try await eventually({ panel.isShowing }) else {
+            // Up, and out of view all the same: a full-screen space is in
+            // front, or something lies over the menu bar. The item keeps
+            // the title, which is the handoff, seen from its other side.
+            #expect(words(of: controller).contains("hand over"))
+            return
+        }
         #expect(try await eventually { words(of: controller) == "●" }, "in view, the label has the title: \(words(of: controller))")
 
         place.screen = Self.screen

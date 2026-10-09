@@ -62,7 +62,11 @@ final class AccessibilityUITests: AppUITestCase {
         let nodes = everything(in: try app.snapshot())
         let touchBarFrame = nodes.first { $0.elementType == .touchBar }.map { $0.frame.insetBy(dx: -4, dy: -4) } ?? .null
         let windows = nodes.filter { $0.elementType == .window }.map { (frame: $0.frame, title: $0.title) }
-        let surfaces = windows.map(\.frame) + nodes.filter { $0.elementType == .popover }.map(\.frame)
+        let popovers = nodes.filter { $0.elementType == .popover }
+        let surfaces = windows.map(\.frame) + popovers.map(\.frame)
+        // What a popover holds directly: its hosting root, inside its
+        // border and arrow.
+        let popoverRoots = popovers.flatMap { $0.children.map(\.frame) }
         let namedSliders = nodes.filter { $0.elementType == .slider && !$0.label.isEmpty }.map(\.frame)
         let scrolling = nodes.filter { $0.elementType == .scrollView }.map { view in
             (frame: view.frame, texts: everything(in: view).filter { $0.elementType == .staticText }.map { element in
@@ -86,8 +90,7 @@ final class AccessibilityUITests: AppUITestCase {
                     if element.elementType == .touchBar || touchBarFrame.contains(frame) {
                         reason = "the Touch Bar"
                     } else if element.elementType == .group, element.identifier.isEmpty,
-                              surfaces.contains(where: { same($0, frame) || same($0.insetBy(dx: 13, dy: 13), frame) }) {
-                        // A popover's is inside its border and arrow.
+                              surfaces.contains(where: { same($0, frame) }) || popoverRoots.contains(where: { same($0, frame) }) {
                         reason = "a window's hosting root"
                     } else if element.elementType == .window, element.identifier.hasPrefix("SafariPlatformSupport") {
                         reason = "a text field's completions"

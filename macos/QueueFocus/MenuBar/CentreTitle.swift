@@ -179,13 +179,16 @@ final class CentreTitlePanel: MenuBarPanel {
 /// before its window does, and a popover on it is put a whole width off, or
 /// loses its hold.
 final class PopoverAnchorPanel: MenuBarPanel {
+    /// What the popover is shown from.
+    let mark = NSView()
+
     override init() {
         super.init()
         ignoresMouseEvents = true
         // Wherever the menu bar is, a full-screen space with the menu bar
         // brought down too.
         collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
-        contentView = NSView()
+        contentView = mark
         setAccessibilityLabel("Queue Focus menu")
     }
 }

@@ -930,6 +930,39 @@ off the screen was ended by the system once more, the disk being down to
 7 GB free. That test is now skipped, with its reason, where the disk has
 under 20 GB. The audit and its neighbours passed when run again.
 
+Fourth pass, on what the UI tests changed, not green: one major finding and
+three minor, all taken.
+1. Major: a click within three tenths of a second of any close was dropped,
+   so a click straight after Escape, or after a task was added, did
+   nothing; and the label had the rule too. The rule now goes by what
+   closed the popover (`StatusItemController.Closing`). Closed on a click
+   itself, that click is the one, by its time. Closed by AppKit on an event
+   of its own with the pointer on the item, a click on the item within half
+   a second is the one: that is the menu bar handing the click on. Closed
+   any other way, the next click opens. Unit tests hold each case, with the
+   times measured. The two UI tests were run again with what closed the
+   popover logged: from the item, AppKit's event, then the click 33
+   thousandths after; from the label, macOS keeps the second click to
+   itself and the popover closes as the button comes up, so there the rule
+   has nothing to do on macOS 27 (the first of its cases is for a system
+   that hands the click straight on, and only the unit test has seen it).
+2. A popover opened from a view in no window raises an exception: such a
+   view opens nothing.
+3. The disk's room was asked for as it would be with the caches emptied,
+   which is the trouble itself: as it is, now. The 20 GB is what was seen,
+   and says so.
+4. The audit let through any unnamed group 13 points inside any window. It
+   lets through what a popover holds directly, its hosting root, and no
+   other.
+And the anchor's window is made when the popover first opens from the item,
+not when a popover from the label closes.
+
+One hosted test, of the item keeping the dot only while the label is in
+view, failed while this was done: the label was up in the real menu bar and
+not in view, the user being at work in front of it. The test takes that for
+what it is, the item keeping its title, and goes on only where the label
+can be seen.
+
 ### Cross-phase review (the user's, after the stack went up)
 
 A review of the whole stack, with the GNOME suites run in the Linux harness

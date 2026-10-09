@@ -13,12 +13,14 @@ enum TestEnvironment {
 
     /// Reading text off the screen has the system build its model, in the
     /// test runner's caches; on a disk nearly full macOS empties those
-    /// caches, and ends the runner to do it (13 GB free was too little, 23
-    /// enough). A test that reads the screen is skipped there, not killed.
+    /// caches, and ends the runner to do it. A test that reads the screen
+    /// is skipped there, not killed. The 20 GB is what was seen, no rule of
+    /// the system's: 13 GB free was too little, 23 enough. Free as it is
+    /// now, not as it would be with the caches emptied, which is the
+    /// trouble.
     static var hasRoomToReadTheScreen: Bool {
-        let values = try? URL(fileURLWithPath: NSTemporaryDirectory())
-            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        guard let free = values?.volumeAvailableCapacityForImportantUsage else { return true }
+        let values = try? URL(fileURLWithPath: NSTemporaryDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        guard let free = values?.volumeAvailableCapacity else { return true }
         return free >= 20_000_000_000
     }
 }
