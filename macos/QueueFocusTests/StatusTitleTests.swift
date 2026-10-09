@@ -78,14 +78,18 @@ private func task(_ title: String, tag: TaskTag? = nil, started: UInt64? = 0, pa
     /// popover stays where it is. Its middle, where it pointed before, moves.
     @Test @MainActor func thePopoverPointsTheSameWayInFromTheRightWhateverTheWidth() {
         let right: CGFloat = 500
-        for width: CGFloat in [32, 40, 44, 70, 130, 300] {
+        for width: CGFloat in [18, 24, 32, 40, 44, 70, 130, 300] {
             let item = NSRect(x: right - width, y: 0, width: width, height: 22)
             let anchor = StatusItemController.anchor(in: item)
             #expect(anchor.midX == right - StatusItemController.arrowInset, "an item \(width) points wide")
-            #expect(anchor.maxX == right && anchor.height == item.height)
+            #expect(item.contains(anchor) && !anchor.isEmpty, "inside the item: \(anchor)")
         }
-        // The dot alone, the narrowest the item gets: its middle.
-        #expect(StatusItemController.anchor(in: NSRect(x: 0, y: 0, width: 32, height: 22)).midX == 16)
+        // An item narrower than that has it as far in as it goes.
+        for width: CGFloat in [1, 8, 16] {
+            let item = NSRect(x: 0, y: 0, width: width, height: 22)
+            let anchor = StatusItemController.anchor(in: item)
+            #expect(item.contains(anchor) && !anchor.isEmpty && anchor.minX == 0, "\(width) points wide: \(anchor)")
+        }
     }
 
     /// GNOME dims a paused task's label whether or not its clock shows; so

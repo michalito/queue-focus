@@ -21,8 +21,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         var appearance: NSAppearance.Name?
     }
 
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    // The item is the controller's to drive; the tests read what it says.
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
+    /// What the popover points at in the item: a sliver that keeps its
+    /// place at the item's right end as the item's width changes.
+    let itemAnchor = ItemAnchor()
     private let model: QueueModel
     private let display: Display
     private let defaults: UserDefaults
@@ -61,8 +65,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             let watcher = AppearanceWatcher()
             watcher.didChange = { [weak self] in self?.update() }
             button.addSubview(watcher)
-            NotificationCenter.default.addObserver(self, selector: #selector(buttonDidResize),
-                                                   name: NSView.frameDidChangeNotification, object: button)
+            button.addSubview(itemAnchor)
         }
         item.autosaveName = "QueueFocusStatusItem"
         // What moves the label or changes its words without the queue
@@ -289,8 +292,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     var isPopoverShown: Bool { popover.isShown }
-    /// What the item says now: the title, or the dot alone.
-    var itemWords: String { item.button?.attributedTitle.string ?? "" }
     /// The popover is open from the label in the centre, not the item.
     private var popoverIsOnLabel = false
 
@@ -298,14 +299,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// the middle of the item at its narrowest, the dot alone.
     static let arrowInset: CGFloat = 16
 
-    /// What the popover points at: the item's right end. macOS packs the
+    /// Where in the item the popover points: its right end. macOS packs the
     /// status items from the right, so when a new title changes the item's
     /// width its left edge moves and its right edge stays; pointing there,
     /// the popover stays on the item without moving under the pointer.
     /// (An item to the right that changes width moves this one whole, and
     /// the popover, as before, stays where it opened.)
     static func anchor(in bounds: NSRect) -> NSRect {
-        NSRect(x: bounds.maxX - arrowInset * 2, y: bounds.minY, width: arrowInset * 2, height: bounds.height)
+        // A sliver about that point, kept inside an item too narrow for it.
+        let width = min(2, bounds.width)
+        let x = min(max(bounds.maxX - arrowInset - width / 2, bounds.minX), bounds.maxX - width)
+        return NSRect(x: x, y: bounds.minY, width: width, height: bounds.height)
     }
 
     /// Open the popover where the title is: under the label in the centre
@@ -326,19 +330,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if previousApp == .current { previousApp = nil }
         Activation.takeFront()
         // The label's middle stays where it is whatever its words; the
-        // item's does not.
+        // item's does not, and its anchor is what stays.
         popoverIsOnLabel = view !== item.button
-        popover.show(relativeTo: popoverIsOnLabel ? view.bounds : Self.anchor(in: view.bounds), of: view,
-                     preferredEdge: .minY)
+        let pointsAt = popoverIsOnLabel ? view : itemAnchor
+        if !popoverIsOnLabel {
+            itemAnchor.frame = Self.anchor(in: view.bounds)
+        }
+        popover.show(relativeTo: pointsAt.bounds, of: pointsAt, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
-    }
-
-    /// The anchor is in the button's coordinates, which a new width moves:
-    /// say again where it is, or the popover's next layout would use the
-    /// place it was.
-    @objc private func buttonDidResize(_ notification: Notification) {
-        guard popover.isShown, !popoverIsOnLabel, let button = item.button else { return }
-        popover.positioningRect = Self.anchor(in: button.bounds)
     }
 
     func closePopover() {
@@ -360,6 +359,24 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             previousApp = nil
         }
     }
+}
+
+/// What the popover points at in the status item: nothing to see or to
+/// click, it keeps its distance from the item's right edge when the item's
+/// width changes, where a rectangle in the item's own coordinates, measured
+/// from its left, would be left behind.
+final class ItemAnchor: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        autoresizingMask = [.minXMargin, .height]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("not made from a nib")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// Tells when the menu bar turns light or dark: it sits in the status item's

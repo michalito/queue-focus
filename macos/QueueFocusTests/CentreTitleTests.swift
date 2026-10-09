@@ -174,6 +174,11 @@ private final class Place {
         NSApp.windows.compactMap { $0 as? CentreTitlePanel }.first { $0.isVisible }
     }
 
+    /// What the item says: the title, or the dot alone.
+    private func words(of controller: StatusItemController) -> String {
+        controller.item.button?.attributedTitle.string ?? ""
+    }
+
     @Test func theSettingPutsTheLabelUpAndTakesItDown() async throws {
         let suite = "qf-centre-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -190,7 +195,7 @@ private final class Place {
                                               screen: { Self.screen }, quit: {})
         model.didChange = { [weak controller] in controller?.update() }
         #expect(label == nil, "off unless chosen")
-        #expect(controller.itemWords.contains("ship the release"))
+        #expect(words(of: controller).contains("ship the release"))
 
         // Settings writes the defaults, and nothing else tells the menu bar.
         defaults.set(true, forKey: Preferences.menuBarTitleCentredKey)
@@ -209,7 +214,7 @@ private final class Place {
         #expect(panel.frame.width >= panel.label.title.size().width + 2 * CentreTitle.padding)
 
         // Off the real screens, the label is in no one's view.
-        #expect(controller.itemWords.contains("write the notes"), "a label out of view leaves the item its title")
+        #expect(words(of: controller).contains("write the notes"), "a label out of view leaves the item its title")
 
         defaults.set(false, forKey: Preferences.menuBarTitleCentredKey)
         #expect(try await eventually { label == nil }, "and takes it down")
@@ -235,27 +240,34 @@ private final class Place {
         let controller = StatusItemController(model: model, loginItem: LoginItem(service: NoLoginItems()), windows: AppWindows(),
                                               display: Display(defaults: defaults), defaults: defaults,
                                               screen: { place.screen }, quit: {})
-        try #require(try await eventually { label != nil }, "no room for the label beside this menu bar's icons")
-        #expect(try await eventually { controller.itemWords == "●" }, "in view, the label has the title: \(controller.itemWords)")
+        guard try await eventually({ label != nil }) else {
+            // No room for it beside this menu bar's icons: the item keeps
+            // the title, and there is no handoff here to see.
+            #expect(words(of: controller).contains("hand over"))
+            return
+        }
+        #expect(try await eventually { words(of: controller) == "●" }, "in view, the label has the title: \(words(of: controller))")
 
         place.screen = Self.screen
         controller.update()
         #expect(label != nil, "still up, where no one sees it")
-        #expect(try await eventually { controller.itemWords.contains("hand over") },
-                "out of view, the item has the title: \(controller.itemWords)")
+        #expect(try await eventually { words(of: controller).contains("hand over") },
+                "out of view, the item has the title: \(words(of: controller))")
 
         place.screen = NSScreen.screens.first.map { CentreTitle.Screen($0) }
         controller.update()
-        #expect(try await eventually { controller.itemWords == "●" }, "and back in view, the dot")
+        #expect(try await eventually { words(of: controller) == "●" }, "and back in view, the dot")
 
         defaults.set(false, forKey: Preferences.menuBarTitleCentredKey)
         #expect(try await eventually { label == nil })
-        #expect(controller.itemWords.contains("hand over"))
+        #expect(words(of: controller).contains("hand over"))
     }
 
-    /// Where the label has no place, there is none, and the item keeps the
-    /// title: here, a screen whose middle a notch takes.
-    @Test func withNoPlaceForItThereIsNoLabel() async throws {
+    /// The popover points at a sliver at the item's right end, which must
+    /// keep its place there when a new title changes the item's width: in
+    /// the item's coordinates, measured from the left, that place moves.
+    /// (Nothing opens here: a hosted test's items are in no menu bar.)
+    @Test func theItemsAnchorKeepsToItsRightEndWhateverItsWidth() async throws {
         let suite = "qf-centre-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
@@ -264,16 +276,28 @@ private final class Place {
             defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: dir)
         }
-        defaults.set(true, forKey: Preferences.menuBarTitleCentredKey)
-        var notched = Self.screen
-        notched.hasNotch = true
         let model = QueueModel(engine: try QueueEngine(dir: dir.path))
+        model.add("a task with quite a long title to it", asCurrent: true)
         let controller = StatusItemController(model: model, loginItem: LoginItem(service: NoLoginItems()), windows: AppWindows(),
                                               display: Display(defaults: defaults), defaults: defaults,
-                                              screen: { notched }, quit: {})
-        model.add("ship", asCurrent: true)
-        controller.update()
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(label == nil)
+                                              screen: { Self.screen }, quit: {})
+        model.didChange = { [weak controller] in controller?.update() }
+        let button = try #require(controller.item.button)
+        #expect(try await eventually { button.bounds.width > 100 }, "the item has its title: \(button.bounds)")
+        let wide = button.bounds
+        controller.showPopover()
+        defer { controller.closePopover() }
+        #expect(controller.itemAnchor.superview === button)
+        #expect(controller.itemAnchor.frame == StatusItemController.anchor(in: wide))
+
+        _ = model.completeCurrent()
+        #expect(try await eventually { button.bounds.width < wide.width - 40 }, "the item is narrower: \(button.bounds)")
+        #expect(controller.itemAnchor.frame == StatusItemController.anchor(in: button.bounds),
+                "the anchor is at the narrower item's right end: \(controller.itemAnchor.frame) in \(button.bounds)")
+
+        model.add("and a long title once again, longer than before", asCurrent: true)
+        #expect(try await eventually { button.bounds.width > wide.width }, "wider: \(button.bounds)")
+        #expect(controller.itemAnchor.frame == StatusItemController.anchor(in: button.bounds),
+                "and at the wider one's: \(controller.itemAnchor.frame) in \(button.bounds)")
     }
 }

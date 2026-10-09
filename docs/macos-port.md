@@ -872,6 +872,24 @@ default undone; the app's tests it was asked to leave, a UI run being due.
 9. The README's two entries said Enter adds to Next; they add to the bucket
    chosen in Settings.
 
+Second pass, not green: seven answered, and three points left, all taken.
+1. The anchor's rectangle reached outside an item narrower than 32 points.
+   It is a sliver two points wide about the point 16 in from the right,
+   kept inside an item too narrow for that.
+2. The hosted test of the handoff would fail, not pass, on a menu bar with
+   no room for the label. As it turned out, a hosted test's items are in no
+   menu bar (their window is at the origin, no height), so no icon is in
+   the label's way there; where there is no room all the same, the test now
+   asks that the item kept its title, and ends.
+3. Nothing but a UI test with room to tell held the anchor to the item's
+   right end when the item's width changed, and nothing could: no popover
+   opens from a hosted test's item, and telling a closed popover where to
+   point raises an exception, as a try at it showed. So the code that said
+   the anchor again on every new width is gone. The popover points at a
+   sliver of a view in the item that keeps its distance from the item's
+   right edge by itself, which a hosted test reads at three widths; without
+   the margin that does it, the test fails.
+
 ### Cross-phase review (the user's, after the stack went up)
 
 A review of the whole stack, with the GNOME suites run in the Linux harness
