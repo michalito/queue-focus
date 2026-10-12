@@ -982,6 +982,15 @@ the commit, the popover's audit above all, since nothing had yet shown that
 the group the audit reports is the view the identifier is on. The four
 GNOME suites passed on that commit in the Linux harness.
 
+The icon, asked for after the sixth pass, had a pass of its own: green,
+one nit taken. The comments had macOS 14 and 15 drawing AppIcon.icns; the
+flat sizes they draw are in Assets.car, and AppIcon.icns holds a few for
+tools that cannot read it (actool's manual, `--standalone-icon-behavior`).
+The release check now names CFBundleIconFile too. Not checked here, since
+this Mac has only Xcode 27: that CI's Xcode 26.6 takes the document, and
+that Icon Composer saves it unchanged. The dot is lost at 16 and 32 px,
+the bars are not; that is kept, as on GNOME.
+
 One hosted test, of the item keeping the dot only while the label is in
 view, failed while this was done: the label was up in the real menu bar and
 not in view, the user being at work in front of it. The test takes that for

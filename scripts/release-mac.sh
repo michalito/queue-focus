@@ -149,9 +149,11 @@ executable="$app/Contents/MacOS/$APP_NAME"
 plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$app/Contents/Info.plist"; }
 [ "$(plist CFBundleShortVersionString)" = "$app_version" ] || fail "the app's version is not $app_version"
 [ "$(plist LSMinimumSystemVersion)" = "14.0" ] || fail "the app's minimum macOS is not 14.0"
-# The icon's layers are in Assets.car for macOS 26 on; macOS 14 and 15 take AppIcon.icns.
-[ "$(plist CFBundleIconName)" = AppIcon ] && [ -s "$app/Contents/Resources/Assets.car" ] &&
-  [ -s "$app/Contents/Resources/AppIcon.icns" ] || fail "the app has no icon"
+# The icon is in Assets.car, its layers and its flat sizes; AppIcon.icns holds a few sizes
+# for tools that cannot read Assets.car.
+[ "$(plist CFBundleIconName)" = AppIcon ] && [ "$(plist CFBundleIconFile)" = AppIcon ] &&
+  [ -s "$app/Contents/Resources/Assets.car" ] && [ -s "$app/Contents/Resources/AppIcon.icns" ] ||
+  fail "the app has no icon"
 
 if $developer_id; then
   say "Notarizing the app"
