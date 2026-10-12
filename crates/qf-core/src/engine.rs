@@ -206,6 +206,51 @@ impl Engine {
         found(self.update(|s| s.set_tag(id, tag))?)
     }
 
+    // ---- what a window asks for ---------------------------------------
+    //
+    // Not on D-Bus, where the GNOME windows change the queue in-process. A
+    // host that cannot pass `update` a closure asks for these by name.
+
+    /// Cycle a task's tag: none, work, personal, none.
+    pub fn cycle_tag(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
+        found(self.update(|s| s.cycle_tag(id))?)
+    }
+
+    /// Rename a task. An empty title is refused and the old one stays.
+    pub fn rename(&mut self, id: u64, title: &str) -> Result<Outcome<()>, EngineError> {
+        if title.trim().is_empty() {
+            return Err(invalid("empty title"));
+        }
+        found(self.update(|s| s.rename(id, title))?)
+    }
+
+    /// Move a task up (negative) or down within its bucket. Answers whether
+    /// it moved: a task already at the edge stays where it is.
+    pub fn shift(&mut self, id: u64, delta: i32) -> Result<Outcome<bool>, EngineError> {
+        self.require(id)?;
+        self.update(|s| s.shift(id, delta))
+    }
+
+    /// Drop a task before the row `before` of `bucket`, or at its end
+    /// without one. Answers whether the drop was taken: a row that has gone
+    /// or left the bucket since it was drawn is refused.
+    pub fn move_before(
+        &mut self,
+        id: u64,
+        bucket: Bucket,
+        before: Option<u64>,
+    ) -> Result<Outcome<bool>, EngineError> {
+        self.require(id)?;
+        self.update(|s| s.move_before(id, bucket, before))
+    }
+
+    fn require(&self, id: u64) -> Result<(), EngineError> {
+        match self.store().get(id) {
+            Some(_) => Ok(()),
+            None => Err(invalid("no such task")),
+        }
+    }
+
     // ---- settings ------------------------------------------------------
 
     /// Change the settings from a control. Returns whether anything changed.
@@ -451,6 +496,50 @@ mod tests {
             assert_eq!(message, "no such task");
         }
         assert_eq!(engine.revision(), revision);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_window_s_requests_answer_whether_they_did_anything() {
+        let dir = temp_dir("window");
+        let mut engine = open(&dir);
+        let a = engine.add("a", None).unwrap().value;
+        let b = engine.add("b", None).unwrap().value;
+        let side = engine.add("side", Some(Bucket::Side)).unwrap().value;
+
+        engine.cycle_tag(a).unwrap();
+        assert_eq!(engine.store().get(a).unwrap().tag, Some(Tag::Work));
+        engine.rename(a, "  renamed ").unwrap();
+        assert_eq!(engine.store().get(a).unwrap().title, "renamed");
+        assert_eq!(invalid_message(engine.rename(a, "   ")), "empty title");
+        assert_eq!(engine.store().get(a).unwrap().title, "renamed");
+
+        assert!(!engine.shift(a, -1).unwrap().value, "already first");
+        assert!(engine.shift(a, 1).unwrap().value);
+        assert_eq!(ids(&engine, Bucket::Next), vec![b, a]);
+
+        assert!(
+            engine
+                .move_before(side, Bucket::Next, Some(a))
+                .unwrap()
+                .value
+        );
+        assert_eq!(ids(&engine, Bucket::Next), vec![b, side, a]);
+        let revision = engine.revision();
+        assert!(
+            !engine.move_before(a, Bucket::Later, Some(b)).unwrap().value,
+            "b is not in Later"
+        );
+        assert_eq!(engine.revision(), revision, "a refused drop saves nothing");
+
+        for message in [
+            invalid_message(engine.cycle_tag(99)),
+            invalid_message(engine.rename(99, "x")),
+            invalid_message(engine.shift(99, 1)),
+            invalid_message(engine.move_before(99, Bucket::Next, None)),
+        ] {
+            assert_eq!(message, "no such task");
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

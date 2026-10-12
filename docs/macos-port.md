@@ -38,14 +38,21 @@ because this Mac cannot build the GTK crate.
 
 ## Phase 2. FFI crate
 
-- [ ] 1. `crates/qf-ffi` static library with UniFFI proc macros
-- [ ] 2. Engine object, records, enums, `HH:MM` custom type, error enum
-- [ ] 3. Constructor takes a directory; `tick` returns `TickResult`
-- [ ] 4. `uniffi.toml` (module `QfCore`) and an in-crate bindgen binary
-- [ ] 5. `scripts/build-mac-core.sh` and `make mac-core` (XCFramework)
-- [ ] 6. FFI tests through the exported API; `make test-core`
-- [ ] Review: GPT phase review green
-- [ ] Review: Fable approves the Phase 3 design
+- [x] 1. `crates/qf-ffi` static library with UniFFI proc macros
+- [x] 2. Engine object, records, enums, error enum. Per the design review,
+      a time of day is an hour-and-minute record rather than an `HH:MM`
+      string, and records are named so they never shadow Swift
+- [x] 3. Constructor takes a directory; `tick` returns `TickResult` with the
+      flash and every problem to report
+- [x] 4. `uniffi.toml` (module `QfCore`) and a bindgen binary, in its own
+      `crates/uniffi-bindgen` crate per the design review
+- [x] 5. `scripts/build-mac-core.sh` and `make mac-core`: XCFramework and
+      generated Swift inside the `macos/QfCore` package
+- [x] 6. FFI tests through the exported API (20); `make test-core` and
+      `make check-core` on either OS; `make test-mac-core` runs Swift tests
+      of the bindings against the real library
+- [x] Review: GPT phase review green (third pass)
+- [x] Review: Fable approves the Phase 3 design (with changes, all taken)
 
 ## Phase 3. App scaffold and menu bar
 
@@ -164,3 +171,47 @@ Approved with changes, all taken:
    `macos/QfCore` package, `scripts/cargo` usable on macOS.
 8. Mac-only presentation settings live in `UserDefaults`, never in the shared
    `settings.json`, which the GNOME app rewrites whole.
+
+### Phase 2, GPT (gpt-6.1-sol, xhigh)
+
+First pass, not green:
+1. The build read hardcoded `target/` paths, so a `CARGO_TARGET_DIR` could
+   package an older library. It now asks `cargo metadata` where the output
+   goes.
+2. Recovering a poisoned lock kept a change made in memory but never saved,
+   which the next change would save. A poisoned lock now reloads the engine
+   from its files; while they cannot be read, changes are refused. The
+   overflow GPT used to show it, resuming a clock with an absurd start time,
+   now saturates.
+
+Second pass, not green:
+1. Recovery took unreadable settings as the defaults, which a later change
+   would write over the user's own. That now counts as a failed recovery.
+2. `scripts/set-version` knew only two of the four workspace packages. It now
+   reads them from the workspace, and its test checks all four.
+
+Third pass: green, no findings. GPT also reverted each fix in a copy and saw
+its test fail.
+
+### Phase 3 design, Fable
+
+Approved with changes, all taken. Fable checked each against a scratch
+project it built, tested and launched:
+1. The generated Swift compiles straight into the app, which links the static
+   XCFramework. A framework target would not launch in an ad-hoc signed
+   Release build under the hardened runtime.
+2. The project file is hand-written with synchronized folders and committed:
+   user script sandboxing off, the Rust phase always run, `Info.plist` kept
+   out of the resources, a shared scheme, and the version at project level.
+3. A fresh checkout runs `make mac-core` before the first Xcode build: Xcode
+   lists the generated files before any script runs.
+4. Hosted unit tests run inside the app, so the app opens no engine, status
+   item or timer when it finds itself under test.
+5. No `withObservationTracking`: the model tells the status item after every
+   change and tick, and a `.common` mode timer ticks on the main actor.
+6. The popover mirrors GNOME's menu exactly (closing after an add, the Now
+   card's heading, chip, PAUSED and trailing clock, the empty texts, the Side
+   card's actions), and a completion's undo offer is made explicitly.
+7. The title cap is in points, measured in the menu bar font; App Nap is off;
+   a second copy of the app quits; controls carry accessibility identifiers.
+

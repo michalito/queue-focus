@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # cargo wrapper: uses the GTK -dev packages when present, otherwise links
-# straight against the runtime libraries (see devlibs-env.sh).
+# straight against the runtime libraries (see devlibs-env.sh). macOS builds
+# only the crates that need no GTK, so it skips both.
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-if ! pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
+if [ "$(uname -s)" != Darwin ] && ! pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
   source "$(dirname "${BASH_SOURCE[0]}")/devlibs-env.sh" || exit 1
 fi
 exec cargo "$@"

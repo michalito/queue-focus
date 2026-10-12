@@ -527,6 +527,10 @@ make test-extension-dbus
 make test-extension-shell
 make test-ui
 make test-service
+make test-core
+make check-core
+make mac-core
+make test-mac-core
 make deb
 make clean
 ```
@@ -558,6 +562,10 @@ The extension tests need Node.js. Connection tests drive owner changes, delayed 
 
 `make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer and sends the replaced task to Next, and the gear opens Settings. Last it checks the widths with short, long, and impossibly long titles: long titles are whole and on one line in the panel and the menu, the menu grows with them, and at the limit the clock is still in the middle, Activities and the system menu keep their widths, and the menu stays on the monitor. An open menu keeps its width when its longest task is marked done, the next done button does not move, and closing the menu lets the width go. The run also fails if the shell logs an inconsistent size request, which is the kind of layout mistake that can end a session. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run, and the shell's own log beside them. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
 
+`make test-core` runs the tests of the engine and of `qf-ffi`, the layer the macOS app reaches it through. `make check-core` checks formatting and runs Clippy with warnings denied for those crates. Both work on Linux and on macOS, where the GTK app cannot be built.
+
+`make mac-core` builds the engine for the macOS app, on macOS: a universal static library for Apple silicon and Intel wrapped in an XCFramework, and the `QfCore` Swift module generated from that library, both inside the `macos/QfCore` Swift package. Neither is checked in, so run it again after a change to the Rust code. `make test-mac-core` builds them and runs the package's Swift tests, which drive the engine through the generated bindings. Both need Rust installed with rustup, and Xcode 16 or newer.
+
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
 For a direct Cargo command, use the repository wrapper:
@@ -571,7 +579,10 @@ scripts/cargo build --release -p queue-focus
 
 ```text
 crates/qf-core
+crates/qf-ffi
 crates/queue-focus
+crates/uniffi-bindgen
+macos/QfCore
 extension/queue-focus@queuefocus.org
 extension/test
 data
@@ -583,6 +594,12 @@ Makefile
 
 `crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, and app styles. One engine serves the whole process. The app tells the windows and the bus what each request changed, and ticks the engine once a second with GLib's clock and randomness, which writes changed settings and sends any flash that is due. The settings view reads the hold reason and countdown together.
 
+`crates/qf-ffi` exposes the engine to Swift through UniFFI. It only converts types and holds the problems the app reports, so each request is one engine method.
+
+`crates/uniffi-bindgen` builds the UniFFI Swift generator at the version `qf-ffi` uses, so it needs no separate install.
+
+`macos/QfCore` is the Swift package the macOS app imports. `make mac-core` fills in its XCFramework and its generated Swift; its tests are checked in.
+
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 
 `extension/queue-focus@queuefocus.org/connection.js` owns connection recovery and request lifetimes; `dbus.js` supplies its GNOME D-Bus and timer adapter. The indicator handles drawing and notifications.
@@ -591,7 +608,7 @@ Makefile
 
 `data` contains the desktop entry, system D Bus service file, and icons.
 
-`scripts` contains the Cargo wrapper, local installer, setup helper, version command, and integration tests.
+`scripts` contains the Cargo wrapper, local installer, setup helper, version command, macOS core build, and integration tests.
 
 `Makefile` provides the supported build, test, version, install, and package commands.
 

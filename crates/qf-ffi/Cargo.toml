@@ -1,0 +1,15 @@
+[package]
+name = "qf-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The queue-focus engine for Swift, through UniFFI"
+publish = false
+
+[lib]
+name = "qf_ffi"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+qf-core = { path = "../qf-core" }
+uniffi = "0.32"

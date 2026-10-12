@@ -1,3 +1,8 @@
 /target
 /.devlibs
 /extension/*/schemas/gschemas.compiled
+# Built by `make mac-core`.
+/macos/QfCore/QfCoreFFI.xcframework
+/macos/QfCore/Sources/QfCore/QfCore.swift
+/macos/QfCore/.build
+/macos/QfCore/.swiftpm

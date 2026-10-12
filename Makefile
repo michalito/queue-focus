@@ -8,7 +8,7 @@ REQUESTED_VERSION           := $(if $(filter command line,$(origin VERSION)),$(V
 REQUESTED_EXTENSION_VERSION := $(if $(filter command line,$(origin EXTENSION_VERSION)),$(EXTENSION_VERSION),)
 export REQUESTED_VERSION REQUESTED_EXTENSION_VERSION
 
-.PHONY: help build test test-ui test-service test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
+.PHONY: help build test test-core test-mac-core test-ui test-service check-core mac-core test-install test-version test-extension test-extension-dbus test-extension-shell check version set-version maybe-version install uninstall update deb clean run
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -25,6 +25,12 @@ test:            ## unit + isolated integration tests
 	node extension/test/connection.test.mjs
 	scripts/test-install-local.sh
 	scripts/test-set-version.sh
+
+test-core:       ## engine and FFI tests; runs on Linux and macOS
+	$(CARGO) test -p qf-core -p qf-ffi
+
+test-mac-core: mac-core  ## Swift tests of the engine through its bindings (macOS)
+	cd macos/QfCore && swift test
 
 test-ui:         ## real GTK placement/drop/focus test (needs Xvfb)
 	scripts/test-ui.sh
@@ -54,6 +60,13 @@ check:           ## fmt + clippy + JS/Python/shell syntax
 	for js in extension/$(UUID)/*.js; do node --check "$$js"; done
 	bash -n scripts/*.sh
 	python3 -c 'from pathlib import Path; compile(Path("scripts/set-version").read_text(), "scripts/set-version", "exec")'
+
+check-core:      ## fmt + clippy for the crates the macOS app uses; runs on Linux and macOS
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy -p qf-core -p qf-ffi -p uniffi-bindgen --all-targets -- -D warnings
+
+mac-core:        ## build the engine's XCFramework and Swift module for the macOS app
+	scripts/build-mac-core.sh
 
 version: set-version  ## set VERSION everywhere; prompts when VERSION is omitted
 
