@@ -971,6 +971,11 @@ Fifth pass, not green: two of the four not wholly answered, both taken.
    only with a window's own frame, as before.
 On keeping the popover transient, with the reasons given: agreed.
 
+Sixth pass: green, no findings, on condition that the UI suite passes on
+the commit, the popover's audit above all, since nothing had yet shown that
+the group the audit reports is the view the identifier is on. The four
+GNOME suites passed on that commit in the Linux harness.
+
 One hosted test, of the item keeping the dot only while the label is in
 view, failed while this was done: the label was up in the real menu bar and
 not in view, the user being at work in front of it. The test takes that for
