@@ -149,9 +149,12 @@ are answered here before the release.
       that stays still when the title changes, and stays put
 - [ ] 3. The task in the centre of the menu bar, a setting: a label over the
       menu bar, the status item kept as a dot
+- [ ] 4. An icon of its own, asked for at the hand checks: the GNOME icon's
+      three bars as an Icon Composer document, Liquid Glass from macOS 26,
+      a flat icon before
 - [ ] Review: Fable approves the design
 - [ ] Review: GPT review green
-- [ ] 4. 0.6.0 built again, and the hand checks of what changed
+- [ ] 5. 0.6.0 built again, and the hand checks of what changed
 
 ## Notes
 
@@ -250,6 +253,9 @@ points Phase 9 answers. What Phase 9 adds, to check by eye on its build:
   through Done and Undo; from the centre, staying under the title.
 - The popover from the item in a full-screen space, with the menu bar
   brought down by the pointer: it hangs on a window of the app's own now.
+- The icon in Finder, the Dock's Applications folder, Settings › Login
+  Items and a notification, with the system's light, dark, clear and tinted
+  icon styles.
 
 ### README, section by section
 
