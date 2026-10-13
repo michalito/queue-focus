@@ -526,6 +526,7 @@ make test-extension
 make test-extension-dbus
 make test-extension-shell
 make test-ui
+make test-service
 make deb
 make clean
 ```
@@ -550,6 +551,8 @@ make run
 `make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
 
 The extension tests need Node.js. Connection tests drive owner changes, delayed replies, retries, and interrupted requests with a deterministic D-Bus and timer stand-in. Retry delays increase from 1.5 seconds to a 60-second cap and reset only once both task state and settings recover. The fast flash-overlay tests stub the GNOME toolkit and load the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
+
+`make test-service` builds the app and runs its service on a private D-Bus and X display, with temporary task and settings files. It calls every D-Bus method and checks the replies, the error names and the signals, then drives `add`, `done`, `status` and `quit` from the command line. It also checks that the service refuses a malformed task file without changing it, starts with defaults over an unreadable settings file, reports a change it cannot save without keeping it, and writes the queue before it stops. A small preloaded library makes one directory sync fail, so the test also sees a change that commits with a durability warning. It waits for one real flash on a one-minute interval, so it takes a little over a minute. It needs `Xvfb`, `xvfb-run`, `dbus-run-session`, `gdbus`, and a C compiler.
 
 `make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
 
@@ -576,9 +579,9 @@ scripts
 Makefile
 ```
 
-`crates/qf-core` contains the task model, add parser, settings model, JSON store, and unit tests. It has no GTK dependency, and no clock or randomness of its own: the reminder's decisions are ordinary functions that the caller supplies the time and a random number to.
+`crates/qf-core` contains the task model, add parser, settings, the reminder's schedule, the JSON store, and the engine that ties them together and saves every change. The engine's methods are the D Bus interface's. The core has no GTK dependency. The reminder has no clock or randomness of its own: the caller supplies the time, the local time of day, and a random number, so its decisions are ordinary functions with ordinary tests.
 
-`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, the reminder's schedule, and app styles. The reminder clock owns quiet rules, deadlines, preview behavior, and event creation. Its private runtime adapter provides a single task/settings/time snapshot per decision, randomness, and timer callbacks; tests exercise complete reminder sequences through those callbacks. The settings view reads the hold reason and countdown together.
+`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, and app styles. One engine serves the whole process. The app tells the windows and the bus what each request changed, and ticks the engine once a second with GLib's clock and randomness, which writes changed settings and sends any flash that is due. The settings view reads the hold reason and countdown together.
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 
