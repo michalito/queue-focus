@@ -1450,6 +1450,7 @@ dependencies = [
  "gtk4",
  "libadwaita",
  "qf-core",
+ "qf-sync",
  "serde_json",
 ]
 

@@ -99,6 +99,9 @@ class QueueFocusIndicator extends PanelMenu.Button {
         this._prefs = {show_timer: true};
         this._flash = new FlashOverlay();
         this._quickAddPending = false;
+        this._pendingFocusAdd = null;
+        this._focusControls = [];
+        this._syncLabel = null;
         this._entry = null;
         // Focus key → actor, for the menu currently built (see _buildMenu).
         this._focusTargets = new Map();
@@ -153,6 +156,8 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
         this._connection = connectQueue({
             state: state => this._apply(state),
+            status: sync => this._applySync(sync),
+            settled: result => this._settled(result),
             settings: settings => this._applySettings(settings),
             flash: event => this._flash.show(event),
             warning: message => Main.notifyError(APP_NAME, message),
@@ -176,12 +181,75 @@ class QueueFocusIndicator extends PanelMenu.Button {
     // ---- state → panel ----------------------------------------------------
 
     _apply(state) {
+        if (!state && this._state?.sync) this._dropUndo();
         this._state = state;
+        this._applySync(state?.sync, false);
         const cur = state?.current ?? null;
         this._dot.style_class = `qf-dot qf-dot-${cur?.tag ?? 'none'}`;
         this._label.text = cur ? cur.title : (state ? 'no task' : 'queue-focus');
         // A rebuilt menu repaints the clocks itself.
         if (!this._refreshMenu()) this._updateClocks();
+    }
+
+    _focusAvailable() {
+        const sync = this._state?.sync;
+        return !sync || (sync.state === 'online' && sync.pending === 0);
+    }
+
+    _syncText() {
+        const sync = this._state?.sync;
+        if (!sync) return '';
+        if (sync.message) return sync.message;
+        if (sync.focus_command) return 'Sent, waiting for confirmation…';
+        if (sync.recovery_items) return `Sync needs attention: ${sync.recovery_items} saved changes need review.`;
+        if (sync.pending) return `${sync.pending} changes saved here, waiting to sync.`;
+        return sync.state === 'online' ? 'Synced' : 'Offline · queue edits are saved here. Now and timer changes need a connection.';
+    }
+
+    _applySync(sync, refresh = true) {
+        if (this._state) this._state.sync = sync;
+        const enabled = this._focusAvailable();
+        this._pill.reactive = enabled;
+        for (const actor of this._focusControls) { actor.reactive = enabled; actor.can_focus = enabled; }
+        if (this._syncLabel) { this._syncLabel.text = this._syncText(); this._syncLabel.visible = !!sync; }
+        if (!sync) return;
+        const previous = this._undo?.command;
+        const hint = sync.undo;
+        if (previous !== hint?.command || (!hint && this._undo)) {
+            this._dropUndo();
+            if (hint) {
+                this._undo = {id: hint.task, title: hint.title, command: hint.command};
+                this._undoId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(1, hint.remaining * 1000), () => {
+                    this._undoId = 0;
+                    this._undo = null;
+                    this._refreshMenu();
+                    return GLib.SOURCE_REMOVE;
+                });
+                if (!this.menu.isOpen && sync.last_focus_settlement?.command === hint.command) {
+                    this._doneNotification = this._notify('Done', hint.title,
+                        {label: 'Undo', activate: () => this.undoComplete(hint.task)});
+                }
+            }
+            if (refresh) this._refreshMenu();
+        }
+        if (sync.last_focus_settlement) this._settled(sync.last_focus_settlement);
+    }
+
+    _settled(result) {
+        const pending = this._pendingFocusAdd;
+        if (!pending || pending.command !== result.command) return;
+        this._pendingFocusAdd = null;
+        this._quickAddPending = false;
+        pending.entry.clutter_text.editable = true;
+        if (result.outcome?.status === 'applied') {
+            if (pending.entry.get_text() === pending.text) {
+                pending.entry.set_text('');
+                this.menu.close();
+            }
+        } else {
+            this._notify('Shared task was not added', 'The queue changed or the request expired. Your draft is retained; review it before retrying.');
+        }
+        this._refreshMenu();
     }
 
     _applySettings(settings) {
@@ -245,12 +313,17 @@ class QueueFocusIndicator extends PanelMenu.Button {
     }
 
     _fail(name, err) {
+        if (err.pendingCommand) {
+            this._notify('Sent, waiting for confirmation');
+            return;
+        }
         console.warn(`queue-focus: ${name} failed: ${err.message}`);
         Main.notifyError(APP_NAME, err.message);
     }
 
     /** Pause or resume the current task's clock. */
     togglePause() {
+        if (!this._focusAvailable()) return;
         this._connection.request('TogglePause', [], (res, err) => {
             if (err) {
                 this._fail('TogglePause', err);
@@ -265,6 +338,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     /** Make a listed task the current one. */
     promote(task) {
+        if (!this._focusAvailable()) return;
         this._connection.request('Promote', [task.id], (_res, err) => {
             if (err) {
                 this._fail('Promote', err);
@@ -277,6 +351,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
 
     /** Complete the current task, then offer to undo that. */
     completeCurrent() {
+        if (!this._focusAvailable()) return;
         this._connection.request('CompleteCurrent', [], (res, err) => {
             if (err) {
                 this._fail('CompleteCurrent', err);
@@ -309,6 +384,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
      * be undone, so an earlier offer is retired first.
      */
     _offerUndo(id, title) {
+        if (this._state?.sync) return; // Only the server can offer shared undo.
         this._dropUndo();
         this._undo = {id, title};
         this._undoId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, UNDO_MS, () => {
@@ -374,6 +450,11 @@ class QueueFocusIndicator extends PanelMenu.Button {
     /** Remember `actor` under `key` so a rebuild can hand focus back to it. */
     _focusable(key, actor) {
         this._focusTargets.set(key, actor);
+        if (key === 'done' || key === 'pause' || key.endsWith(':promote')) {
+            this._focusControls.push(actor);
+            actor.reactive = this._focusAvailable();
+            actor.can_focus = this._focusAvailable();
+        }
         return actor;
     }
 
@@ -434,6 +515,7 @@ class QueueFocusIndicator extends PanelMenu.Button {
             return col?.has_allocation() ? Math.max(floor, col.width) : floor;
         });
         this._focusTargets = new Map();
+        this._focusControls = [];
         this._entry = null;
         this._cardClock = null;
         this.menu.removeAll();
@@ -493,6 +575,11 @@ class QueueFocusIndicator extends PanelMenu.Button {
             col.add_child(row);
         }
 
+        this._syncLabel = label(this._syncText(), 'qf-sync-status', {x_expand: true});
+        this._syncLabel.clutter_text.line_wrap = true;
+        this._syncLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        this._syncLabel.visible = !!st?.sync;
+        col.add_child(this._syncLabel);
         col.add_child(this._footer());
         return col;
     }
@@ -577,11 +664,18 @@ class QueueFocusIndicator extends PanelMenu.Button {
         });
         entry.clutter_text.connect('activate', () => {
             if (this._quickAddPending) return;
-            const text = entry.get_text().trim();
+            const draftText = entry.get_text();
+            const text = draftText.trim();
             if (!text) return;
             this._quickAddPending = true;
             // An empty bucket means "Now if it is empty, else wherever Settings says".
             this._connection.request('Add', [text, ''], (_res, err) => {
+                if (err?.pendingCommand) {
+                    this._pendingFocusAdd = {command: err.pendingCommand, text: draftText, entry};
+                    entry.clutter_text.editable = false;
+                    this._applySync(this._state?.sync);
+                    return;
+                }
                 this._quickAddPending = false;
                 if (err) {
                     this._fail('Add', err);

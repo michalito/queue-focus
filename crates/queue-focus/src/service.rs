@@ -8,6 +8,7 @@
 //! local time of day and the randomness.
 
 use gtk::glib;
+use qf_core::sync::Settlement;
 use qf_core::{
     Engine, EngineError, FlashEvent, FlashStatus, Outcome, Settings, Store, Task, TimeOfDay,
 };
@@ -23,9 +24,13 @@ type Listener = Rc<dyn Fn()>;
 type Problem = Rc<dyn Fn(&str)>;
 /// Puts one flash on the bus.
 type Emitter = Rc<dyn Fn(&FlashEvent)>;
+type Settled = Rc<dyn Fn(&Settlement)>;
 
 pub struct Service {
     engine: RefCell<Engine>,
+    host: RefCell<qf_sync::Host>,
+    status_changed: RefCell<Vec<Listener>>,
+    settled: RefCell<Vec<Settled>>,
     /// Told after every saved task change.
     changed: RefCell<Vec<Listener>>,
     /// Told after every settings change, before the file catches up.
@@ -51,9 +56,12 @@ impl Service {
         dir: &Path,
         now: impl FnOnce() -> u64,
     ) -> io::Result<(SharedService, Option<String>)> {
-        let (engine, warning) = Engine::open(dir, now)?;
+        let (host, engine, warning) = qf_sync::Host::open_at(dir, now)?;
         let service = Rc::new(Service {
             engine: RefCell::new(engine),
+            host: RefCell::new(host),
+            status_changed: RefCell::new(Vec::new()),
+            settled: RefCell::new(Vec::new()),
             changed: RefCell::new(Vec::new()),
             settings_changed: RefCell::new(Vec::new()),
             problems: RefCell::new(Vec::new()),
@@ -65,6 +73,7 @@ impl Service {
     /// Tick once a second on the default main context, for as long as the
     /// service lives. Called once, when the application starts.
     pub fn run_on_main_loop(self: &Rc<Self>) {
+        self.request(|_| ());
         glib::timeout_add_seconds_local(1, wakeup(Rc::downgrade(self)));
     }
 
@@ -93,15 +102,23 @@ impl Service {
     /// Run one engine request, then tell the listeners what it changed. The
     /// engine is released first, so a listener can read it.
     pub fn request<R>(&self, f: impl FnOnce(&mut Engine) -> R) -> R {
-        let (result, tasks_changed, settings_changed) = {
+        let (result, tasks_changed, settings_changed, status_changed, update) = {
             let mut engine = self.engine.borrow_mut();
             let revision = engine.revision();
+            let status_revision = engine.sync_status_revision();
             let settings = engine.settings().clone();
             let result = f(&mut engine);
+            let mut host = self.host.borrow_mut();
+            if engine.revision() != revision || engine.sync_status_revision() != status_revision {
+                host.wake();
+            }
+            let update = host.pump(&mut engine);
             (
                 result,
                 engine.revision() != revision,
                 *engine.settings() != settings,
+                engine.sync_status_revision() != status_revision,
+                update,
             )
         };
         if tasks_changed {
@@ -110,10 +127,21 @@ impl Service {
         if settings_changed {
             notify(&self.settings_changed);
         }
+        if status_changed {
+            notify(&self.status_changed);
+        }
+        self.report(update.warning);
+        if let Some(settlement) = update.settlement {
+            let listeners = self.settled.borrow().clone();
+            for listener in listeners {
+                listener(&settlement);
+            }
+        }
         result
     }
 
     /// Apply any change to the queue and save it.
+    #[cfg(test)]
     pub fn update<R>(&self, f: impl FnOnce(&mut Store) -> R) -> Result<Outcome<R>, EngineError> {
         self.request(|engine| engine.update(f))
     }
@@ -147,6 +175,7 @@ impl Service {
     fn tick(&self) {
         // One instant for the deadline, the timer and the quiet hours.
         let now = qf_core::unix_now();
+        self.request(|_| ());
         let tick = self
             .engine
             .borrow_mut()
@@ -156,6 +185,14 @@ impl Service {
     }
 
     // ---- listening -----------------------------------------------------
+
+    pub fn on_status_change(&self, f: impl Fn() + 'static) {
+        self.status_changed.borrow_mut().push(Rc::new(f));
+    }
+
+    pub fn on_settled(&self, f: impl Fn(&Settlement) + 'static) {
+        self.settled.borrow_mut().push(Rc::new(f));
+    }
 
     pub fn on_change(&self, f: impl Fn() + 'static) {
         self.changed.borrow_mut().push(Rc::new(f));

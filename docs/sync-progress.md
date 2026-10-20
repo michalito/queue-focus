@@ -88,5 +88,14 @@ All 209 targeted Rust tests and Clippy pass; the macOS app builds, 145 app
 unit tests pass (one existing system-shortcut known issue), and all seven
 Swift binding tests pass.
 
-GNOME integration, native recovery surfaces, packaging and final verification
-remain. Nothing has been activated in the user's app data or deployed to the VPS.
+Checkpoint 4c (GNOME service, GTK and Shell) is green after Sol review.
+Only the primary application opens the locked host. GTK and Shell show shared
+status, retain pending drafts until a receipt, and use server undo. A two-device
+native D-Bus/HTTP test verifies convergence, Now/pause, offline capture through
+restart, reconnect without duplication and queued-undo refusal. The real GJS
+adapter and headless GNOME 50 Shell tests pass, including durable status fallback
+when the settlement event is missed. The headless fixture waits for the actual
+virtual pointer position and enables animations despite software rendering so
+both animation preferences are exercised.
+
+Native recovery surfaces, packaging and final verification remain. Nothing has been activated in the user's app data or deployed to the VPS.

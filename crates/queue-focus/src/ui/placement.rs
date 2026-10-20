@@ -74,6 +74,19 @@ pub(super) enum Destination {
 }
 
 impl Destination {
+    pub fn apply_engine(
+        self,
+        engine: &mut qf_core::Engine,
+        id: u64,
+    ) -> Result<qf_core::Outcome<bool>, qf_core::EngineError> {
+        match self {
+            Self::Current => engine.promote(id).map(|o| o.map(|_| true)),
+            Self::Append(bucket) => engine.move_to(id, bucket, None).map(|o| o.map(|_| true)),
+            Self::List { bucket, before } => engine.move_before(id, bucket, before),
+        }
+    }
+
+    #[cfg(test)]
     pub fn apply(self, store: &mut Store, id: u64) -> bool {
         match self {
             Self::Current => store.promote(id),

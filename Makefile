@@ -38,6 +38,7 @@ test-ui:         ## real GTK placement/drop/focus test (needs Xvfb)
 
 test-service:    ## the real service over D-Bus and the command line (needs Xvfb)
 	scripts/test-service.sh
+	scripts/test-sync-service.sh
 
 test-install:    ## isolated local installer integration tests
 	scripts/test-install-local.sh

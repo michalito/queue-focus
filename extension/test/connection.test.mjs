@@ -44,7 +44,7 @@ const snapshot = title => ({current: {id: 1, title}, now: [], side: [], next: []
 function setup(owner = ':1.10') {
     const runtime = new Runtime();
     runtime.owner = owner;
-    const seen = {state: [], settings: [], flash: [], warning: []};
+    const seen = {state: [], settings: [], flash: [], warning: [], status: [], settled: []};
     const connection = new QueueConnection(runtime, Object.fromEntries(
         Object.keys(seen).map(key => [key, value => seen[key].push(value)])));
     runtime.events.ready(null);
@@ -66,6 +66,43 @@ test('initial snapshots and live signals reach observers', () => {
     assert.deepEqual(seen.settings, [{show_timer: false}, {show_timer: true}]);
     assert.deepEqual(seen.flash, [{title: 'updated'}]);
     assert.deepEqual(seen.warning, ['saved, but not crash-safe']);
+});
+
+test('sync status supersedes an older state read without losing the queue', () => {
+    const {runtime, seen} = setup();
+    const sync = {state: 'online', pending: 1, focus_command: 'command'};
+    runtime.signal('SyncStatusChanged', sync);
+    runtime.reply('GetState', {...snapshot('queue'), sync: {state: 'offline', pending: 0}});
+    assert.equal(seen.state.at(-1).current.title, 'queue');
+    assert.deepEqual(seen.state.at(-1).sync, sync);
+    assert.deepEqual(seen.status, [sync]);
+    const settled = {command: 'command', outcome: {status: 'applied', revision: 3}};
+    runtime.signal('CommandSettled', settled, ':old-owner');
+    assert.deepEqual(seen.settled, []);
+    runtime.signal('CommandSettled', settled);
+    assert.deepEqual(seen.settled, [settled]);
+});
+
+test('typed pending command survives display-error normalization and is never replayed', () => {
+    const {runtime, connection} = setup();
+    healthy(runtime);
+    runtime.pendingCommand = error => error.command;
+    runtime.errorMessage = error => { delete error.command; return error.message; };
+    let outcome;
+    connection.request('Add', ['!draft', ''], (_result, error) => { outcome = error; });
+    runtime.latest('Add').done(null, {command: 'stable-command', message: 'Sent, waiting for confirmation'});
+    assert.equal(outcome.pendingCommand, 'stable-command');
+    assert.equal(outcome.message, 'Sent, waiting for confirmation');
+    assert.equal(runtime.calls.filter(c => c.method === 'Add').length, 1);
+});
+
+test('a new service owner cannot inherit the previous owners sync status', () => {
+    const {runtime, seen} = setup();
+    healthy(runtime);
+    runtime.signal('SyncStatusChanged', {state: 'recovery', pending: 3});
+    runtime.changeOwner(':1.11');
+    runtime.reply('GetState', snapshot('new'));
+    assert.equal(seen.state.at(-1).sync, undefined);
 });
 
 test('crashes retry with capped backoff and successful recovery resets it', () => {

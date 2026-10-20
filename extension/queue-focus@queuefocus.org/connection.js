@@ -16,6 +16,8 @@ export class QueueConnection {
         this._stateReady = false;
         this._settingsReady = false;
         this._stateVersion = 0;
+        this._syncVersion = 0;
+        this._lastSync = null;
         this._settingsVersion = 0;
         this._pending = new Set();
         runtime.start({
@@ -52,7 +54,10 @@ export class QueueConnection {
             if (this._destroyed || !this._pending.delete(request)) return;
             // Never replay an action: it may have committed before its reply
             // was lost. Reads reconcile what the app actually persisted.
+            // Read the D-Bus error name before stripping it for display.
+            const pendingCommand = error ? this._runtime.pendingCommand?.(error) : null;
             const failure = error ? new Error(this._runtime.errorMessage(error)) : null;
+            if (failure && pendingCommand) failure.pendingCommand = pendingCommand;
             done(result, failure);
             if (this._destroyed || this._stopping) return;
             if (error && this._runtime.isUnavailable(error)) {
@@ -67,6 +72,8 @@ export class QueueConnection {
         if (this._destroyed || owner === this._owner) return;
         const previous = this._owner;
         this._owner = owner;
+        this._lastSync = null;
+        ++this._syncVersion;
         this._stateReady = this._settingsReady = false;
         ++this._reads;
         // null -> owner is ordinary D-Bus activation. Requests already sent
@@ -102,6 +109,16 @@ export class QueueConnection {
             ++this._stateVersion;
             this._state(value);
             break;
+        case 'SyncStatusChanged':
+            ++this._syncVersion;
+            this._lastSync = this._parse(value);
+            this._observers.status?.(this._lastSync);
+            break;
+        case 'CommandSettled': {
+            const settlement = this._parse(value);
+            if (settlement?.command) this._observers.settled?.(settlement);
+            break;
+        }
         case 'SettingsChanged':
             ++this._settingsVersion;
             this._settings(value);
@@ -125,6 +142,7 @@ export class QueueConnection {
         this._stateReady = this._settingsReady = false;
         const reads = ++this._reads;
         const stateVersion = this._stateVersion;
+        const syncVersion = this._syncVersion;
         const settingsVersion = this._settingsVersion;
         const current = () => !this._destroyed && !this._stopping && reads === this._reads;
         this._runtime.call('GetSettings', [], (result, error) => {
@@ -135,7 +153,7 @@ export class QueueConnection {
         this._runtime.call('GetState', [], (result, error) => {
             if (!current() || stateVersion !== this._stateVersion) return;
             if (!error) {
-                this._state(result[0]);
+                this._state(result[0], syncVersion);
                 return;
             }
             this._observers.state(null);
@@ -153,8 +171,12 @@ export class QueueConnection {
         }
     }
 
-    _state(json) {
+    _state(json, syncVersion = this._syncVersion) {
         const state = this._parse(json);
+        if (state) {
+            if (syncVersion !== this._syncVersion) state.sync = this._lastSync;
+            else this._lastSync = state.sync ?? null;
+        }
         this._stateReady = state !== null;
         if (state) this._recovered();
         else this._scheduleRetry();

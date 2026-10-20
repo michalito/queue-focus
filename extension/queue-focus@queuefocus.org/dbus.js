@@ -19,6 +19,8 @@ const IFACE_XML = `
     <method name="Show"><arg type="s" name="view" direction="in"/></method>
     <method name="GetSettings"><arg type="s" name="json" direction="out"/></method>
     <signal name="Changed"><arg type="s" name="json"/></signal>
+    <signal name="SyncStatusChanged"><arg type="s" name="json"/></signal>
+    <signal name="CommandSettled"><arg type="s" name="json"/></signal>
     <signal name="SettingsChanged"><arg type="s" name="json"/></signal>
     <signal name="Flash"><arg type="s" name="json"/></signal>
     <signal name="DurabilityWarning"><arg type="s" name="message"/></signal>
@@ -34,7 +36,7 @@ class DBusRuntime {
         this._proxy = new QueueFocusProxy(Gio.DBus.session, BUS_NAME, OBJ_PATH, (_proxy, error) => {
             if (!this._destroyed) events.ready(error);
         });
-        this._signals = ['Changed', 'SettingsChanged', 'Flash', 'DurabilityWarning', 'Stopping']
+        this._signals = ['Changed', 'SyncStatusChanged', 'CommandSettled', 'SettingsChanged', 'Flash', 'DurabilityWarning', 'Stopping']
             .map(name => this._proxy.connectSignal(name, (_proxy, sender, args) => {
                 events.signal(sender, name, args[0]);
             }));
@@ -62,6 +64,11 @@ class DBusRuntime {
 
     isUnavailable(error) {
         return error.matches?.(Gio.DBusError, Gio.DBusError.SERVICE_UNKNOWN) ?? false;
+    }
+
+    pendingCommand(error) {
+        if (!(error instanceof GLib.Error) || Gio.DBusError.get_remote_error(error) !== 'org.queuefocus.Error.Pending') return null;
+        return error.message.match(/\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)/i)?.[1] ?? null;
     }
 
     errorMessage(error) {
