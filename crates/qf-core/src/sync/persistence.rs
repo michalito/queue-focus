@@ -45,6 +45,11 @@ impl DataLock {
 }
 
 pub fn read_private<T: DeserializeOwned>(path: &Path, limit: usize) -> io::Result<T> {
+    let bytes = read_private_bytes(path, limit)?;
+    serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+pub fn read_private_bytes(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -60,18 +65,22 @@ pub fn read_private<T: DeserializeOwned>(path: &Path, limit: usize) -> io::Resul
     {
         return Err(invalid("sync file must be a bounded JSON object"));
     }
-    serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    Ok(bytes)
 }
 
 pub fn save_private(path: &Path, value: &impl Serialize, limit: usize) -> Result<(), SaveError> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|e| SaveError::BeforeCommit(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+    save_private_bytes(path, &bytes, limit)
+}
+
+pub fn save_private_bytes(path: &Path, bytes: &[u8], limit: usize) -> Result<(), SaveError> {
     if bytes.len() > limit {
         return Err(SaveError::BeforeCommit(invalid(
             "sync storage limit reached; export or dismiss recovery items before retrying",
         )));
     }
-    crate::store::save_bytes_with_sync(path, &bytes, |directory| File::open(directory)?.sync_all())
+    crate::store::save_bytes_with_sync(path, bytes, |directory| File::open(directory)?.sync_all())
 }
 
 pub fn sync_parent(path: &Path) -> io::Result<()> {

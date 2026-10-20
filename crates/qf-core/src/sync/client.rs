@@ -148,7 +148,9 @@ impl Envelope {
             )
             .collect()
     }
-    fn register_handles(&mut self) -> io::Result<()> {
+    /// Fill missing handles after migration seeds the original local mapping.
+    /// Validate and save the complete envelope before use.
+    pub fn register_handles(&mut self) -> io::Result<()> {
         for id in self.required_ids() {
             if !self.handles.contains_key(&id) {
                 let next = self

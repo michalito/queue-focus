@@ -69,7 +69,8 @@ directory ownership. Existing volumes must be writable by UID 10001 and the
 data directory must have mode 0700.
 
 `GET /health` checks database availability and returns no queue data.
-`POST /v1/exchange` requires `Authorization: Bearer TOKEN` and protocol version
+`POST /v1/exchange` requires `Authorization: Bearer TOKEN`,
+`X-Queue-Focus-Device: DEVICE_UUID` and protocol version
 1. It is the only data endpoint. Requests have a 4 MiB limit, at most eight
 requests are admitted before reading bodies, and request processing has a
 30-second deadline. A timeout does not mean a command failed: clients retain

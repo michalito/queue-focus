@@ -188,6 +188,27 @@ impl Database {
         request: &ExchangeRequest,
         sampled_time: u64,
     ) -> Result<ExchangeResponse, Error> {
+        self.exchange_inner(token, None, request, sampled_time)
+    }
+
+    /// Bind the token to the persisted installation before executing work.
+    pub fn exchange_for_device(
+        &mut self,
+        token: &str,
+        device: Id,
+        request: &ExchangeRequest,
+        sampled_time: u64,
+    ) -> Result<ExchangeResponse, Error> {
+        self.exchange_inner(token, Some(device), request, sampled_time)
+    }
+
+    fn exchange_inner(
+        &mut self,
+        token: &str,
+        expected_device: Option<Id>,
+        request: &ExchangeRequest,
+        sampled_time: u64,
+    ) -> Result<ExchangeResponse, Error> {
         request.validate()?;
         if token.len() > 256 {
             return Err(Error::Unauthorized);
@@ -206,6 +227,9 @@ impl Database {
             .ok_or(Error::Unauthorized)?
             .parse::<Id>()
             .map_err(|_| Error::Storage("invalid enrolled device identity".into()))?;
+        if expected_device.is_some_and(|expected| expected != device) {
+            return Err(Error::Unauthorized);
+        }
         let mut state = read_state(&tx)?;
         let last_time: i64 =
             tx.query_row("SELECT last_time FROM dataset WHERE id=1", [], |row| {

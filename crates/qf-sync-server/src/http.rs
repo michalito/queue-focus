@@ -87,13 +87,21 @@ async fn exchange(
     if token.is_empty() || token.len() > 256 {
         return response_error(Error::Unauthorized);
     }
+    let Some(device) = headers
+        .get("x-queue-focus-device")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<qf_core::sync::Id>().ok())
+        .filter(|id| !id.is_nil())
+    else {
+        return response_error(Error::Unauthorized);
+    };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let mut database = app
             .database
             .lock()
             .map_err(|_| Error::Storage("database worker failed".into()))?;
-        database.exchange(&token, &request, qf_core::unix_now())
+        database.exchange_for_device(&token, device, &request, qf_core::unix_now())
     })
     .await;
     match result {

@@ -230,6 +230,10 @@ One authenticated `POST /v1/exchange` sends either no command (fetch) or one
 immutable command. It returns the current snapshot, server timestamp and,
 when submitted, a definitive receipt with applied/rejected status and reason.
 Use an explicit protocol version and reject unsupported versions.
+The client includes its persisted device UUID in `X-Queue-Focus-Device`.
+The server checks that the token belongs to that UUID before executing any
+command, so accidentally using the other machine's token cannot misattribute
+a command before the client sees the response.
 Only authenticated setup discovery may omit a confirmed checkpoint, and only
 for a read without a command. It returns the current checkpoint (the genesis
 checkpoint for an uninitialized dataset). Setup persists that checkpoint

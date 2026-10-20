@@ -9,7 +9,9 @@ mod reducer;
 
 pub use client::*;
 pub use clock::ClockSample;
-pub use persistence::{read_private, save_private, sync_parent, DataLock};
+pub use persistence::{
+    read_private, read_private_bytes, save_private, save_private_bytes, sync_parent, DataLock,
+};
 pub use protocol::*;
 pub use reducer::ServerState;
 pub use uuid::Uuid as Id;

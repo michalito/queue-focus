@@ -30,7 +30,7 @@ is visible even when the app's windows are closed.
 
 - [x] Protocol and deterministic reducer, tests, Sol green.
 - [x] SQLite server, HTTP and operator tools, tests, Sol green.
-- [ ] Client journal, transport and migration utility, tests, Sol green.
+- [x] Client journal, transport and migration utility, tests, Sol green.
 - [ ] Shared engine and native app integration, tests, Sol green.
 - [ ] Full Linux/macOS and end-to-end verification, final Sol green.
 
@@ -55,6 +55,20 @@ intents without rejecting valid conflicts or expired requests. Eighteen
 client tests cover journal replay, stable handles, acknowledgement/save
 failure boundaries, focus/undo guards, timer continuity, locking, bounds and
 corrupt files. Clippy and the existing core/FFI/server suites passed on macOS;
-Linux also passed before the final syntax-validation amendment.
+Linux also passed, including the final syntax-validation amendment.
 
-Checkpoint 3b (HTTP worker and resumable setup/recovery utility) is next.
+Checkpoint 3b (HTTP worker and resumable setup/recovery utility) is green.
+Eleven transport/migration tests cover HTTPS/redirect/body limits, credential
+identity, worker acknowledgement and auth suspension, first/second-device
+migration, lost acknowledgements, interrupted activation, changed local
+source, backups and recovery exports. All 199 targeted core/golden/FFI/client/
+server tests and Clippy passed on macOS and Linux. Rust 1.92 compilation of
+the client and server passed. Sol found one nonblocking CLI argument panic;
+the guard was fixed and re-reviewed green, with no outstanding findings.
+
+The server now checks the client's persisted device UUID against its token
+before any mutation, preventing a mistakenly copied credential from attributing
+work to the other installation. The API and design docs include this header.
+
+Checkpoint four (shared engine and native interfaces) is next. Nothing has
+been activated in the user's app data or deployed to the VPS.

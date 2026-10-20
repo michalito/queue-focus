@@ -389,7 +389,9 @@ async fn http_auth_limits_bootstrap_and_round_trip() {
     let snapshot = f.initialize();
     let app = router(Database::open(&f.directory.join("queue.db")).unwrap());
     let send = |token: Option<&str>, bytes: Vec<u8>| {
-        let mut request = Request::post("/v1/exchange").header("content-type", "application/json");
+        let mut request = Request::post("/v1/exchange")
+            .header("content-type", "application/json")
+            .header("x-queue-focus-device", f.device.device.to_string());
         if let Some(token) = token {
             request = request.header("authorization", format!("Bearer {token}"));
         }
