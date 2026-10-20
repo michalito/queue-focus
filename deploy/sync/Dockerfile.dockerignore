@@ -1,0 +1,8 @@
+**
+!Cargo.toml
+!Cargo.lock
+!crates
+!crates/**
+**/target
+**/._*
+**/.DS_Store

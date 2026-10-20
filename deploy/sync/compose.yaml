@@ -1,0 +1,24 @@
+services:
+  qf-sync:
+    build:
+      context: ../..
+      dockerfile: deploy/sync/Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1
+    volumes:
+      - queue-data:/data
+      - queue-backups:/backups
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    # Dokploy routes its HTTPS domain to this internal port.
+    expose: ["8787"]
+
+volumes:
+  queue-data:
+  queue-backups:

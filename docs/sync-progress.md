@@ -29,13 +29,24 @@ is visible even when the app's windows are closed.
 ## Checkpoints
 
 - [x] Protocol and deterministic reducer, tests, Sol green.
-- [ ] SQLite server, HTTP and operator tools, tests, Sol green.
+- [x] SQLite server, HTTP and operator tools, tests, Sol green.
 - [ ] Client journal, transport and migration utility, tests, Sol green.
 - [ ] Shared engine and native app integration, tests, Sol green.
 - [ ] Full Linux/macOS and end-to-end verification, final Sol green.
 
 Checkpoint one: 23 new sync tests; all 157 core/golden/FFI tests and
 `make check-core` passed. Sol code review round 1 returned green and
-independently reran all 157 tests. Broader Linux validation is running.
+independently reran all 157 tests. Full Linux checks, tests, GTK widget and
+D-Bus service integration passed. The initial installer fixture failed due
+to macOS archive metadata files; removing those files fixed the test.
 
-Checkpoint two is in progress.
+Checkpoint two: 12 server tests and one additional core restore test. All
+170 core/golden/FFI/server tests and targeted Clippy checks passed. Sol code
+review round 1 returned green and independently ran the server and core
+restore tests. The deployment image built using Rust 1.92. Compose validation
+and a container smoke test passed: non-root read-only operation, initialization,
+authentication, command retry after restart, consistent backup, generation
+rotation and SIGTERM shutdown. No VPS deployment has been performed.
+
+Checkpoint three is next. Client journal/projection and transport/setup will
+be reviewed separately to keep the persistence and migration reviews focused.

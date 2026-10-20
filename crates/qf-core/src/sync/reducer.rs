@@ -23,6 +23,33 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    /// Establish a new root after an operator restores a backup. Existing
+    /// clients must recover explicitly; all old concurrency tokens expire.
+    pub fn reset_generation(&mut self, generation: Id) -> Result<(), Rejection> {
+        valid_id(generation)?;
+        if generation == self.snapshot.generation {
+            return Err(invalid("restore must use a new generation"));
+        }
+        self.validate()?;
+        let mut next = self.clone();
+        next.undo = None;
+        next.snapshot.undo = None;
+        next.snapshot.generation = generation;
+        next.snapshot.focus.version = generation;
+        if let Some(session) = &mut next.snapshot.focus.session {
+            session.id = generation;
+        }
+        for task in &mut next.snapshot.tasks {
+            task.versions = Versions::new(generation);
+        }
+        let old_history = std::mem::take(&mut next.snapshot.history);
+        next.snapshot.history =
+            fingerprint(&("queue-focus-restore-v1", old_history, &next.snapshot))?;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
     /// Validate persisted domain state before serving it. Server-private
     /// tombstones and undo information must agree with the public snapshot.
     pub fn validate(&self) -> Result<(), Rejection> {

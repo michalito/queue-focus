@@ -72,6 +72,37 @@ fn rejected_unchanged(state: &mut ServerState, command: &Command, now: u64, erro
 }
 
 #[test]
+fn restore_preserves_tombstones_but_invalidates_undo_and_old_tokens() {
+    let mut state = empty();
+    let task = add(&mut state, "complete me", Bucket::Next);
+    promote(&mut state, task, 100);
+    let complete = focus(&state, FocusAction::Complete, 101);
+    state.apply(&complete, 101).unwrap();
+    assert!(state.snapshot.undo.is_some());
+    let before = state.clone();
+    assert!(state.reset_generation(Id::nil()).is_err());
+    assert_eq!(state, before);
+    assert!(state.reset_generation(state.snapshot.generation).is_err());
+    assert_eq!(state, before);
+    state.reset_generation(Id::new_v4()).unwrap();
+    assert!(state.snapshot.undo.is_none());
+    assert!(state.used_ids.contains(&task));
+    assert_eq!(state.snapshot.revision, before.snapshot.revision);
+    assert_ne!(state.snapshot.history, before.snapshot.history);
+    state.validate().unwrap();
+    let recreate = queued(
+        &state,
+        QueuedAction::Create {
+            task,
+            title: "must not resurrect".into(),
+            tag: None,
+            bucket: Bucket::Next,
+        },
+    );
+    assert!(state.apply(&recreate, 102).is_err());
+}
+
+#[test]
 fn independent_creates_and_chained_offline_edits_preserve_identity() {
     let mut state = empty();
     let task = Id::new_v4();
