@@ -48,5 +48,13 @@ and a container smoke test passed: non-root read-only operation, initialization,
 authentication, command retry after restart, consistent backup, generation
 rotation and SIGTERM shutdown. No VPS deployment has been performed.
 
-Checkpoint three is next. Client journal/projection and transport/setup will
-be reviewed separately to keep the persistence and migration reviews focused.
+Checkpoint 3a (client journal/projection) is green after two Sol rounds.
+Round one found that malformed persisted command bodies were not rejected
+at open. Pure command syntax validation now checks pending and recovery
+intents without rejecting valid conflicts or expired requests. Eighteen
+client tests cover journal replay, stable handles, acknowledgement/save
+failure boundaries, focus/undo guards, timer continuity, locking, bounds and
+corrupt files. Clippy and the existing core/FFI/server suites passed on macOS;
+Linux also passed before the final syntax-validation amendment.
+
+Checkpoint 3b (HTTP worker and resumable setup/recovery utility) is next.

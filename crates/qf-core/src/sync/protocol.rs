@@ -340,6 +340,121 @@ pub struct Command {
 }
 
 impl Command {
+    /// Validate stored intent without consulting mutable queue state or time.
+    /// A stale token, deleted target or expired focus deadline is still valid
+    /// intent that must be retained for a definitive server receipt.
+    pub fn validate_syntax(&self) -> Result<(), Rejection> {
+        if self.version != PROTOCOL_VERSION {
+            return Err(Rejection::UnsupportedVersion);
+        }
+        for id in [self.id, self.dataset, self.generation] {
+            valid_id(id)?;
+        }
+        let queued_bucket = |bucket: Bucket| {
+            if bucket == Bucket::Now {
+                Err(invalid("queued destination cannot be Now"))
+            } else {
+                Ok(())
+            }
+        };
+        let anchor = |before: &Option<Anchor>, target: Option<Id>| {
+            if let Some(before) = before {
+                valid_id(before.task)?;
+                valid_id(before.placement)?;
+                if Some(before.task) == target {
+                    return Err(invalid("a task cannot anchor itself"));
+                }
+            }
+            Ok(())
+        };
+        match &self.action {
+            Action::Queued { action } => match action {
+                QueuedAction::Create {
+                    task,
+                    title,
+                    bucket,
+                    ..
+                } => {
+                    valid_id(*task)?;
+                    valid_title(title)?;
+                    queued_bucket(*bucket)?;
+                }
+                QueuedAction::Rename {
+                    task,
+                    expected,
+                    title,
+                } => {
+                    valid_id(*task)?;
+                    valid_id(*expected)?;
+                    valid_title(title)?;
+                }
+                QueuedAction::SetTag { task, expected, .. } => {
+                    valid_id(*task)?;
+                    valid_id(*expected)?;
+                }
+                QueuedAction::MoveBefore {
+                    task,
+                    expected,
+                    bucket,
+                    before,
+                } => {
+                    valid_id(*task)?;
+                    valid_id(*expected)?;
+                    queued_bucket(*bucket)?;
+                    anchor(before, Some(*task))?;
+                }
+                QueuedAction::Delete {
+                    task,
+                    title_version,
+                } => {
+                    valid_id(*task)?;
+                    valid_id(*title_version)?;
+                }
+            },
+            Action::Focus { guard, action } => {
+                valid_id(guard.version)?;
+                if guard.expires == 0 || guard.task.is_some() != guard.session.is_some() {
+                    return Err(invalid("invalid focus guard structure"));
+                }
+                for id in [guard.task, guard.session].into_iter().flatten() {
+                    valid_id(id)?;
+                }
+                match action {
+                    FocusAction::Create { task, title, .. } => {
+                        valid_id(*task)?;
+                        valid_title(title)?;
+                    }
+                    FocusAction::Promote { task } => valid_id(*task)?,
+                    FocusAction::Undo { completion } => valid_id(*completion)?,
+                    FocusAction::MoveToQueue { bucket, before } => {
+                        queued_bucket(*bucket)?;
+                        anchor(before, guard.task)?;
+                    }
+                    FocusAction::Complete | FocusAction::Remove | FocusAction::SetPaused { .. } => {
+                    }
+                }
+            }
+            Action::Initialize { tasks, timer } => {
+                if tasks.len() > MAX_TASKS {
+                    return Err(Rejection::Capacity);
+                }
+                let mut ids = BTreeSet::new();
+                for task in tasks {
+                    valid_id(task.id)?;
+                    valid_title(&task.title)?;
+                    if !ids.insert(task.id) {
+                        return Err(invalid("duplicate seed task"));
+                    }
+                }
+                let current = tasks.iter().filter(|t| t.bucket == Bucket::Now).count();
+                if !matches!((current, timer), (0, None) | (1, Some(_))) {
+                    return Err(invalid("initial Now requires exactly one matching timer"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn new(snapshot: &Snapshot, action: Action) -> Self {
         Self {
             version: PROTOCOL_VERSION,
