@@ -70,5 +70,13 @@ The server now checks the client's persisted device UUID against its token
 before any mutation, preventing a mistakenly copied credential from attributing
 work to the other installation. The API and design docs include this header.
 
-Checkpoint four (shared engine and native interfaces) is next. Nothing has
-been activated in the user's app data or deployed to the VPS.
+Checkpoint 4a (shared engine command boundary and host lifetime) is green
+after Sol review and amendments. Native intents now produce durable queued
+edits or Pending focus commands, with persisted settlement status. Queue and
+status revisions are separate. The host locks the directory for its lifetime
+and refuses partial setup without falling back to standalone mode. Eight new
+tests include two native hosts sharing queue, Now and pause over HTTP.
+All 207 targeted tests and Clippy passed on macOS.
+
+Native UI/runtime integration remains. Nothing has been activated in the
+user's app data or deployed to the VPS.

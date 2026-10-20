@@ -280,6 +280,7 @@ fn reply_error(inv: gio::DBusMethodInvocation, error: EngineError) {
     let name = match error {
         EngineError::InvalidArgument(_) => ERR_INVALID_ARGS,
         EngineError::Persistence(_) => ERR_PERSISTENCE,
+        EngineError::Pending { .. } => "org.queuefocus.Error.Pending",
     };
     inv.return_dbus_error(name, &error.to_string());
 }

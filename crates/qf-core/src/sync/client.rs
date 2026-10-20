@@ -38,6 +38,8 @@ pub struct Envelope {
     pub next_handle: u64,
     pub recovery: Vec<RecoveryItem>,
     pub suspension: Option<Suspension>,
+    #[serde(default)]
+    pub last_focus_settlement: Option<Settlement>,
 }
 
 impl Envelope {
@@ -58,6 +60,7 @@ impl Envelope {
             next_handle: 1,
             recovery: vec![],
             suspension: None,
+            last_focus_settlement: None,
         };
         value.register_handles()?;
         value.validate()?;
@@ -77,6 +80,15 @@ impl Envelope {
             .is_some_and(|s| s.anchor > self.server_time)
         {
             return Err(invalid("timer anchor exceeds the observed server clock"));
+        }
+        if let Some(settlement) = &self.last_focus_settlement {
+            if settlement.command.is_nil()
+                || self.pending.iter().any(|c| c.id == settlement.command)
+                || matches!(settlement.outcome, ReceiptOutcome::Applied { revision }
+                    if revision == 0 || revision > self.confirmed.revision)
+            {
+                return Err(invalid("invalid persisted focus settlement"));
+            }
         }
         let mut ids = BTreeSet::new();
         let mut focus = 0;
@@ -235,8 +247,10 @@ pub struct SyncStatus {
     pub likely_conflicts: usize,
     pub recovery_items: usize,
     pub undo: Option<ClientUndo>,
+    pub last_focus_settlement: Option<Settlement>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settlement {
     pub command: Id,
     pub outcome: ReceiptOutcome,
@@ -423,6 +437,12 @@ impl Client {
                     }
                 }
                 let command = candidate.pending.remove(0);
+                if command.is_focus() {
+                    candidate.last_focus_settlement = Some(Settlement {
+                        command: receipt.command,
+                        outcome: receipt.outcome.clone(),
+                    });
+                }
                 if let ReceiptOutcome::Rejected { reason } = &receipt.outcome {
                     candidate.recovery.push(RecoveryItem {
                         command,
@@ -596,6 +616,7 @@ impl Client {
             likely_conflicts: self.likely_conflicts.len(),
             recovery_items: self.envelope.recovery.len(),
             undo,
+            last_focus_settlement: self.envelope.last_focus_settlement.clone(),
         }
     }
     /// Constructs the legacy view directly, avoiding normalization's wall

@@ -105,6 +105,17 @@ impl Tasks {
         }
     }
 
+    /// Install the synchronized view without touching the standalone file.
+    pub(crate) fn replace_projection(&mut self, store: Store) {
+        // Reserving a handle for a pending focus create changes next_id,
+        // but is not a visible queue mutation.
+        if self.store.tasks != store.tasks {
+            self.revision = self.revision.wrapping_add(1);
+            self.undo = None;
+        }
+        self.store = store;
+    }
+
     pub fn store(&self) -> &Store {
         &self.store
     }

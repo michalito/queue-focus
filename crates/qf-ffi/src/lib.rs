@@ -26,14 +26,16 @@ pub enum QfError {
     Persistence { message: String },
     /// The arguments could not be used, or named a task that is not there.
     InvalidArgument { message: String },
+    /// Persisted shared focus command; success is reported after settlement.
+    Pending { command_id: String, message: String },
 }
 
 impl fmt::Display for QfError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QfError::Persistence { message } | QfError::InvalidArgument { message } => {
-                f.write_str(message)
-            }
+            QfError::Persistence { message }
+            | QfError::InvalidArgument { message }
+            | QfError::Pending { message, .. } => f.write_str(message),
         }
     }
 }
@@ -46,6 +48,10 @@ impl From<EngineError> for QfError {
         match error {
             EngineError::InvalidArgument(_) => QfError::InvalidArgument { message },
             EngineError::Persistence(_) => QfError::Persistence { message },
+            EngineError::Pending { command_id } => QfError::Pending {
+                command_id: command_id.to_string(),
+                message,
+            },
         }
     }
 }

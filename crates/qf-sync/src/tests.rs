@@ -10,6 +10,104 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[test]
+fn host_locks_standalone_and_refuses_partial_sync_directories() {
+    let dir = std::env::temp_dir().join(format!("qf-host-{}", Id::new_v4()));
+    let (host, mut engine, _) = Host::open(&dir).unwrap();
+    engine.add("standalone", None).unwrap();
+    assert!(Host::open(&dir).is_err());
+    assert!(DataLock::acquire(&dir).is_err());
+    // Engine recovery can reopen while the same host retains its lock.
+    assert_eq!(open_engine(&dir).unwrap().0.store().tasks.len(), 1);
+    drop(host);
+    for marker in [setup::SETUP_FILE, STATE_FILE, CONFIG_FILE] {
+        fs::write(dir.join(marker), b"broken").unwrap();
+        assert!(
+            Host::open(&dir).is_err(),
+            "must not fall back with {marker}"
+        );
+        fs::remove_file(dir.join(marker)).unwrap();
+    }
+    assert_eq!(open_engine(&dir).unwrap().0.store().tasks.len(), 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn two_native_hosts_share_queue_now_pause_and_settlement() {
+    let mut server = Server::new();
+    let mac = server.initialize();
+    let ubuntu = server.dir.join("ubuntu");
+    let config = server.enroll();
+    setup::setup(&ubuntu, config, setup::Mode::Shared).unwrap();
+    let (mut mac_host, mut mac_engine, _) = Host::open(&mac).unwrap();
+    let (mut ubuntu_host, mut ubuntu_engine, _) = Host::open(&ubuntu).unwrap();
+    let task = mac_engine.add("shared", None).unwrap().value;
+    fn converge(
+        first: (&mut Host, &mut qf_core::Engine),
+        second: (&mut Host, &mut qf_core::Engine),
+        ready: impl Fn(&qf_core::Engine, &qf_core::Engine) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            first.0.wake();
+            second.0.wake();
+            assert!(first.0.pump(first.1).warning.is_none());
+            assert!(second.0.pump(second.1).warning.is_none());
+            if ready(first.1, second.1) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "hosts did not converge");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    converge(
+        (&mut mac_host, &mut mac_engine),
+        (&mut ubuntu_host, &mut ubuntu_engine),
+        |a, b| a.sync_status().unwrap().pending == 0 && b.store().tasks.len() == 1,
+    );
+    let command = match mac_engine.promote(task) {
+        Err(qf_core::EngineError::Pending { command_id }) => command_id,
+        other => panic!("expected pending, got {other:?}"),
+    };
+    assert!(mac_engine.store().current().is_none());
+    converge(
+        (&mut mac_host, &mut mac_engine),
+        (&mut ubuntu_host, &mut ubuntu_engine),
+        |a, b| a.store().current().is_some() && b.store().current().is_some(),
+    );
+    assert_eq!(
+        mac_engine
+            .sync_status()
+            .unwrap()
+            .last_focus_settlement
+            .as_ref()
+            .unwrap()
+            .command,
+        command
+    );
+    assert!(matches!(
+        ubuntu_engine.toggle_pause(),
+        Err(qf_core::EngineError::Pending { .. })
+    ));
+    converge(
+        (&mut mac_host, &mut mac_engine),
+        (&mut ubuntu_host, &mut ubuntu_engine),
+        |a, b| a.store().current().unwrap().is_paused() && b.store().current().unwrap().is_paused(),
+    );
+    assert_eq!(
+        mac_engine
+            .store()
+            .current()
+            .unwrap()
+            .elapsed_secs(qf_core::unix_now()),
+        ubuntu_engine
+            .store()
+            .current()
+            .unwrap()
+            .elapsed_secs(qf_core::unix_now())
+    );
+}
+
 pub(crate) struct Server {
     pub dir: PathBuf,
     pub database: Database,
