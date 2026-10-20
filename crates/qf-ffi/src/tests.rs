@@ -40,14 +40,106 @@ fn invalid_message<T: fmt::Debug>(result: Result<T, QfError>) -> String {
 }
 
 #[test]
-fn a_fresh_directory_opens_empty_and_writes_nothing_until_a_change() {
+fn sync_pending_crosses_ffi_and_panic_recovery_keeps_the_host_lock() {
+    use qf_core::sync::*;
+    let dir = temp_dir("sync-pending");
+    let clock = ClockSample::now().unwrap();
+    let mut server = ServerState::new(Id::new_v4(), Id::new_v4()).unwrap();
+    server
+        .apply(
+            &Command::new(
+                &server.snapshot,
+                Action::Initialize {
+                    tasks: vec![],
+                    timer: None,
+                },
+            ),
+            clock.wall,
+        )
+        .unwrap();
+    let envelope = Envelope::new(
+        Id::new_v4(),
+        server.snapshot.clone(),
+        clock.wall,
+        clock.wall,
+    )
+    .unwrap();
+    save_private(&dir.join(STATE_FILE), &envelope, MAX_ENVELOPE_BYTES).unwrap();
+    qf_sync::Config {
+        version: PROTOCOL_VERSION,
+        url: "http://127.0.0.1:0".into(),
+        device: envelope.device,
+        token: "fixture".into(),
+        allow_loopback_http: true,
+    }
+    .save(&dir)
+    .unwrap();
+    let engine = open(&dir);
+    assert!(QueueEngine::new(dir.to_string_lossy().into_owned()).is_err());
+    {
+        let mut state = engine.lock();
+        let client = state.engine.sync_client_mut().unwrap();
+        let request = client.request().unwrap();
+        client
+            .accept(
+                &request,
+                ExchangeResponse {
+                    version: PROTOCOL_VERSION,
+                    device: envelope.device,
+                    server_time: clock.wall,
+                    snapshot: server.snapshot.clone(),
+                    receipt: None,
+                },
+                clock,
+            )
+            .unwrap();
+        state.engine.refresh_sync(clock);
+    }
+    let command_id = match engine.add("!pending draft".into(), None) {
+        Err(QfError::Pending {
+            command_id,
+            message,
+        }) => {
+            assert!(message.contains("waiting for confirmation"));
+            command_id
+        }
+        other => panic!("expected typed Pending, got {other:?}"),
+    };
+    assert!(engine.snapshot().current.is_none());
+    assert_eq!(
+        engine.snapshot().sync.unwrap().focus_command.as_deref(),
+        Some(command_id.as_str())
+    );
+    let worker = &engine;
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _state = worker.state.lock().unwrap();
+        panic!("fixture engine panic");
+    }));
+    let snapshot = engine.snapshot();
+    assert!(snapshot.current.is_none());
+    assert_eq!(
+        snapshot.sync.unwrap().focus_command.as_deref(),
+        Some(command_id.as_str())
+    );
+    assert!(
+        DataLock::acquire(&dir).is_err(),
+        "recovery retains process lock"
+    );
+    drop(engine);
+    let _lock = DataLock::acquire(&dir).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_fresh_directory_opens_empty_and_only_creates_its_lock() {
     let dir = temp_dir("fresh");
     let engine = open(&dir);
     let snapshot = engine.snapshot();
     assert_eq!(snapshot.current, None);
     assert!(snapshot.side.is_empty() && snapshot.next.is_empty() && snapshot.later.is_empty());
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    assert!(dir.join(".queue-focus.lock").is_file());
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -248,7 +340,9 @@ fn settings_round_trip_through_the_record_and_the_file() {
     let json = fs::read_to_string(dir.join("settings.json")).unwrap();
     assert!(json.contains("\"quiet_from\": \"22:30\""), "{json}");
     assert!(json.contains("\"quiet_to\": \"06:05\""), "{json}");
-    assert_eq!(open(&dir).settings(), settings);
+    drop(engine);
+    let engine = open(&dir);
+    assert_eq!(engine.settings(), settings);
 
     // An unmarked task goes to the chosen bucket, but for the first, which
     // is the one to do.

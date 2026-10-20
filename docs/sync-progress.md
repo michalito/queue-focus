@@ -76,7 +76,17 @@ edits or Pending focus commands, with persisted settlement status. Queue and
 status revisions are separate. The host locks the directory for its lifetime
 and refuses partial setup without falling back to standalone mode. Eight new
 tests include two native hosts sharing queue, Now and pause over HTTP.
-All 207 targeted tests and Clippy passed on macOS.
+All 207 targeted tests and Clippy passed on macOS and Linux.
 
-Native UI/runtime integration remains. Nothing has been activated in the
-user's app data or deployed to the VPS.
+Checkpoint 4b (macOS host and pending UI) is green after Sol review. The FFI
+owns one worker outside recoverable engine state; reopening discards a stale
+in-flight response and retries the durable journal. Swift receives typed sync
+status and settlements, keeps pending drafts, uses server undo eligibility,
+and reports pending shortcut results truthfully. The existing standalone
+stale-undo test caught a regression that was fixed and re-reviewed.
+All 209 targeted Rust tests and Clippy pass; the macOS app builds, 145 app
+unit tests pass (one existing system-shortcut known issue), and all seven
+Swift binding tests pass.
+
+GNOME integration, native recovery surfaces, packaging and final verification
+remain. Nothing has been activated in the user's app data or deployed to the VPS.

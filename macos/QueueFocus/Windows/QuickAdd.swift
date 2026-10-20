@@ -105,10 +105,14 @@ private struct QuickAddView: View {
     @Environment(QueueModel.self) private var model
     let close: () -> Void
     @State private var draft = ""
+    @State private var pendingAdd: PendingAdd?
 
     var body: some View {
         VStack(spacing: 0) {
             TextField("Add…  !now  #w #p  @later @side", text: $draft)
+                .disabled(pendingAdd != nil)
+                .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
+                .onAppear { reconcilePendingAdd() }
                 .textFieldStyle(.plain)
                 .font(.title2)
                 .padding(.horizontal, 16)
@@ -138,7 +142,20 @@ private struct QuickAddView: View {
     }
 
     private func submit(asCurrent: Bool) {
+        guard pendingAdd == nil else { return }
         if model.add(draft, asCurrent: asCurrent) {
+            draft = ""
+            close()
+        } else if let command = model.lastRequestPending {
+            pendingAdd = PendingAdd(command: command, text: draft)
+            reconcilePendingAdd()
+        }
+    }
+
+    private func reconcilePendingAdd() {
+        guard let pending = pendingAdd, let result = model.focusResults[pending.command] else { return }
+        pendingAdd = nil
+        if result.applied && draft == pending.text {
             draft = ""
             close()
         }

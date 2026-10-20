@@ -71,7 +71,7 @@ readonly STAMP="$PACKAGE/QfCoreFFI.inputs"
 # leave a hash of part of the inputs, stamped as if it were the whole.
 inputs() {
   local files sums
-  files=$(find crates/qf-core crates/qf-ffi crates/uniffi-bindgen -type f \
+  files=$(find crates/qf-core crates/qf-sync crates/qf-ffi crates/uniffi-bindgen -type f \
     \( -name '*.rs' -o -name '*.toml' \) -print | LC_ALL=C sort) || return
   [ -n "$files" ] || return
   sums=$(printf '%s\n' "$files" | xargs shasum) || return

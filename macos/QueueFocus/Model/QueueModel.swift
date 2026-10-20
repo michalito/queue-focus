@@ -13,11 +13,17 @@ struct UndoOffer: Equatable {
     let expires: Date
 }
 
+struct PendingAdd {
+    let command: String
+    let text: String
+}
+
 /// What completing the current task came to.
 enum CurrentCompletion: Equatable {
     case done(QueueTask)
     /// Now held no task.
     case empty
+    case pending(String)
     /// The engine refused, or could not save; the message says why.
     case failed(String)
 
@@ -31,6 +37,7 @@ enum UndoResult: Equatable {
     case undone
     /// The queue changed since, so the engine no longer has it to give back.
     case stale
+    case pending(String)
     case failed(String)
 }
 
@@ -54,6 +61,22 @@ final class QueueModel {
     private(set) var undoOffer: UndoOffer?
     /// Why the last request from a view failed, for the popover's message line.
     var actionError: String?
+    private(set) var lastRequestPending: String?
+    private(set) var focusResults: [String: CommandSettlement] = [:]
+
+    var focusAvailable: Bool {
+        guard let sync = snapshot.sync else { return true }
+        return sync.state == "online" && sync.pending == 0
+    }
+
+    var syncMessage: String? {
+        guard let sync = snapshot.sync else { return nil }
+        if let message = sync.message { return message }
+        if sync.focusCommand != nil { return "Sent, waiting for confirmation…" }
+        if sync.recoveryItems > 0 { return "Sync needs attention: \(sync.recoveryItems) saved changes need review. The saved changes can be reviewed and exported." }
+        if sync.pending > 0 { return "\(sync.pending) changes saved on this device, waiting to sync." }
+        return sync.state == "online" ? "Synced" : "Offline — queue edits are saved here. Now and timer changes need a connection."
+    }
     /// Changes saved without being made crash-safe, and internal errors,
     /// oldest first.
     private(set) var problems: [String] = []
@@ -96,6 +119,11 @@ final class QueueModel {
 
     /// The offer, while it can still be taken.
     var liveUndoOffer: UndoOffer? {
+        if let sync = snapshot.sync {
+            guard let undo = sync.undo else { return nil }
+            return UndoOffer(id: undo.task, title: undo.title, revision: snapshot.revision,
+                             expires: now.addingTimeInterval(TimeInterval(undo.remaining)))
+        }
         guard let offer = undoOffer, now < offer.expires, snapshot.revision == offer.revision else {
             return nil
         }
@@ -113,6 +141,7 @@ final class QueueModel {
     /// task. Returns whether one was added; blank text adds nothing.
     @discardableResult
     func add(_ text: String, asCurrent: Bool = false) -> Bool {
+        lastRequestPending = nil
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         return perform { try engine.add(text: text, bucket: asCurrent ? .now : nil) } != nil
@@ -122,6 +151,7 @@ final class QueueModel {
     /// completed is the caller's to offer to undo.
     func completeCurrent() -> CurrentCompletion {
         guard let completed = perform({ try engine.completeCurrent() }) else {
+            if let command = lastRequestPending { return .pending(command) }
             return .failed(actionError ?? "")
         }
         return completed.map(CurrentCompletion.done) ?? .empty
@@ -142,6 +172,7 @@ final class QueueModel {
     /// Offer to undo the completion of task `id` again, for another eight
     /// seconds: the engine still has it, though the first offer ran out.
     func offerUndo(id: UInt64, title: String) {
+        guard snapshot.sync == nil else { return }
         now = clock()
         undoOffer = UndoOffer(
             id: id,
@@ -154,7 +185,7 @@ final class QueueModel {
     /// Take back the completion on offer, and say so on the message line if
     /// the queue has changed since.
     func undo() {
-        guard let offer = undoOffer else { return }
+        guard let offer = snapshot.sync == nil ? undoOffer : liveUndoOffer else { return }
         if undo(id: offer.id) == .stale {
             actionError = "Nothing to undo: the queue changed since."
         }
@@ -168,6 +199,7 @@ final class QueueModel {
     @discardableResult
     func undo(id: UInt64) -> UndoResult {
         guard let undone = perform({ try engine.undoComplete(id: id) }) else {
+            if let command = lastRequestPending { return .pending(command) }
             return .failed(actionError ?? "")
         }
         if undoOffer?.id == id {
@@ -276,6 +308,7 @@ final class QueueModel {
                 settingsProblem = problem
                 tell([problem])
             }
+            for settlement in tick.settlements { record(settlement) }
             report(tick.problems)
             if let flash = tick.flash {
                 presentFlash(flash)
@@ -322,11 +355,16 @@ final class QueueModel {
     /// snapshot is fresh afterwards, since a failure can follow a change.
     @discardableResult
     private func perform<T>(_ request: () throws -> T) -> T? {
+        lastRequestPending = nil
         defer { refresh() }
         do {
             let value = try request()
             actionError = nil
             return value
+        } catch QfError.Pending(let commandId, _) {
+            lastRequestPending = commandId
+            actionError = nil
+            return nil
         } catch {
             actionError = Self.describe(error)
             return nil
@@ -336,9 +374,16 @@ final class QueueModel {
     private func refresh() {
         let snapshot = engine.snapshot()
         if snapshot != self.snapshot { self.snapshot = snapshot }
+        if let settlement = snapshot.sync?.lastFocusSettlement { record(settlement) }
         let settings = engine.settings()
         if settings != self.settings { self.settings = settings }
         didChange()
+    }
+
+    private func record(_ settlement: CommandSettlement) {
+        guard focusResults[settlement.commandId] == nil else { return }
+        focusResults[settlement.commandId] = settlement
+        if !settlement.applied { actionError = settlement.message ?? "The shared change was not applied. Your draft is retained." }
     }
 
     private func localTime(_ date: Date) -> TimeOfDay {
@@ -348,6 +393,8 @@ final class QueueModel {
 
     static func describe(_ error: Error) -> String {
         switch error {
+        case QfError.Pending(_, let message):
+            message
         case QfError.Persistence(let message), QfError.InvalidArgument(let message):
             message
         default:

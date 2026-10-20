@@ -35,6 +35,12 @@ impl Host {
         }
     }
 
+    pub fn engine_reopened(&mut self) {
+        if let Some(worker) = &mut self.worker {
+            worker.engine_reopened();
+        }
+    }
+
     /// Channel receive/send and local persistence only. The worker owns HTTP.
     pub fn pump(&mut self, engine: &mut Engine) -> WorkerUpdate {
         let clock = match ClockSample::now() {

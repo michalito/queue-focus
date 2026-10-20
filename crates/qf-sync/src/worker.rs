@@ -24,6 +24,8 @@ pub struct Worker {
     backoff: u64,
     wake: bool,
     halted: bool,
+    discard_inflight: bool,
+    last_tick: Option<u64>,
 }
 impl Worker {
     pub fn start(config: Config) -> io::Result<Self> {
@@ -58,6 +60,8 @@ impl Worker {
             backoff: 1,
             wake: true,
             halted: false,
+            discard_inflight: false,
+            last_tick: None,
         })
     }
     pub fn wake(&mut self) {
@@ -67,14 +71,37 @@ impl Worker {
         self.busy
     }
 
+    /// An engine reopened its durable journal after a panic. Let any old
+    /// request finish, then exchange the reopened head/checkpoint. Its receipt
+    /// is still idempotent; applying a response to a different journal is not.
+    pub fn engine_reopened(&mut self) {
+        self.discard_inflight = self.busy;
+        self.wake = true;
+        self.next = 0;
+    }
+
     /// Call on the existing serialized engine boundary. Only file saves and
     /// bounded channel operations happen here; HTTP is entirely on the worker.
     pub fn tick(&mut self, client: &mut Client, clock: ClockSample) -> WorkerUpdate {
         let mut update = WorkerUpdate::default();
+        // The boot clock includes sleep. A resumed main loop should reconnect
+        // promptly rather than wait out a pre-sleep network backoff.
+        if self
+            .last_tick
+            .is_some_and(|last| clock.boot.saturating_sub(last) > 5_000_000_000)
+        {
+            self.wake = true;
+        }
+        self.last_tick = Some(clock.boot);
         if self.busy {
             match self.receiver.try_recv() {
                 Ok(work) => {
                     self.busy = false;
+                    if self.discard_inflight {
+                        self.discard_inflight = false;
+                        client.network_failed();
+                        return update;
+                    }
                     match work.result {
                         Ok((response, received)) => {
                             self.backoff = 1;

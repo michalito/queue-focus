@@ -100,6 +100,8 @@ final class Notices {
                 if !(await tell(.message("Nothing in Now"))) {
                     showPopover()
                 }
+            case .pending:
+                showPopover()
             case .failed(let message):
                 if !(await tell(.message("Could not complete the task", message))) {
                     model.actionError = message
@@ -125,6 +127,8 @@ final class Notices {
                     model.actionError = "Nothing to undo: the queue changed since."
                     showPopover()
                 }
+            case .pending:
+                showPopover()
             case .failed(let message):
                 // Nothing changed and the engine still has the completion,
                 // so it is offered again, as GNOME's menu keeps its offer;

@@ -148,10 +148,15 @@ pub struct QueueSnapshot {
     pub next: Vec<QueueTask>,
     pub later: Vec<QueueTask>,
     pub revision: u64,
+    pub sync: Option<SyncInfo>,
 }
 
 impl QueueSnapshot {
-    pub(crate) fn of(store: &Store, revision: u64) -> Self {
+    pub(crate) fn of(
+        store: &Store,
+        revision: u64,
+        sync: Option<&qf_core::sync::SyncStatus>,
+    ) -> Self {
         let list = |bucket| store.in_bucket(bucket).map(QueueTask::from).collect();
         QueueSnapshot {
             current: store.current().map(QueueTask::from),
@@ -159,6 +164,75 @@ impl QueueSnapshot {
             next: list(qf_core::Bucket::Next),
             later: list(qf_core::Bucket::Later),
             revision,
+            sync: sync.map(SyncInfo::from),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CommandSettlement {
+    pub command_id: String,
+    pub applied: bool,
+    pub message: Option<String>,
+}
+impl From<&qf_core::sync::Settlement> for CommandSettlement {
+    fn from(value: &qf_core::sync::Settlement) -> Self {
+        use qf_core::sync::ReceiptOutcome;
+        Self {
+            command_id: value.command.to_string(),
+            applied: matches!(value.outcome, ReceiptOutcome::Applied { .. }),
+            message: match &value.outcome {
+                ReceiptOutcome::Rejected { reason } => Some(reason.to_string()),
+                _ => None,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SyncUndo {
+    pub task: u64,
+    pub title: String,
+    pub remaining: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SyncInfo {
+    pub state: String,
+    pub message: Option<String>,
+    pub pending: u64,
+    pub focus_command: Option<String>,
+    pub likely_conflicts: u64,
+    pub recovery_items: u64,
+    pub undo: Option<SyncUndo>,
+    pub last_focus_settlement: Option<CommandSettlement>,
+}
+impl From<&qf_core::sync::SyncStatus> for SyncInfo {
+    fn from(value: &qf_core::sync::SyncStatus) -> Self {
+        use qf_core::sync::ConnectionState;
+        Self {
+            state: match value.state {
+                ConnectionState::Online => "online",
+                ConnectionState::Offline => "offline",
+                ConnectionState::NeedsAttention => "needs_attention",
+                ConnectionState::Recovery => "recovery",
+                ConnectionState::Durability => "durability",
+            }
+            .into(),
+            message: value.message.clone(),
+            pending: value.pending as u64,
+            focus_command: value.focus_command.map(|id| id.to_string()),
+            likely_conflicts: value.likely_conflicts as u64,
+            recovery_items: value.recovery_items as u64,
+            undo: value.undo.as_ref().map(|undo| SyncUndo {
+                task: undo.task,
+                title: undo.title.clone(),
+                remaining: undo.remaining,
+            }),
+            last_focus_settlement: value
+                .last_focus_settlement
+                .as_ref()
+                .map(CommandSettlement::from),
         }
     }
 }
@@ -284,6 +358,7 @@ pub struct TickResult {
     /// started again from the files, so nothing waits to be written. When a
     /// new outage begins on the same tick, `settings_problem` is its own.
     pub settings_outage_ended: bool,
+    pub settlements: Vec<CommandSettlement>,
 }
 
 /// The range of the "flash every" slider, in minutes.

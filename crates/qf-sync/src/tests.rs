@@ -115,6 +115,36 @@ pub(crate) struct Server {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<thread::JoinHandle<()>>,
 }
+
+#[test]
+fn worker_reopen_discards_old_response_and_retries_durable_head_once() {
+    let mut server = Server::new();
+    let directory = server.initialize();
+    let (mut host, mut engine, _) = Host::open(&directory).unwrap();
+    engine.add("survive reopen", None).unwrap();
+    assert!(host.pump(&mut engine).warning.is_none());
+    // The owned worker continues its first exchange while the recoverable
+    // engine is reconstructed from the journal.
+    engine = open_engine(&directory).unwrap().0;
+    host.engine_reopened();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.sync_status().unwrap().pending != 0 {
+        assert!(host.pump(&mut engine).warning.is_none());
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(engine.store().tasks.len(), 1);
+    let response = Transport::new(server.config.clone())
+        .unwrap()
+        .exchange(&engine.sync_client_mut().unwrap().request().unwrap())
+        .unwrap();
+    assert_eq!(
+        response.snapshot.tasks.len(),
+        1,
+        "receipt retry cannot duplicate the create"
+    );
+    assert!(engine.sync_status().unwrap().message.is_none());
+}
 impl Server {
     pub fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("qf-transport-{}", Id::new_v4()));

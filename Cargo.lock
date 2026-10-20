@@ -1412,6 +1412,7 @@ name = "qf-ffi"
 version = "0.6.0"
 dependencies = [
  "qf-core",
+ "qf-sync",
  "uniffi",
 ]
 

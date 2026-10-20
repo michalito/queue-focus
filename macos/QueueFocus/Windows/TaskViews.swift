@@ -114,7 +114,7 @@ struct TaskMenuItems: View {
 
     var body: some View {
         if !isCurrent {
-            Button("Make Current") { model.promote(id: task.id) }
+            Button("Make Current") { model.promote(id: task.id) }.disabled(!model.focusAvailable)
         }
         Picker("Tag", selection: Binding(
             get: { task.tag },
@@ -124,16 +124,16 @@ struct TaskMenuItems: View {
             Text("Work").tag(TaskTag?.some(.work))
             Text("Personal").tag(TaskTag?.some(.personal))
         }
-        Button("Done") { model.complete(id: task.id) }
+        Button("Done") { model.complete(id: task.id) }.disabled(isCurrent && !model.focusAvailable)
         Divider()
         Menu("Move To") {
             ForEach([Bucket.side, .next, .later].filter { $0 != task.bucket }, id: \.self) { bucket in
-                Button(BucketName.of(bucket)) { model.move(id: task.id, to: bucket) }
+                Button(BucketName.of(bucket)) { model.move(id: task.id, to: bucket) }.disabled(isCurrent && !model.focusAvailable)
             }
         }
         Button("Rename") { context.beginRename(task) }
         Divider()
-        Button("Delete", role: .destructive) { model.remove(id: task.id) }
+        Button("Delete", role: .destructive) { model.remove(id: task.id) }.disabled(isCurrent && !model.focusAvailable)
     }
 }
 
@@ -271,6 +271,7 @@ struct TaskRow: View {
                 }
                 .help("Make current")
                 .accessibilityLabel("Make current")
+                .disabled(!model.focusAvailable)
                 .accessibilityIdentifier("promote-\(task.id)")
                 if style == .later {
                     Button("→ next") { model.move(id: task.id, to: .next) }
@@ -481,6 +482,7 @@ struct NowPanel: View {
                     .buttonStyle(.borderless)
                     .help(current.pausedAt == nil ? "Pause" : "Resume")
                     .accessibilityLabel(current.pausedAt == nil ? "Pause, \(longElapsed(secs: secs))" : "Resume, \(longElapsed(secs: secs))")
+                    .disabled(!model.focusAvailable)
                     .accessibilityIdentifier("now-timer")
                 }
             }
@@ -495,10 +497,12 @@ struct NowPanel: View {
                         }
                         .help("Done")
                         .accessibilityLabel("Done")
+                        .disabled(!model.focusAvailable)
                         .accessibilityIdentifier("now-done")
                     } else {
                         Button("Done") { model.complete(id: current.id) }
-                            .accessibilityIdentifier("now-done")
+                            .disabled(!model.focusAvailable)
+                        .accessibilityIdentifier("now-done")
                     }
                     Spacer()
                     TaskMenuButton(task: current, isCurrent: true)
