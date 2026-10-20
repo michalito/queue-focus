@@ -54,25 +54,59 @@ impl std::error::Error for SaveError {
     }
 }
 
-/// `$XDG_DATA_HOME/queue-focus` (defaults to `~/.local/share/queue-focus`).
+/// Where each platform keeps per-user application data, under the home
+/// directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    /// `~/.local/share`, the XDG default.
+    Linux,
+    /// `~/Library/Application Support`.
+    MacOs,
+}
+
+impl Platform {
+    const HOST: Platform = if cfg!(target_os = "macos") {
+        Platform::MacOs
+    } else {
+        Platform::Linux
+    };
+
+    fn data_home(self) -> &'static str {
+        match self {
+            Platform::Linux => ".local/share",
+            Platform::MacOs => "Library/Application Support",
+        }
+    }
+}
+
+/// `$XDG_DATA_HOME/queue-focus`. Without an absolute `XDG_DATA_HOME` it is
+/// `~/.local/share/queue-focus` on Linux and
+/// `~/Library/Application Support/queue-focus` on macOS. The override wins
+/// on both, so one shared folder can hold the files for both.
 pub fn data_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
+    data_dir_for(
+        Platform::HOST,
+        std::env::var_os("XDG_DATA_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+fn data_dir_for(
+    platform: Platform,
+    xdg_data_home: Option<OsString>,
+    home: Option<OsString>,
+) -> PathBuf {
+    let base = xdg_data_home
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .or_else(|| home.map(|home| PathBuf::from(home).join(platform.data_home())))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("queue-focus")
 }
 
-/// `$XDG_DATA_HOME/queue-focus/tasks.json`.
-pub fn data_path() -> PathBuf {
-    data_dir().join("tasks.json")
-}
-
-/// `$XDG_DATA_HOME/queue-focus/settings.json`.
-pub fn settings_path() -> PathBuf {
-    data_dir().join("settings.json")
-}
+/// The two files in the data directory.
+pub(crate) const TASKS_FILE: &str = "tasks.json";
+pub(crate) const SETTINGS_FILE: &str = "settings.json";
 
 /// Load the task store, repairing permissions left by pre-hardening builds.
 ///
@@ -406,11 +440,53 @@ mod tests {
     }
 
     #[test]
-    fn the_data_files_sit_together_in_one_directory() {
-        assert_eq!(data_path().parent(), Some(data_dir().as_path()));
-        assert_eq!(settings_path().parent(), Some(data_dir().as_path()));
-        assert_eq!(data_path().file_name().unwrap(), "tasks.json");
-        assert_eq!(settings_path().file_name().unwrap(), "settings.json");
+    fn linux_keeps_the_data_under_local_share() {
+        assert_eq!(
+            data_dir_for(Platform::Linux, None, Some("/home/me".into())),
+            Path::new("/home/me/.local/share/queue-focus")
+        );
+    }
+
+    #[test]
+    fn macos_keeps_the_data_under_application_support() {
+        assert_eq!(
+            data_dir_for(Platform::MacOs, None, Some("/Users/me".into())),
+            Path::new("/Users/me/Library/Application Support/queue-focus")
+        );
+    }
+
+    /// One shared folder can hold the files for both platforms.
+    #[test]
+    fn an_absolute_xdg_data_home_wins_on_every_platform() {
+        for platform in [Platform::Linux, Platform::MacOs] {
+            assert_eq!(
+                data_dir_for(platform, Some("/sync/data".into()), Some("/home/me".into())),
+                Path::new("/sync/data/queue-focus"),
+                "{platform:?}"
+            );
+        }
+    }
+
+    /// The XDG spec says a relative value is invalid and must be ignored.
+    #[test]
+    fn a_relative_xdg_data_home_is_ignored() {
+        for platform in [Platform::Linux, Platform::MacOs] {
+            assert_eq!(
+                data_dir_for(platform, Some("data".into()), Some("/home/me".into())),
+                Path::new("/home/me")
+                    .join(platform.data_home())
+                    .join("queue-focus"),
+                "{platform:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_home_the_data_stays_in_the_working_directory() {
+        assert_eq!(
+            data_dir_for(Platform::MacOs, None, None),
+            Path::new("./queue-focus")
+        );
     }
 
     #[test]

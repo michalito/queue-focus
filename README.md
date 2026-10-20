@@ -6,7 +6,7 @@ A task has a title, a bucket, and an optional `work` or `personal` tag. There ar
 
 Every so often the screen flashes the current task across the desktop. The reminder is described under [The flash reminder](#the-flash-reminder) and is configured in the Settings view.
 
-Queue Focus supports GNOME Shell 46, 48, 49, and 50, including Ubuntu 24.04.
+Queue Focus supports GNOME Shell 46, 48, 49, and 50, including Ubuntu 24.04. It also runs on macOS 14 or newer as an app in the menu bar, using the same task format; see [macOS](#macos).
 
 ## The four buckets
 
@@ -20,7 +20,7 @@ Queue Focus supports GNOME Shell 46, 48, 49, and 50, including Ubuntu 24.04.
 
 Promoting a task puts it in Now. The task that was there steps back to the front of Next, so completing the new one brings it straight back. This happens however a task reaches Now: promoting it, dropping it on the current task, moving it with `1`, or adding it with `!`. A task starts a new timer whenever it becomes current, and any pause is cleared.
 
-Moving or deleting the current task leaves Now empty. Only completing a task pulls the next one in.
+Moving or deleting the current task leaves Now empty. Only completing a task pulls the next one in. A task added while Now is empty becomes the current task, unless a marker sends it elsewhere.
 
 ## What you can open
 
@@ -70,7 +70,7 @@ The gear button in the header bar opens Settings in the same window. `Ctrl+,` do
 
 ### Quick add window
 
-The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to Next. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
+The quick add window is a small entry that opens without the main window. Use `Super+Shift+Q` from the GNOME desktop or overview. Press Enter to add to the bucket chosen in Settings, which starts as Next, or to Now while Now is empty. Press `Ctrl+Enter` to add the task as the current one. Press `Escape` to close it.
 
 All views use the same service and task file. A change in one view appears in the others.
 
@@ -231,6 +231,101 @@ Check the installed binary version with:
 queue-focus version
 ```
 
+## macOS
+
+On a Mac, Queue Focus is an app in the menu bar. It runs on macOS 14 or newer, on Apple silicon and Intel alike, and keeps its tasks and settings in the same files, in the same format, as on GNOME: the two share one engine.
+
+### Install on macOS
+
+1. Download `QueueFocus-<version>.dmg` and `QueueFocus-<version>.dmg.sha256` from the GitHub release.
+
+2. Check the download:
+
+   ```sh
+   shasum -a 256 -c QueueFocus-<version>.dmg.sha256
+   ```
+
+3. Open the disk image and drag Queue Focus to Applications.
+
+4. Open Queue Focus from Applications. The first time, macOS will not open it; see below.
+
+The app is not yet signed with a Developer ID or notarized by Apple, so macOS cannot vouch for it and blocks its first launch. Open it only if step 2 printed `OK`. The checksum shows that the file is the one published; it cannot show who published it. Then:
+
+- On macOS 15 or newer, after that first try, open System Settings › Privacy & Security. Under Security it says Queue Focus was blocked; click Open Anyway, and confirm.
+- On macOS 14, Control-click Queue Focus in Applications, choose Open, and click Open.
+
+macOS asks again for each new download. If it says the app is damaged, do not work around it: download it again and check the checksum.
+
+There is no automatic update yet. To update, quit Queue Focus and replace the app in Applications with the new one.
+
+### First run on macOS
+
+Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. While the timer is paused the title is dimmed, the time stops, and a `❚❚` leads the clock. The menu points at the right end of the title, the end that stays where it is when the title changes, so the menu does not move while it is open. The gear in the menu opens Settings, turns on Launch at Login, and quits.
+
+macOS may ask you to allow Launch at Login in System Settings › General › Login Items. Queue Focus asks to show notifications the first time it has one to show; without them, the menu opens instead. It needs no Accessibility permission.
+
+### The task in the centre of the menu bar
+
+macOS decides where a menu bar item sits: among the other icons, at the right. On a wide display that can be a long way from where you look. Turn on Task in the centre of the menu bar in Settings, and the title and its clock are drawn in the middle of the menu bar instead, where they stay still however long the title is. Click the title for the menu, which opens under it, and right-click it to pause, as with the item. The item stays among the icons as a dot in the tag's colour, and still opens the menu.
+
+The task goes back to the item wherever the centre cannot be used: on a display with a notch, in a full-screen space, in Mission Control, when the menu bar hides itself, and when the title would reach the dot. With more than one display the title is centred on the main one.
+
+Queue Focus cannot see other apps' menus or icons, so on a narrow or crowded menu bar the title can cover them. Keep the dot at the left end of the icons (Command-drag it there) and the title gives way before it reaches an icon. It cannot make way for an app with a long row of menus; where that happens, turn the setting off.
+
+### Shortcuts and automation on macOS
+
+Four shortcuts work whatever app is in front:
+
+1. `Control+Option+Q` shows or hides the Queue window.
+2. `Control+Option+Shift+Q` opens quick add.
+3. `Control+Option+B` opens the Board window.
+4. `Control+Option+D` completes the current task. A notification offers to undo it.
+
+Change them in Settings, under Global shortcuts. If a shortcut does nothing, another app may hold it: Rectangle, for one, uses `Control+Option+D`.
+
+In the Queue and Board windows the task keys are those of the GNOME app. `Command+1` and `Command+2` open the Queue and the Board, `Command+N` opens quick add, `Command+,` opens Settings, `Escape` and `Command+W` close a window, and `Command+Q` quits.
+
+There is no command line command. Links do what `queue-focus add` and `queue-focus show` do:
+
+```sh
+open "queuefocus://add?text=fix%20login%20%23w"
+open "queuefocus://add?text=ship%200.6&now=1"
+open "queuefocus://show?view=board"
+```
+
+`view` is `queue`, `board`, or `add`. No link completes a task, since any web page can open a link. A link can add one, and a task added while Now is empty becomes the current task, as with `now=1`. The Shortcuts app has Add a Task, Complete the Current Task, and Get the Current Task; to print the current task in a terminal, make a shortcut in Shortcuts with the Get the Current Task action, name it, say, What Now, and run `shortcuts run "What Now"`.
+
+### Data on macOS
+
+Tasks and settings are stored at:
+
+```text
+~/Library/Application Support/queue-focus/tasks.json
+~/Library/Application Support/queue-focus/settings.json
+```
+
+They are the files described under [Task data](#task-data) and [Settings data](#settings-data). The settings only a Mac has, the menu bar title's width and place and the global shortcuts, are kept in the defaults domain `org.queuefocus.QueueFocus`.
+
+To move your tasks between a Mac and a Linux machine, quit Queue Focus on both and copy the two files. Do not point two running copies at one synced folder: each writes whole files, so the last one to save wins.
+
+### Differences from GNOME
+
+1. The menu bar shows the title cut to a width you choose in Settings, since macOS hides menu bar items that do not fit. A right click pauses the timer. Settings can put the task in the centre of the menu bar instead.
+2. The menu is a fixed width; titles cut short show the whole title in a tooltip.
+3. The Queue, the Board, and Settings are separate windows, not views of one.
+4. The flash is drawn on the screen with the menu bar. With Reduce Motion it holds still for a second and a half.
+5. The display follows Increase Contrast, Reduce Transparency, and Differentiate Without Color.
+6. Completing from the shortcut shows a notification with Undo, or the menu when notifications are off.
+
+`docs/macos-port.md` lists every difference, section by section.
+
+### Uninstall on macOS
+
+1. Turn off Launch at Login in the menu's gear.
+2. Quit Queue Focus from the same gear.
+3. Delete Queue Focus from Applications.
+4. To remove your tasks and settings too, delete `~/Library/Application Support/queue-focus` and run `defaults delete org.queuefocus.QueueFocus`.
+
 ## Global shortcuts
 
 The GNOME extension owns four global shortcuts.
@@ -316,7 +411,7 @@ New extension code is only loaded when GNOME Shell starts. On Wayland that means
 
 ## Add tasks
 
-An entry adds to Next by default. Use markers anywhere in the text to set a tag or bucket.
+An entry adds to Next by default, or to the bucket chosen in Settings. While Now is empty it adds to Now instead, so the first task is the one you are doing. Use markers anywhere in the text to set a tag or bucket; a bucket marker wins over both.
 
 Task titles are limited to 256 characters. Longer titles and titles in older hand-edited task files are truncated to that limit; excessively large quick-add requests are rejected before parsing.
 
@@ -335,9 +430,9 @@ The accepted tag markers are:
 
 The accepted bucket markers are `@now`, `@next`, `@later`, and `@side`. Their short forms are `@n`, `@x`, `@l`, and `@s`.
 
-Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task.
+Recognised markers are removed from the title. Text that is not a valid marker stays in the title, so `#123` is kept. If more than one `#` or `@` marker is present, the last recognised marker of that kind wins. `!now` and a bare `!` select Now wherever they appear, and a leading `!` on the title does the same. A task added to Now becomes the current task. To keep a task out of an empty Now, give it a bucket, such as `@next`.
 
-In the main window, Enter adds to Next and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
+In the main window, Enter adds to the bucket chosen in Settings, which starts as Next, or to Now while Now is empty, and `Ctrl+Enter` adds the task as the current one. `Escape` clears a nonempty entry. Press it again to return focus to the task list. The entry's placeholder shows the marker syntax rather than the `Ctrl+Enter` shortcut, which still works.
 
 ## Use the app window
 
@@ -489,7 +584,7 @@ The service exports these methods:
 
 1. `GetState()` returns the same JSON snapshot as `queue-focus status`.
 
-2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence. A task added to `now` becomes the current task, as with `Promote`.
+2. `Add(text, bucket)` parses the add markers, creates a task, and returns its id. Valid bucket values are `now`, `next`, `later`, and `side`, with the short forms `n`, `x`, `l`, and `s`. An unknown or empty value uses Now while Now is empty, and otherwise the bucket chosen in Settings, which starts as Next. A bucket marker in the text takes precedence. A task added to `now` becomes the current task, as with `Promote`.
 
 3. `CompleteCurrent()` deletes the current task and returns its id and title. When Now is empty it returns `0` and an empty string.
 
@@ -515,7 +610,7 @@ The service exports these methods:
 
 14. `SetSettings(json)` takes a JSON object holding only the settings to change and returns them all. An unknown key or a value that cannot be used changes nothing and returns an error, so a rejected call never leaves half a change behind.
 
-The `Changed(json)` signal is emitted after a saved task change. The `SettingsChanged(json)` signal is emitted after a settings change, with the same JSON as `GetSettings`. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced.
+The `Changed(json)` signal is emitted after a saved task change. The `SettingsChanged(json)` signal is emitted after a settings change, with the same JSON as `GetSettings`. The `DurabilityWarning(message)` signal is emitted when the new task file was installed but its directory could not be synced. The `Stopping` signal is emitted just before the service quits because it was asked to, so the shell extension does not take the lost bus name for a crash and start it again.
 
 The `Flash(json)` signal asks the shell extension to draw one flash. Its JSON carries `style`, `intensity`, `palette`, `title`, and `timer`. The service resolves all five, so a shell that has only just connected still draws the right thing. `style` is one of `wash`, `wash2`, `edges`, `edgesSoft`, `topbar`, and `topbarBeam`; `palette` is `blue` or `orange`.
 
@@ -539,6 +634,17 @@ make test-extension
 make test-extension-dbus
 make test-extension-shell
 make test-ui
+make test-service
+make test-core
+make check-core
+make mac-core
+make test-mac-core
+make mac-app
+make test-mac-app
+make test-mac-ui
+make release-mac-dry-run
+make release-mac-unsigned
+make release-mac
 make deb
 make clean
 ```
@@ -564,9 +670,28 @@ make run
 
 The extension tests need Node.js. Connection tests drive owner changes, delayed replies, retries, and interrupted requests with a deterministic D-Bus and timer stand-in. Retry delays increase from 1.5 seconds to a 60-second cap and reset only once both task state and settings recover. The fast flash-overlay tests stub the GNOME toolkit and load the extension's own module through it. The tests check what the overlay builds: the layers each style needs, where they land on the screen, and that every path takes the flash back down again. They do not check how it looks.
 
+`make test-service` builds the app and runs its service on a private D-Bus and X display, with temporary task and settings files. It calls every D-Bus method and checks the replies, the error names and the signals, then drives `add`, `done`, `status` and `quit` from the command line. It also checks that the service refuses a malformed task file without changing it, starts with defaults over an unreadable settings file, reports a change it cannot save without keeping it, and writes the queue before it stops. A small preloaded library makes one directory sync fail, so the test also sees a change that commits with a durability warning. It waits for one real flash on a one-minute interval, so it takes a little over a minute. It needs `Xvfb`, `xvfb-run`, `dbus-run-session`, `gdbus`, and a C compiler.
+
 `make test-extension-dbus` additionally exercises the real GNOME D-Bus adapter on a private bus, without connecting to the desktop session. It needs `gjs` and `dbus-run-session`.
 
 `make test-extension-shell` runs the shipped extension in a disposable headless GNOME Shell with a fixture queue, private D-Bus, and temporary settings. It checks the actual quick-add entry through disconnect, menu rebuilding, a late reply, successful retry, and disable/re-enable. It then fills the fixture queue and drives the real actors: a virtual pointer press on the clock pill pauses the timer without opening the menu, the menu shows the focus card and the Side cards, done and undo work from the menu, promoting withdraws the undo offer and sends the replaced task to Next, and the gear opens Settings. Last it checks the widths with short, long, and impossibly long titles: long titles are whole and on one line in the panel and the menu, the menu grows with them, and at the limit the clock is still in the middle, Activities and the system menu keep their widths, and the menu stays on the monitor. An open menu keeps its width when its longest task is marked done, the next done button does not move, and closing the menu lets the width go. The run also fails if the shell logs an inconsistent size request, which is the kind of layout mistake that can end a session. Set `QF_SHELL_TEST_SHOTS` to a directory to keep PNG pictures of the menu from the run, and the shell's own log beside them. It needs a supported GNOME Shell with headless Wayland support and a working renderer. It does not load the installed extension or read your tasks.
+
+`make test-core` runs the tests of the engine and of `qf-ffi`, the layer the macOS app reaches it through. `make check-core` checks formatting and runs Clippy with warnings denied for those crates. Both work on Linux and on macOS, where the GTK app cannot be built.
+
+`make mac-core` builds the engine for the macOS app, on macOS: a universal static library for Apple silicon and Intel wrapped in an XCFramework, and the `QfCore` Swift module generated from that library, both inside the `macos/QfCore` Swift package. Neither is checked in, so run it again after a change to the Rust code. `make test-mac-core` builds them and runs the package's Swift tests, which drive the engine through the generated bindings. Both need Rust installed with rustup, with the `aarch64-apple-darwin` and `x86_64-apple-darwin` targets, and Xcode 26 or newer.
+
+`make mac-app` builds the macOS app in Debug for this Mac's architecture, into `target/xcode/Build/Products/Debug/Queue Focus.app`. `make test-mac-app` runs its unit tests, which drive the app's model against engines in temporary directories. `make test-mac-ui` runs its UI tests, which launch the app on a temporary data directory and click the real menu bar item and popover; they take over the pointer and the keyboard for a few minutes. To work in Xcode, open `macos/QueueFocus.xcodeproj` after `make mac-app` or `make mac-core` has run once: Xcode lists the generated engine files before its own build of them can run. After that, Xcode rebuilds the engine whenever the Rust changes. The tests run through `macos/QueueFocus.xctestplan`, which keeps no screenshots or screen recordings, since those would show whatever else is on the screen.
+
+`make release-mac` makes a release of the macOS app in `dist/`: a universal app signed with a Developer ID, notarized and stapled, in a signed, notarized and stapled disk image, with its checksum, its debug symbols, and a record of how it was built. It checks every step: the hardened runtime, the timestamp, the team, no entitlements, both architectures, the version, and Gatekeeper's verdict. It needs a clean tree tagged `v<version>`, the Developer ID Application certificate in the login keychain, `DEVELOPER_TEAM` set to its team id, and notary credentials: a profile saved with `xcrun notarytool store-credentials` in `NOTARY_PROFILE`, or an App Store Connect API key in `NOTARY_KEY`, `NOTARY_KEY_ID`, and `NOTARY_ISSUER`. It publishes nothing. Without a Developer ID, `make release-mac-unsigned` takes the same steps with an ad hoc signature and no notarization, from a clean tree at its tag as well; Gatekeeper rejects what it makes, and it checks that it does, and macOS blocks the app's first launch until it is allowed, as [Install on macOS](#install-on-macos) says. `make release-mac-dry-run` does the same from any tree, so it can run anywhere, and its files are not for publishing.
+
+A release goes:
+
+1. `make version`, then commit and tag `v<version>`. The tag carries the whole version; the files in `dist/` are named by the version without any `+` build metadata, the one Finder shows.
+2. `DEVELOPER_TEAM=<team id> NOTARY_PROFILE=<profile> make release-mac`, or, without a Developer ID, `make release-mac-unsigned`. An unsigned release says in its notes how to open the app.
+3. The checks a machine cannot make: open the disk image on another Mac or account and start the app from Applications; start it once on an Intel Mac or under Rosetta; try the four shortcuts, a notification and its Undo, Launch at Login, and the Shortcuts actions; see that Get Info shows the version.
+4. Push the commit and the tag, then `gh release create v<version> --verify-tag dist/QueueFocus-<app version>.dmg dist/QueueFocus-<app version>.dmg.sha256 dist/QueueFocus-<app version>.dSYM.zip`, with the names `ls dist` shows. `--verify-tag` stops `gh` from making its own tag on another commit when the tag is not on GitHub.
+
+The GitHub workflows run `make check`, `make test`, `make test-ui`, and `make test-service` on Linux, in an Ubuntu 26.04 container for GTK 4.16 and libadwaita 1.6, and the engine, Swift, and app tests on Apple silicon and on Intel, with a release dry run. The macOS UI tests run when the workflow is started by hand; `make test-extension-shell` needs a GNOME session, and runs by hand.
 
 `make clean` removes Cargo build output and the compiled GNOME schema in the source tree.
 
@@ -581,7 +706,14 @@ scripts/cargo build --release -p queue-focus
 
 ```text
 crates/qf-core
+crates/qf-ffi
 crates/queue-focus
+crates/uniffi-bindgen
+macos/QfCore
+macos/QueueFocus
+macos/QueueFocusTests
+macos/QueueFocusUITests
+macos/QueueFocus.xctestplan
 extension/queue-focus@queuefocus.org
 extension/test
 data
@@ -589,9 +721,17 @@ scripts
 Makefile
 ```
 
-`crates/qf-core` contains the task model, add parser, settings model, JSON store, and unit tests. It has no GTK dependency, and no clock or randomness of its own: the reminder's decisions are ordinary functions that the caller supplies the time and a random number to.
+`crates/qf-core` contains the task model, add parser, settings, the reminder's schedule, the JSON store, and the engine that ties them together and saves every change. The engine's methods are the D Bus interface's. The core has no GTK dependency. The reminder has no clock or randomness of its own: the caller supplies the time, the local time of day, and a random number, so its decisions are ordinary functions with ordinary tests.
 
-`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, state handling, the reminder's schedule, and app styles. The reminder clock owns quiet rules, deadlines, preview behavior, and event creation. Its private runtime adapter provides a single task/settings/time snapshot per decision, randomness, and timer callbacks; tests exercise complete reminder sequences through those callbacks. The settings view reads the hold reason and countdown together.
+`crates/queue-focus` contains the GTK and libadwaita app, D Bus service, command line commands, and app styles. One engine serves the whole process. The app tells the windows and the bus what each request changed, and ticks the engine once a second with GLib's clock and randomness, which writes changed settings and sends any flash that is due. The settings view reads the hold reason and countdown together.
+
+`crates/qf-ffi` exposes the engine to Swift through UniFFI. It only converts types and holds the problems the app reports, so each request is one engine method.
+
+`crates/uniffi-bindgen` builds the UniFFI Swift generator at the version `qf-ffi` uses, so it needs no separate install.
+
+`macos/QfCore` is the Swift package holding the engine for Swift. `make mac-core` fills in its XCFramework and its generated Swift; its tests are checked in.
+
+`macos/QueueFocus` is the macOS app: a menu bar item with the current task, its popover, and the windows. It compiles the engine's generated Swift into itself and links the engine's static library, which `make mac-core` also leaves in `macos/QfCore/lib` with its C module in `macos/QfCore/include`. `macos/QueueFocus.xcodeproj` builds it; `macos/QueueFocusTests` and `macos/QueueFocusUITests` are its unit and UI tests. Its icon, `AppIcon.icon`, is the GNOME icon's three bars as an Icon Composer document: Xcode makes from it the Liquid Glass icon of macOS 26 and later and a flat one for earlier versions.
 
 `extension/queue-focus@queuefocus.org` contains the GNOME Shell extension, the flash overlay it draws, its GSettings schema, metadata, and styles.
 
@@ -601,7 +741,9 @@ Makefile
 
 `data` contains the desktop entry, system D Bus service file, and icons.
 
-`scripts` contains the Cargo wrapper, local installer, setup helper, version command, and integration tests.
+`scripts` contains the Cargo wrapper, local installer, setup helper, version command, macOS core build, macOS release, and integration tests.
+
+`.github/workflows` holds the Linux and macOS workflows.
 
 `Makefile` provides the supported build, test, version, install, and package commands.
 
@@ -651,6 +793,8 @@ queue-focus-setup keys
 ```
 
 Set a different key with `queue-focus-setup key`.
+
+On a Mac, another app may hold the shortcut: Rectangle, for one, uses `Control+Option+D`. Choose another in Queue Focus's Settings, under Global shortcuts. `Command+1` and `Command+2` in the Queue and Board windows are taken first by any system shortcut set to them in System Settings › Keyboard › Keyboard Shortcuts.
 
 ### The service refuses to start
 

@@ -6,14 +6,12 @@
 //! card holding Side and Next, and a Later shelf pinned to the bottom. Now holds
 //! the one current task, which lives in the banner, so it is never a list.
 
-use crate::flash::SharedFlash;
-use crate::settings::SharedSettings;
-use crate::state::{SharedState, UpdateOutcome};
+use crate::service::SharedService;
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
 use qf_core::{
-    Bucket, FlashColor, Intensity, Settings, Store, Tag, Task, Theme, INTERVAL_MAX, INTERVAL_MIN,
-    MAX_TITLE_CHARS,
+    long_elapsed, Bucket, EngineError, FlashColor, Intensity, Outcome, Settings, Store, Tag, Task,
+    Theme, INTERVAL_MAX, INTERVAL_MIN, MAX_TITLE_CHARS,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -193,9 +191,7 @@ struct Section {
 
 pub struct Ui {
     app: adw::Application,
-    state: SharedState,
-    settings: SharedSettings,
-    flash: SharedFlash,
+    service: SharedService,
     win: RefCell<Option<adw::ApplicationWindow>>,
     stack: RefCell<Option<adw::ViewStack>>,
     entry: RefCell<Option<gtk::Entry>>,
@@ -240,17 +236,10 @@ pub struct Ui {
 }
 
 impl Ui {
-    pub fn new(
-        app: adw::Application,
-        state: SharedState,
-        settings: SharedSettings,
-        flash: SharedFlash,
-    ) -> Rc<Ui> {
+    pub fn new(app: adw::Application, service: SharedService) -> Rc<Ui> {
         let ui = Rc::new(Ui {
             app,
-            state: state.clone(),
-            settings: settings.clone(),
-            flash,
+            service: service.clone(),
             win: RefCell::new(None),
             stack: RefCell::new(None),
             entry: RefCell::new(None),
@@ -277,7 +266,7 @@ impl Ui {
             quick: RefCell::new(None),
         });
         let weak = Rc::downgrade(&ui);
-        state.on_change(move || {
+        service.on_change(move || {
             if let Some(ui) = weak.upgrade() {
                 ui.rebuild();
             }
@@ -285,14 +274,14 @@ impl Ui {
         // A setting changed here, or from another client over D-Bus: put the
         // new values into the controls and act on the ones that show.
         let weak = Rc::downgrade(&ui);
-        settings.on_change(move || {
+        service.on_settings_change(move || {
             if let Some(ui) = weak.upgrade() {
-                apply_theme(ui.settings.get().theme);
+                apply_theme(ui.service.settings().theme);
                 ui.sync_settings();
             }
         });
         let weak = Rc::downgrade(&ui);
-        settings.on_problem(move |message| {
+        service.on_problem(move |message| {
             if let Some(ui) = weak.upgrade() {
                 // The service usually runs with no window at all, and the
                 // store only complains once per outage. Keep the message until
@@ -363,23 +352,24 @@ impl Ui {
     }
 
     /// Run a persisted mutation asked for from this window and report on it.
-    fn update<R>(&self, f: impl FnOnce(&mut Store) -> R) -> Result<R, std::io::Error> {
-        self.report(self.state.update(f))
+    fn update<R>(&self, f: impl FnOnce(&mut Store) -> R) -> Result<R, EngineError> {
+        self.report(self.service.update(f))
     }
 
     /// Mark a task done. Only completing the current task pulls the head of
-    /// Next; either can be undone, from the top bar.
+    /// Next; either can be undone, from the top bar. A row that has already
+    /// gone is not worth an alert.
     fn complete(&self, id: u64) -> bool {
-        self.report(self.state.complete(id)).unwrap_or(false)
+        match self.service.request(|e| e.complete(id)) {
+            Err(EngineError::InvalidArgument(_)) => false,
+            result => self.report(result).is_ok(),
+        }
     }
 
     /// A failure to commit is an error the user must see; a change that
     /// committed but may not be crash-safe is a warning. Both go to the
     /// window the user is looking at, and always to stderr.
-    fn report<R>(
-        &self,
-        result: Result<UpdateOutcome<R>, std::io::Error>,
-    ) -> Result<R, std::io::Error> {
+    fn report<R>(&self, result: Result<Outcome<R>, EngineError>) -> Result<R, EngineError> {
         match result {
             Ok(outcome) => {
                 let (value, warning) = outcome.into_parts();
@@ -452,8 +442,7 @@ impl Ui {
             .build();
         let this = self.clone();
         entry.connect_activate(move |e| {
-            let default = this.settings.get().default_bucket;
-            if this.submit(e, default) {
+            if this.submit(e, None) {
                 this.hide();
             }
         });
@@ -466,7 +455,7 @@ impl Ui {
             match key {
                 gdk::Key::Escape => this.hide(),
                 gdk::Key::Return | gdk::Key::KP_Enter if is_ctrl(mods) => {
-                    if this.submit(&e, Bucket::Now) {
+                    if this.submit(&e, Some(Bucket::Now)) {
                         this.hide();
                     }
                 }
@@ -552,8 +541,7 @@ impl Ui {
         entry_bar.append(&entry);
         let this = self.clone();
         entry.connect_activate(move |e| {
-            let default = this.settings.get().default_bucket;
-            this.submit(e, default);
+            this.submit(e, None);
         });
         let this = self.clone();
         let keys = gtk::EventControllerKey::new();
@@ -563,7 +551,7 @@ impl Ui {
             };
             match key {
                 gdk::Key::Return | gdk::Key::KP_Enter if is_ctrl(mods) => {
-                    this.submit(&e, Bucket::Now);
+                    this.submit(&e, Some(Bucket::Now));
                 }
                 gdk::Key::Escape if !e.text().is_empty() => e.set_text(""),
                 gdk::Key::Escape => this.focus_first_row(),
@@ -621,10 +609,15 @@ impl Ui {
         win
     }
 
-    /// Add the entry's text (quick-add syntax) to `default` bucket; clears on success.
-    fn submit(&self, e: &gtk::Entry, default: Bucket) -> bool {
+    /// Add the entry's text (quick-add syntax): to `bucket`, or with none,
+    /// where the engine puts such a task. Clears the entry on success. Text
+    /// with no title in it adds nothing, and is no error to show.
+    fn submit(&self, e: &gtk::Entry, bucket: Option<Bucket>) -> bool {
         let text = e.text();
-        let added = matches!(self.update(|s| s.quick_add(&text, default)), Ok(Some(_)));
+        let added = match self.service.request(|engine| engine.add(&text, bucket)) {
+            Err(EngineError::InvalidArgument(_)) => false,
+            result => self.report(result).is_ok(),
+        };
         if added {
             e.set_text("");
         }
@@ -1032,7 +1025,7 @@ impl Ui {
         self.choice_row(
             &card,
             "⏎ adds to",
-            Some("Ctrl+⏎ always goes to Now; @markers still win."),
+            Some("To Now while Now is empty. Ctrl+⏎ always goes to Now; @markers still win."),
             &BUCKET_ORDER.map(|b| (b, b.label())),
             |s| s.default_bucket,
             |s, v| s.default_bucket = v,
@@ -1184,7 +1177,7 @@ impl Ui {
                 return;
             }
             let minutes = s.value().round().max(0.0) as u32;
-            this.settings.update(|s| s.interval_min = minutes);
+            this.service.update_settings(|s| s.interval_min = minutes);
         });
 
         let (scale, value) = (scale.clone(), value.clone());
@@ -1221,7 +1214,7 @@ impl Ui {
                 return;
             }
             let on = s.is_active();
-            this.settings.update(|settings| set(settings, on));
+            this.service.update_settings(|settings| set(settings, on));
         });
 
         let switch = switch.clone();
@@ -1268,7 +1261,8 @@ impl Ui {
                 if !b.is_active() || this.syncing.get() {
                     return;
                 }
-                this.settings.update(|settings| set(settings, value));
+                this.service
+                    .update_settings(|settings| set(settings, value));
             });
             buttons.push((value, button));
         }
@@ -1308,7 +1302,7 @@ impl Ui {
         clickable(&button);
         let this = self.clone();
         button.connect_clicked(move |_| {
-            if !this.flash.flash_now() {
+            if !this.service.flash_now() {
                 this.alert(
                     "Nothing to flash",
                     "The reminder shows the current task, and Now is empty.",
@@ -1386,11 +1380,11 @@ impl Ui {
                     return;
                 }
                 match qf_core::TimeOfDay::parse(&e.text()) {
-                    Some(time) => this.settings.update(|s| set(s, time)),
-                    None => e.set_text(&get(&this.settings.get()).to_string()),
+                    Some(time) => this.service.update_settings(|s| set(s, time)),
+                    None => e.set_text(&get(&this.service.settings()).to_string()),
                 }
                 // A time the store rounded or refused must not stay on screen.
-                e.set_text(&get(&this.settings.get()).to_string());
+                e.set_text(&get(&this.service.settings()).to_string());
             }
         };
         let activate = commit.clone();
@@ -1412,7 +1406,7 @@ impl Ui {
                 return glib::Propagation::Proceed;
             };
             if key == gdk::Key::Escape {
-                let stored = restore(&this.settings.get()).to_string();
+                let stored = restore(&this.service.settings()).to_string();
                 if entry.text() == stored {
                     this.hide();
                 } else {
@@ -1435,7 +1429,7 @@ impl Ui {
         // uses: putting a value into a control makes the control tell us about
         // it, and that handler would otherwise write to a store this call is
         // still reading.
-        let settings = self.settings.get().clone();
+        let settings = self.service.settings().clone();
         let was_syncing = self.syncing.replace(true);
         f(&settings);
         self.syncing.set(was_syncing);
@@ -1448,7 +1442,7 @@ impl Ui {
         if self.syncing.replace(true) {
             return;
         }
-        let settings = self.settings.get().clone();
+        let settings = self.service.settings().clone();
         // Cloned out of the borrow: a control may be built while syncing.
         let sync: Vec<SettingsSync> = self.settings_sync.borrow().clone();
         for f in sync {
@@ -1463,9 +1457,9 @@ impl Ui {
         let Some((label, button)) = self.countdown.borrow().clone() else {
             return;
         };
-        let status = self.flash.status();
+        let status = self.service.flash_status();
         match status.remaining {
-            Some(secs) => label.set_label(&format!("Next flash in {}", fmt_elapsed(secs))),
+            Some(secs) => label.set_label(&format!("Next flash in {}", long_elapsed(secs))),
             None => label.set_label(&format!("No flash: {}", status.hold.reason())),
         }
         // Nothing in Now is the one hold a flash cannot be asked for either.
@@ -1586,7 +1580,7 @@ impl Ui {
             .and_then(|r| row_id(&r))
             .and_then(|id| Focus::capture(&self.visible_ids(), id));
 
-        let store = self.state.store();
+        let store = self.service.store();
         // A rename outlives neither its task nor a mutation that removes it.
         if self
             .renaming
@@ -2088,7 +2082,7 @@ impl Ui {
 
     fn begin_rename(self: &Rc<Self>, id: u64) {
         let Some((title, bucket)) = self
-            .state
+            .service
             .store()
             .get(id)
             .map(|t| (t.title.clone(), t.bucket))
@@ -2181,11 +2175,11 @@ impl Ui {
         }
         let now = qf_core::unix_now();
         let elapsed = self
-            .state
+            .service
             .store()
             .current()
             .and_then(|t| t.elapsed_secs(now))
-            .map(fmt_elapsed)
+            .map(long_elapsed)
             .unwrap_or_default();
         for label in timers.iter() {
             label.set_label(&elapsed);
@@ -2344,7 +2338,7 @@ impl Ui {
     }
 
     fn current_id(&self) -> Option<u64> {
-        self.state.store().current().map(|t| t.id)
+        self.service.store().current().map(|t| t.id)
     }
 
     fn current_page(&self) -> Page {
@@ -2752,15 +2746,6 @@ fn drop_target(
     target
 }
 
-fn fmt_elapsed(secs: u64) -> String {
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2822,14 +2807,5 @@ mod tests {
                 "{class} is shared"
             );
         }
-    }
-
-    #[test]
-    fn elapsed_format() {
-        assert_eq!(fmt_elapsed(0), "00:00");
-        assert_eq!(fmt_elapsed(65), "01:05");
-        assert_eq!(fmt_elapsed(762), "12:42");
-        assert_eq!(fmt_elapsed(3600), "1:00:00");
-        assert_eq!(fmt_elapsed(3725), "1:02:05");
     }
 }

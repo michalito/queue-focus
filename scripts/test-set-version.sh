@@ -20,12 +20,35 @@ fail() {
 }
 
 mkdir -p "$FIXTURE/scripts" \
-  "$FIXTURE/extension/queue-focus@queuefocus.org"
+  "$FIXTURE/extension/queue-focus@queuefocus.org" \
+  "$FIXTURE/macos/QueueFocus.xcodeproj"
 cp "$SOURCE_ROOT/Cargo.toml" "$SOURCE_ROOT/Cargo.lock" "$FIXTURE/"
+# Every workspace member's manifest: the version command reads their names.
+(cd "$SOURCE_ROOT" && find crates -mindepth 2 -maxdepth 2 -name Cargo.toml) |
+  while read -r manifest; do
+    mkdir -p "$FIXTURE/$(dirname "$manifest")"
+    cp "$SOURCE_ROOT/$manifest" "$FIXTURE/$manifest"
+  done
 cp "$SOURCE_ROOT/Makefile" "$FIXTURE/"
 cp "$SOURCE_ROOT/scripts/set-version" "$FIXTURE/scripts/"
 cp "$SOURCE_ROOT/extension/queue-focus@queuefocus.org/metadata.json" \
   "$FIXTURE/extension/queue-focus@queuefocus.org/"
+readonly PROJECT="macos/QueueFocus.xcodeproj/project.pbxproj"
+cp "$SOURCE_ROOT/$PROJECT" "$FIXTURE/$PROJECT"
+
+# The macOS app's version and build in the project: twice each, for Debug and
+# Release, and the same both times.
+expect_xcode() {
+  python3 - "$FIXTURE/$PROJECT" "$1" "$2" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+for name, expected in (("MARKETING_VERSION", sys.argv[2]), ("CURRENT_PROJECT_VERSION", sys.argv[3])):
+    found = re.findall(rf"^\s*{name} = (.*);$", text, re.MULTILINE)
+    assert found == [expected, expected], (name, found, expected)
+PY
+}
 chmod 0755 "$FIXTURE/scripts/set-version"
 cat >"$FIXTURE/scripts/install-local.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -73,17 +96,19 @@ metadata = json.loads(
     (root / "extension/queue-focus@queuefocus.org/metadata.json").read_text()
 )
 assert cargo["workspace"]["package"]["version"] == expected_version
+# Every package of the workspace moves together; nothing else does.
 workspace = {
     package["name"]: package["version"]
     for package in lock["package"]
-    if package["name"] in {"qf-core", "queue-focus"} and "source" not in package
+    if "source" not in package
 }
 assert workspace == {
-    "qf-core": expected_version,
-    "queue-focus": expected_version,
-}
+    name: expected_version
+    for name in ("qf-core", "qf-ffi", "queue-focus", "uniffi-bindgen")
+}, workspace
 assert metadata["version"] == expected_extension_version
 PY
+expect_xcode "$first_version" "$first_extension_version"
 
 # Reapplying the same semantic version is idempotent and does not consume a new
 # GNOME extension revision.
@@ -92,6 +117,7 @@ grep -Fq "version files already up to date" <<<"$same_output" || \
   fail "same-version update was not idempotent"
 
 snapshot() {
+  cp "$FIXTURE/$PROJECT" "$TEST_ROOT/project.pbxproj.snapshot"
   cp "$FIXTURE/Cargo.toml" "$TEST_ROOT/Cargo.toml.snapshot"
   cp "$FIXTURE/Cargo.lock" "$TEST_ROOT/Cargo.lock.snapshot"
   cp "$FIXTURE/extension/queue-focus@queuefocus.org/metadata.json" \
@@ -99,6 +125,8 @@ snapshot() {
 }
 
 assert_snapshot() {
+  cmp -s "$FIXTURE/$PROJECT" "$TEST_ROOT/project.pbxproj.snapshot" || \
+    fail "the Xcode project changed after a rejected version"
   cmp -s "$FIXTURE/Cargo.toml" "$TEST_ROOT/Cargo.toml.snapshot" || \
     fail "Cargo.toml changed after a rejected version"
   cmp -s "$FIXTURE/Cargo.lock" "$TEST_ROOT/Cargo.lock.snapshot" || \
@@ -156,15 +184,37 @@ version = sys.argv[2]
 extension_version = int(sys.argv[3])
 assert tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["version"] == version
 lock = tomllib.loads((root / "Cargo.lock").read_text())
-assert all(
-    package["version"] == version
-    for package in lock["package"]
-    if package["name"] in {"qf-core", "queue-focus"} and "source" not in package
-)
+local = [package for package in lock["package"] if "source" not in package]
+assert len(local) == 4 and all(package["version"] == version for package in local), local
 metadata = json.loads(
     (root / "extension/queue-focus@queuefocus.org/metadata.json").read_text()
 )
 assert metadata["version"] == extension_version
 PY
+# The app keeps the prerelease, quoted as the project needs, and drops the
+# build metadata, which has no order.
+expect_xcode "\"988.$$.0-rc.1\"" "$second_extension_version"
+
+# A project whose version lines are not the two expected is refused, and
+# nothing changes.
+for broken in missing tripled; do
+  cp "$FIXTURE/$PROJECT" "$TEST_ROOT/project.pbxproj.good"
+  python3 - "$FIXTURE/$PROJECT" "$broken" <<'PY'
+import re
+import sys
+
+path, broken = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+line = re.search(r"^\s*MARKETING_VERSION = .*;\n", text, re.MULTILINE).group(0)
+text = text.replace(line, "", 1) if broken == "missing" else text.replace(line, line * 2, 1)
+open(path, "w", encoding="utf-8").write(text)
+PY
+  snapshot
+  if "$FIXTURE/scripts/set-version" "989.$$.0" >/dev/null 2>&1; then
+    fail "a project with its version line $broken unexpectedly succeeded"
+  fi
+  assert_snapshot
+  cp "$TEST_ROOT/project.pbxproj.good" "$FIXTURE/$PROJECT"
+done
 
 echo "versioning integration tests passed"

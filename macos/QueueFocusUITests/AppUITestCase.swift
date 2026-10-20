@@ -1,0 +1,208 @@
+import XCTest
+
+/// What a test needs of the Mac it runs on, beyond the app. A test that
+/// depends on more than the app says so here, so a build machine knows what
+/// it can hold the app to.
+enum TestEnvironment {
+    /// The accessibility audit's findings, and the noise filtered from them,
+    /// are those of the macOS they were written on; another version words
+    /// them differently, so there they are reported rather than failed.
+    static var isAuditBaseline: Bool {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 27
+    }
+
+    /// Reading text off the screen has the system build its model, in the
+    /// test runner's caches; on a disk nearly full macOS empties those
+    /// caches, and ends the runner to do it. A test that reads the screen
+    /// is skipped there, not killed. The 20 GB is what was seen, no rule of
+    /// the system's: 13 GB free was too little, 23 enough. Free as it is
+    /// now, not as it would be with the caches emptied, which is the
+    /// trouble.
+    static var hasRoomToReadTheScreen: Bool {
+        let values = try? URL(fileURLWithPath: NSTemporaryDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        guard let free = values?.volumeAvailableCapacity else { return true }
+        return free >= 20_000_000_000
+    }
+}
+
+/// The app launched on a data directory of the test's own, and what the
+/// tests need to drive it.
+@MainActor
+class AppUITestCase: XCTestCase {
+    /// The global shortcuts, moved for the tests to keys nothing else uses
+    /// (Control-Option-Shift with J, L, K and U), so a test never presses the
+    /// real ones, which another copy of the app, or another app, may hold.
+    /// They go in the launch arguments, so the user's settings stay as they
+    /// are. (Function keys typed by XCTest never match a hot key.)
+    static let testShortcuts: [(name: String, key: XCUIKeyboardKey, carbonKeyCode: Int)] = [
+        ("toggleQueue", XCUIKeyboardKey(rawValue: "j"), 38),
+        ("quickAdd", XCUIKeyboardKey(rawValue: "l"), 37),
+        ("showBoard", XCUIKeyboardKey(rawValue: "k"), 40),
+        ("completeCurrent", XCUIKeyboardKey(rawValue: "u"), 32),
+    ]
+    static let testShortcutModifiers: XCUIElement.KeyModifierFlags = [.control, .option, .shift]
+    private static let carbonModifiers = 4096 + 2048 + 512
+
+    /// Press the global shortcut for `name`, as moved for the tests.
+    func pressShortcut(_ name: String) {
+        guard let shortcut = Self.testShortcuts.first(where: { $0.name == name }) else {
+            return XCTFail("no shortcut \(name)")
+        }
+        app.typeKey(shortcut.key, modifierFlags: Self.testShortcutModifiers)
+    }
+
+    var app: XCUIApplication!
+    var dataHome: URL!
+
+    /// Launch the app on a fresh data directory, removed after the test,
+    /// holding `tasks` if given: `(title, bucket)` pairs, and `settings`.
+    func launch(with tasks: [(String, String)] = [], settings: [String: Any] = [:], arguments: [String] = [],
+                restoringState: Bool = false) throws {
+        continueAfterFailure = false
+        let dataHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qf-ui-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dataHome, withIntermediateDirectories: true)
+        let dir = dataHome.appendingPathComponent("queue-focus")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if !settings.isEmpty {
+            try JSONSerialization.data(withJSONObject: settings).write(to: dir.appendingPathComponent("settings.json"))
+        }
+        if !tasks.isEmpty {
+            let file: [String: Any] = [
+                "next_id": tasks.count + 1,
+                "tasks": tasks.enumerated().map { index, task in
+                    // "title #w" or "title #p" seeds a tag, as the add field's
+                    // markers do.
+                    var entry: [String: Any] = ["id": index + 1, "title": task.0, "bucket": task.1, "created_at": 0]
+                    for (marker, tag) in [(" #w", "work"), (" #p", "personal")] where task.0.hasSuffix(marker) {
+                        entry["title"] = String(task.0.dropLast(marker.count))
+                        entry["tag"] = tag
+                    }
+                    return entry
+                },
+            ]
+            try JSONSerialization.data(withJSONObject: file).write(to: dir.appendingPathComponent("tasks.json"))
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["XDG_DATA_HOME"] = dataHome.path
+        app.launchArguments += ["-allowSecondInstance", "YES"] + arguments
+        // The Mac's own settings are the user's, in the defaults the app
+        // under test shares: a test says what it needs of them.
+        for (key, value) in [("-menuBarTitleCentred", "NO"), ("-menuBarTitleWidth", "200")] where !arguments.contains(key) {
+            app.launchArguments += [key, value]
+        }
+        // Asking for notifications would put the system's prompt on screen.
+        app.launchArguments += ["-notifications", "off"]
+        for shortcut in Self.testShortcuts {
+            // A string in the arguments' plist syntax, holding the JSON
+            // KeyboardShortcuts stores.
+            let json = #"{\"carbonKeyCode\":\#(shortcut.carbonKeyCode),\"carbonModifiers\":\#(Self.carbonModifiers)}"#
+            app.launchArguments += ["-KeyboardShortcuts_\(shortcut.name)", "\"\(json)\""]
+        }
+        if restoringState {
+            // As for someone who keeps windows when quitting an app.
+            app.launchArguments += ["-ApplePersistenceIgnoreState", "NO", "-NSQuitAlwaysKeepsWindows", "YES"]
+        }
+        app.launch()
+        addTeardownBlock { @MainActor in
+            app.terminate()
+            try? FileManager.default.removeItem(at: dataHome)
+        }
+        self.app = app
+        self.dataHome = dataHome
+        XCTAssertTrue(statusItem.waitForExistence(timeout: 10), "the status item appears")
+        waitForTheMenuBarToSettle()
+        XCTAssertEqual(openWindows.count, 0, "a menu bar app opens no window at launch: \(app.windows.debugDescription)")
+    }
+
+    /// The app's windows, but for the label in the centre of the menu bar,
+    /// which is a panel of its own and no window to the user.
+    var openWindows: XCUIElementQuery {
+        app.windows.matching(NSPredicate(format: "identifier != %@", "centre-title-panel"))
+    }
+
+    /// The menu bar lays its items out again as an app's item comes or goes,
+    /// such as the one of the copy a test before this one quit; a click while
+    /// it does lands where the item was. Wait until it stays put.
+    func waitForTheMenuBarToSettle() {
+        var last = statusItem.frame
+        var still = 0
+        for _ in 0..<20 where still < 2 {
+            Thread.sleep(forTimeInterval: 0.25)
+            let frame = statusItem.frame
+            still = frame == last ? still + 1 : 0
+            last = frame
+        }
+    }
+
+    /// The saved queue, as the engine wrote it.
+    func storedTitles() throws -> [String] {
+        let data = try Data(contentsOf: dataHome.appendingPathComponent("queue-focus/tasks.json"))
+        let file = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let tasks = file?["tasks"] as? [[String: Any]] ?? []
+        return tasks.compactMap { $0["title"] as? String }
+    }
+
+    var statusItem: XCUIElement {
+        app.statusItems["queue-focus-status-item"]
+    }
+
+    var statusTitle: String {
+        statusItem.title.isEmpty ? (statusItem.value as? String ?? "") : statusItem.title
+    }
+
+    func openPopover() -> XCUIElement {
+        statusItem.click()
+        let field = app.textFields["add-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "the popover opens with its add field")
+        return field
+    }
+
+    func waitForTitle(containing text: String, file: StaticString = #filePath, line: UInt = #line) {
+        let predicate = NSPredicate { _, _ in MainActor.assumeIsolated { self.statusTitle.contains(text) } }
+        let found = XCTNSPredicateExpectation(predicate: predicate, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [found], timeout: 5), .completed,
+                       "status title \(statusTitle.debugDescription) never contained \(text)", file: file, line: line)
+    }
+
+    /// The saved tasks as (id, title, bucket), in the file's order.
+    func storedTasks() throws -> [(id: UInt64, title: String, bucket: String)] {
+        let data = try Data(contentsOf: dataHome.appendingPathComponent("queue-focus/tasks.json"))
+        let file = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let tasks = file?["tasks"] as? [[String: Any]] ?? []
+        return tasks.compactMap { task in
+            guard let id = task["id"] as? Int, let title = task["title"] as? String,
+                  let bucket = task["bucket"] as? String else { return nil }
+            return (UInt64(id), title, bucket)
+        }
+    }
+
+    /// The saved titles in one bucket, in order.
+    func stored(_ bucket: String) throws -> [String] {
+        try storedTasks().filter { $0.bucket == bucket }.map(\.title)
+    }
+
+    /// Wait until the saved queue satisfies `check`.
+    func waitForStore(_ description: String, file: StaticString = #filePath, line: UInt = #line,
+                      _ check: @escaping @MainActor () throws -> Bool) {
+        let predicate = NSPredicate { _, _ in MainActor.assumeIsolated { (try? check()) ?? false } }
+        let met = XCTNSPredicateExpectation(predicate: predicate, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [met], timeout: 5), .completed, description, file: file, line: line)
+    }
+
+    /// Click a control once it is there: a popover's contents can arrive a
+    /// moment after the popover does.
+    func click(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element.waitForExistence(timeout: 5), "\(element) is there to click", file: file, line: line)
+        element.click()
+    }
+
+    /// Open a window from the popover.
+    func openWindow(_ button: String, title: String) -> XCUIElement {
+        _ = openPopover()
+        click(app.buttons[button])
+        let window = app.windows[title]
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "\(title) opens")
+        return window
+    }
+}

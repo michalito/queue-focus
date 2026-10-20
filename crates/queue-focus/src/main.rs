@@ -1,12 +1,11 @@
 mod app;
 mod dbus;
-mod flash;
-mod settings;
-mod state;
+mod service;
 mod ui;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
+use qf_core::{EngineError, Outcome};
 use std::rc::Rc;
 use ui::Page;
 
@@ -45,18 +44,17 @@ fn main() -> glib::ExitCode {
             ensure_service();
         }
     }
-    let state = match state::State::load() {
-        Ok(state) => state,
+    let (service, warning) = match service::Service::open() {
+        Ok(opened) => opened,
         Err(e) => {
             eprintln!("queue-focus: {e}; refusing to start to protect the task file");
             return glib::ExitCode::from(1);
         }
     };
-    let (settings, warning) = settings::SettingsStore::load();
     if let Some(warning) = warning.as_deref() {
         eprintln!("queue-focus: {warning}");
     }
-    let app = app::QfApplication::new(APP_ID, state, settings);
+    let app = app::QfApplication::new(APP_ID, service);
     if let Some(warning) = warning {
         app.ui()
             .queue_settings_problem("Could not load your settings", &warning);
@@ -64,8 +62,9 @@ fn main() -> glib::ExitCode {
 
     app.connect_startup(|app| {
         ui::load_css();
-        ui::apply_theme(app.settings().get().theme);
-        settings::persist_on_main_loop(&app.settings());
+        ui::apply_theme(app.service().settings().theme);
+        // Writes changed settings and keeps the reminder's schedule.
+        app.service().run_on_main_loop();
         gtk::Window::set_default_icon_name(APP_ID);
         // Keep running with no windows so the top-bar extension always has a service.
         std::mem::forget(app.hold());
@@ -73,12 +72,12 @@ fn main() -> glib::ExitCode {
 
     // Settings changes are written a moment after they are made; the moment
     // the process ends is the one time that wait cannot be afforded.
-    app.connect_shutdown(|app| app.settings().flush());
+    app.connect_shutdown(|app| app.service().flush());
 
     app.connect_activate(|app| app.ui().show(Page::Queue));
 
     app.connect_command_line(|app, cmd| {
-        glib::ExitCode::from(run_command(app, cmd, &app.ui(), &app.state()) as u8)
+        glib::ExitCode::from(run_command(app, cmd, &app.ui(), &app.service()) as u8)
     });
 
     if !restart {
@@ -199,7 +198,7 @@ fn run_command(
     app: &app::QfApplication,
     cmd: &gio::ApplicationCommandLine,
     ui: &Rc<ui::Ui>,
-    state: &state::SharedState,
+    service: &service::SharedService,
 ) -> i32 {
     let args: Vec<String> = cmd
         .arguments()
@@ -224,7 +223,7 @@ fn run_command(
         Some("version") | Some("--version") => {
             cmd.print_literal(concat!("queue-focus ", env!("CARGO_PKG_VERSION"), "\n"));
         }
-        Some("done") => match command_update(cmd, state.complete_current()) {
+        Some("done") => match command_update(cmd, service.complete_current()) {
             Ok(Some(t)) => cmd.print_literal(&format!("done: {}\n", t.title)),
             Ok(None) => cmd.print_literal("nothing in Now\n"),
             Err(e) => {
@@ -233,7 +232,7 @@ fn run_command(
             }
         },
         Some("status") => {
-            let json = state.store().snapshot_json();
+            let json = service.engine().state_json();
             cmd.print_literal(&format!("{json}\n"));
         }
         Some("add") => {
@@ -241,10 +240,9 @@ fn run_command(
             if text.trim().is_empty() {
                 ui.quick_add_dialog();
             } else {
-                let default = app.settings().get().default_bucket;
-                match command_update(cmd, state.update(|s| s.quick_add(&text, default))) {
-                    Ok(Some(id)) => cmd.print_literal(&format!("added #{id}\n")),
-                    Ok(None) => {
+                match command_update(cmd, service.request(|e| e.add(&text, None))) {
+                    Ok(id) => cmd.print_literal(&format!("added #{id}\n")),
+                    Err(EngineError::InvalidArgument(_)) => {
                         cmd.printerr_literal("nothing to add\n");
                         return 1;
                     }
@@ -266,8 +264,8 @@ fn run_command(
 
 fn command_update<R>(
     cmd: &gio::ApplicationCommandLine,
-    result: std::io::Result<state::UpdateOutcome<R>>,
-) -> std::io::Result<R> {
+    result: Result<Outcome<R>, EngineError>,
+) -> Result<R, EngineError> {
     result.map(|outcome| {
         let (value, warning) = outcome.into_parts();
         if let Some(warning) = warning {

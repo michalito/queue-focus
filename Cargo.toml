@@ -1,13 +1,18 @@
 [workspace]
 resolver = "2"
-members = ["crates/qf-core", "crates/queue-focus"]
+members = ["crates/qf-core", "crates/qf-ffi", "crates/queue-focus", "crates/uniffi-bindgen"]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.92"
 license = "MIT"
 authors = ["Michael Sinoplis"]
+
+[workspace.dependencies]
+# One version for the library's scaffolding and the bindings generated from
+# it: they must agree, or the Swift side refuses the library at load.
+uniffi = "0.32"
 
 [profile.release]
 opt-level = 3
@@ -15,3 +20,12 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# The macOS app's static library. A panic unwinds so UniFFI can hand it to
+# Swift as an error with its message; symbols and line tables stay so Xcode
+# can symbolicate Rust frames, and the app's own link strips them.
+[profile.release-ffi]
+inherits = "release"
+panic = "unwind"
+strip = false
+debug = "line-tables-only"

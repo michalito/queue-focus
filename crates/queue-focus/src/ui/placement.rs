@@ -78,24 +78,8 @@ impl Destination {
         match self {
             Self::Current => store.promote(id),
             Self::Append(bucket) => store.move_to(id, bucket, None),
-            Self::List { bucket, before } => {
-                let index = if let Some(anchor) = before {
-                    // A stale row must not turn into a different destination.
-                    if !Placement::new(store).rows(bucket).contains(&anchor) {
-                        return false;
-                    }
-                    if anchor == id {
-                        return store.get(id).is_some();
-                    }
-                    store
-                        .in_bucket(bucket)
-                        .filter(|t| t.id != id)
-                        .position(|t| t.id == anchor)
-                } else {
-                    None
-                };
-                store.move_to(id, bucket, index)
-            }
+            // A stale row is refused rather than turned into another place.
+            Self::List { bucket, before } => store.move_before(id, bucket, before),
         }
     }
 }
@@ -103,9 +87,6 @@ impl Destination {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The buckets that are shown as lists, and so can be dragged within.
-    const LISTED: [Bucket; 3] = [Bucket::Side, Bucket::Next, Bucket::Later];
 
     fn in_bucket(store: &Store, bucket: Bucket) -> Vec<u64> {
         store.in_bucket(bucket).map(|t| t.id).collect()
@@ -172,48 +153,6 @@ mod tests {
         assert!(drop_before(&mut store, current, Bucket::Next, Some(next)));
         assert!(store.current().is_none());
         assert_eq!(in_bucket(&store, Bucket::Next), [current, next]);
-    }
-
-    /// Every drag a user can start, dropped everywhere it can land in a list.
-    #[test]
-    fn anchored_moves_cover_every_source_and_destination_pair() {
-        let fixture = || {
-            let mut store = Store::new();
-            for bucket in LISTED {
-                for _ in 0..3 {
-                    store.add("task", bucket, None);
-                }
-            }
-            store.add("current", Bucket::Now, None);
-            store
-        };
-        for source in ORDER {
-            for destination in LISTED {
-                let rows = Placement::new(&fixture()).rows(source).len();
-                // Now offers the one task in the hero.
-                assert_eq!(rows, if source == Bucket::Now { 1 } else { 3 });
-                for source_index in 0..rows {
-                    for target_index in 0..=3 {
-                        let mut store = fixture();
-                        let p = Placement::new(&store);
-                        let id = p.rows(source)[source_index];
-                        let anchor = p.rows(destination).get(target_index).copied();
-                        let mut expected = in_bucket(&store, destination);
-                        if anchor != Some(id) {
-                            expected.retain(|candidate| *candidate != id);
-                            let index = anchor
-                                .and_then(|a| expected.iter().position(|candidate| *candidate == a))
-                                .unwrap_or(expected.len());
-                            expected.insert(index, id);
-                        }
-                        assert!(drop_before(&mut store, id, destination, anchor));
-                        assert_eq!(in_bucket(&store, destination), expected);
-                        assert_eq!(store.tasks.len(), 10);
-                        assert!(store.in_bucket(Bucket::Now).count() <= 1);
-                    }
-                }
-            }
-        }
     }
 
     #[test]
