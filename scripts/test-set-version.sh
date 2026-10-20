@@ -104,7 +104,7 @@ workspace = {
 }
 assert workspace == {
     name: expected_version
-    for name in ("qf-core", "qf-ffi", "queue-focus", "uniffi-bindgen")
+    for name in ("qf-core", "qf-ffi", "qf-sync", "qf-sync-server", "queue-focus", "uniffi-bindgen")
 }, workspace
 assert metadata["version"] == expected_extension_version
 PY
@@ -185,7 +185,7 @@ extension_version = int(sys.argv[3])
 assert tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["version"] == version
 lock = tomllib.loads((root / "Cargo.lock").read_text())
 local = [package for package in lock["package"] if "source" not in package]
-assert len(local) == 4 and all(package["version"] == version for package in local), local
+assert len(local) == 6 and all(package["version"] == version for package in local), local
 metadata = json.loads(
     (root / "extension/queue-focus@queuefocus.org/metadata.json").read_text()
 )

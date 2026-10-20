@@ -306,7 +306,24 @@ Tasks and settings are stored at:
 
 They are the files described under [Task data](#task-data) and [Settings data](#settings-data). The settings only a Mac has, the menu bar title's width and place and the global shortcuts, are kept in the defaults domain `org.queuefocus.QueueFocus`.
 
-To move your tasks between a Mac and a Linux machine, quit Queue Focus on both and copy the two files. Do not point two running copies at one synced folder: each writes whole files, so the last one to save wins.
+For **standalone installations only**, quit Queue Focus on both machines before
+copying these two files. Never copy a sync installation's `tasks.json`, credentials
+or journal onto another device, and never point running apps at a shared folder.
+
+### Sync between macOS and Ubuntu
+
+Both apps can share queues, **Now and its timer** through a private service on
+Dokploy or another Docker host. Install sync-capable builds on both machines,
+deploy the [sync server](docs/sync-server.md), enroll each device separately,
+then follow [setup and recovery](docs/sync-client.md). Setup previews the shared
+queue and retains a local backup. The first device initializes Now and the
+timer; importing the second device appends its tasks, moving its old Now to Next.
+
+Queue edits can be captured offline. Now, pause/resume and shared undo need a
+connection and show confirmation status. Settings includes rejected changes,
+copy/export controls and explicit dismissal. Appearance and reminder settings
+stay local. Linux installs the `qf-sync` setup utility; macOS bundles it at
+`Queue Focus.app/Contents/Helpers/qf-sync`.
 
 ### Differences from GNOME
 

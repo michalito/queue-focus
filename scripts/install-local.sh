@@ -160,10 +160,12 @@ fi
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly BUILD_BIN="$ROOT/target/release/queue-focus"
+readonly SYNC_BUILD_BIN="$ROOT/target/release/qf-sync"
 readonly DATA_HOME="$(data_home)"
 readonly BIN_DIR="$HOME/.local/bin"
 readonly INSTALLED_BIN="$BIN_DIR/queue-focus"
 readonly SETUP_BIN="$BIN_DIR/queue-focus-setup"
+readonly SYNC_BIN="$BIN_DIR/qf-sync"
 readonly EXTENSION_PARENT="$DATA_HOME/gnome-shell/extensions"
 readonly EXT_DIR="$EXTENSION_PARENT/$UUID"
 readonly SERVICE_DIR="$DATA_HOME/dbus-1/services"
@@ -195,7 +197,7 @@ if [ "${1:-}" = "--uninstall" ]; then
   fi
 
   rm -rf -- "$EXT_DIR"
-  rm -f -- "$SVC" "$DESKTOP" "$INSTALLED_BIN" "$SETUP_BIN" \
+  rm -f -- "$SVC" "$DESKTOP" "$INSTALLED_BIN" "$SETUP_BIN" "$SYNC_BIN" \
     "$ICONS/scalable/apps/$APPID.svg" \
     "$ICONS/symbolic/apps/$APPID-symbolic.svg"
   refresh_caches
@@ -246,8 +248,9 @@ if ! PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" cargo --version >/dev/null 2>&
 fi
 
 cd "$ROOT"
-"$ROOT/scripts/cargo" build --locked --release -p queue-focus
+"$ROOT/scripts/cargo" build --locked --release -p queue-focus -p qf-sync
 [ -x "$BUILD_BIN" ] || die "the release build did not produce $BUILD_BIN"
+[ -x "$SYNC_BUILD_BIN" ] || die "the release build did not produce $SYNC_BUILD_BIN"
 if ! LD_BIND_NOW=1 "$BUILD_BIN" version >/dev/null; then
   die "the built application cannot run with the installed GTK/libadwaita runtime"
 fi
@@ -288,6 +291,7 @@ install -d -m 0755 "$BIN_DIR" "$EXTENSION_PARENT" "$SERVICE_DIR" "$APPLICATION_D
   "$ICONS/scalable/apps" "$ICONS/symbolic/apps"
 
 atomic_copy "$BUILD_BIN" "$INSTALLED_BIN" 0755
+atomic_copy "$SYNC_BUILD_BIN" "$SYNC_BIN" 0755
 atomic_copy "$ROOT/scripts/queue-focus-setup" "$SETUP_BIN" 0755
 atomic_copy "$STAGED_SERVICE" "$SVC" 0644
 atomic_copy "$STAGED_DESKTOP" "$DESKTOP" 0644

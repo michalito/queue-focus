@@ -21,6 +21,8 @@ const xml = `<node><interface name="org.queuefocus.QueueFocus1">
 <method name="Promote"><arg type="t" direction="in"/></method>
 <method name="Show"><arg type="s" direction="in"/></method>
 <signal name="Changed"><arg type="s"/></signal>
+<signal name="SyncStatusChanged"><arg type="s"/></signal>
+<signal name="CommandSettled"><arg type="s"/></signal>
 <signal name="SettingsChanged"><arg type="s"/></signal>
 <signal name="Stopping"/>
 </interface></node>`;
@@ -115,6 +117,7 @@ class Queue {
         const list = bucket => this.tasks.filter(t => t.bucket === bucket);
         return JSON.stringify({
             current: this.current(), now: list('now'), side: list('side'), next: list('next'), later: list('later'),
+            sync: this.sync,
         });
     }
 }
@@ -228,6 +231,14 @@ export default class ShellTest extends Extension {
         const [x, y] = actor.get_transformed_position();
         const [w, h] = actor.get_transformed_size();
         this._device.notify_absolute_motion(GLib.get_monotonic_time(), x + w / 2, y + h / 2);
+        // Headless Mutter may constrain the first virtual motion while the
+        // device is initialized. Wait for its real position before clicking.
+        await this._wait(() => {
+            const [px, py] = global.get_pointer();
+            if (Math.abs(px - (x + w / 2)) <= 1 && Math.abs(py - (y + h / 2)) <= 1) return true;
+            this._device.notify_absolute_motion(GLib.get_monotonic_time(), x + w / 2, y + h / 2);
+            return false;
+        }, 'virtual pointer reaches the actor');
         if (!click) return;
         this._device.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
         this._device.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
@@ -266,6 +277,9 @@ export default class ShellTest extends Extension {
         // Start the actual extension only after the fixture owns its bus name.
         global.settings.set_strv('enabled-extensions', [this.uuid, UUID]);
         await this._wait(() => Main.panel.statusArea[UUID]?._state, 'indicator reads fixture');
+        // A fresh Shell can start in Overview, which captures panel presses.
+        Main.overview.hide();
+        await this._wait(() => !Main.overview.visible, 'desktop is ready for pointer interaction');
         const indicator = Main.panel.statusArea[UUID];
         indicator.menu.open();
         await this._wait(() => indicator._entry, 'quick-add entry exists');
@@ -319,13 +333,83 @@ export default class ShellTest extends Extension {
 
         await this._menu(Main.panel.statusArea[UUID]);
         await this._widths(Main.panel.statusArea[UUID]);
+        await this._syncDrafts(Main.panel.statusArea[UUID]);
         await this._flashes(Main.panel.statusArea[UUID]);
+    }
+
+    /** Native Pending errors and persistent receipts against real shell actors. */
+    async _syncDrafts(indicator) {
+        indicator._dropUndo();
+        const sync = (command = null, result = null) => {
+            this._queue.sync = {state: 'online', pending: command ? 1 : 0,
+                focus_command: command, recovery_items: 0, undo: null, last_focus_settlement: result};
+            this._fixture.emit_signal('SyncStatusChanged',
+                new GLib.Variant('(s)', [JSON.stringify(this._queue.sync)]));
+        };
+        sync();
+        this._changed();
+        indicator.menu.open();
+        await this._wait(() => indicator._state?.sync, 'sync status reaches indicator');
+        let entry = indicator._entry;
+        entry.set_text('!pending shared draft');
+        const submit = async command => {
+            const count = this._requests.length;
+            entry.clutter_text.emit('activate');
+            await this._wait(() => this._requests.length === count + 1, 'shared add reaches service');
+            this._requests[count].invocation.return_dbus_error('org.queuefocus.Error.Pending',
+                `Sent, waiting for confirmation (${command})`);
+            sync(command);
+            await this._wait(() => indicator._pendingFocusAdd?.command === command, 'pending receipt ID retained');
+            check(!entry.clutter_text.editable, 'pending draft is disabled');
+            entry.clutter_text.emit('activate');
+            check(this._requests.length === count + 1, 'pending draft cannot be resubmitted');
+        };
+        const first = '11111111-1111-4111-8111-111111111111';
+        await submit(first);
+        indicator.menu.close();
+        indicator.menu.open();
+        check(indicator._entry === entry && entry.get_text() === '!pending shared draft',
+            'pending draft survives closing and reopening');
+        // Deliberately omit CommandSettled: durable status is sufficient.
+        sync(null, {command: first, outcome: {status: 'rejected', reason: {code: 'conflict'}}});
+        await this._wait(() => !indicator._quickAddPending, 'rejection releases pending draft');
+        entry = indicator._entry;
+        check(entry.get_text() === '!pending shared draft' && entry.clutter_text.editable,
+            'rejected draft is retained and editable');
+        const second = '22222222-2222-4222-8222-222222222222';
+        await submit(second);
+        entry.set_text('!changed while pending');
+        sync(null, {command: second, outcome: {status: 'applied', revision: 2}});
+        await this._wait(() => !indicator._quickAddPending, 'accepted receipt settles');
+        entry = indicator._entry;
+        check(entry.get_text() === '!changed while pending' && indicator.menu.isOpen,
+            'acceptance never clears different text');
+        const third = '33333333-3333-4333-8333-333333333333';
+        await submit(third);
+        sync(null, {command: third, outcome: {status: 'applied', revision: 3}});
+        await this._wait(() => !indicator.menu.isOpen, 'matching accepted draft closes menu');
+        indicator.menu.open();
+        check(indicator._entry.get_text() === '', 'matching accepted draft clears');
+        const queued = this._queue.add('queued completion has no undo', 'side');
+        this._changed();
+        await this._wait(() => indicator._state.side.some(task => task.id === queued), 'shared queued task appears');
+        indicator.completeTask(indicator._state.side.find(task => task.id === queued));
+        await this._wait(() => !indicator._state.side.some(task => task.id === queued), 'queued task completes');
+        check(!indicator._undo, 'shared queued completion never offers local undo');
+        this._queue.sync = undefined;
+        this._changed();
+        await this._wait(() => !indicator._state.sync, 'fixture returns to standalone');
+        indicator.menu.close();
     }
 
     /** Real compositor actors and timers, across both animation preferences. */
     async _flashes(indicator) {
         const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         const original = settings.get_boolean('enable-animations');
+        const forceAnimations = global.force_animations;
+        // Software-rendered headless Shell inhibits animations independently
+        // of the user preference. Exercise both branches of the real overlay.
+        global.force_animations = true;
         try {
             for (const animations of [false, true]) {
                 settings.set_boolean('enable-animations', animations);
@@ -342,6 +426,7 @@ export default class ShellTest extends Extension {
         } finally {
             indicator._flash.clear();
             settings.set_boolean('enable-animations', original);
+            global.force_animations = forceAnimations;
         }
     }
 

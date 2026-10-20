@@ -98,7 +98,7 @@ private func now() -> UInt64 {
     #expect(try !engine.setSettings(settings: settings))
     #expect(engine.flush().isEmpty)
     #expect(try dir.read("settings.json").contains("\"quiet_from\": \"22:30\""))
-    #expect(try dir.engine().settings() == settings)
+    #expect(throws: QfError.self) { try dir.engine() } // A running engine owns the directory.
 
     settings.quietTo = TimeOfDay(hour: 24, minute: 0)
     #expect(throws: QfError.self) { try engine.setSettings(settings: settings) }

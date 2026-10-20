@@ -172,9 +172,13 @@ private struct WindowAddField: View {
     var focus: FocusState<FocusTarget?>.Binding
     let firstStop: () -> UInt64?
     @State private var draft = ""
+    @State private var pendingAdd: PendingAdd?
 
     var body: some View {
         TextField("Add…  !now  #w #p  @later @side", text: $draft)
+                .disabled(pendingAdd != nil)
+                .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
+                .onAppear { reconcilePendingAdd() }
             .textFieldStyle(.roundedBorder)
             .focused(focus, equals: .add)
             .onSubmit {
@@ -202,7 +206,19 @@ private struct WindowAddField: View {
     }
 
     private func submit(asCurrent: Bool) {
+        guard pendingAdd == nil else { return }
         if model.add(draft, asCurrent: asCurrent) {
+            draft = ""
+        } else if let command = model.lastRequestPending {
+            pendingAdd = PendingAdd(command: command, text: draft)
+            reconcilePendingAdd()
+        }
+    }
+
+    private func reconcilePendingAdd() {
+        guard let pending = pendingAdd, let result = model.focusResults[pending.command] else { return }
+        pendingAdd = nil
+        if result.applied && draft == pending.text {
             draft = ""
         }
     }

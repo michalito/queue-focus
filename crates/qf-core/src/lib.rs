@@ -15,6 +15,7 @@ mod reminder;
 mod settings;
 mod settings_store;
 mod store;
+pub mod sync;
 mod tasks;
 
 pub use elapsed::{long_elapsed, short_elapsed};

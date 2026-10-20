@@ -156,8 +156,10 @@ LD_PRELOAD="$TEST_ROOT/fail-dir-sync.so" QF_FAIL_DIR_SYNC="$FAIL_DIR_SYNC" \
 service_pid=$!
 trap 'kill "$service_pid" 2>/dev/null || true' EXIT
 wait_for 10 "the service owns its name" service_running
-grep -q "using the default settings" "$TEST_ROOT/service.log" ||
-  fail "an unreadable settings file was not reported"
+# Name acquisition precedes primary-instance startup. The exported object
+# queues early calls while the engine opens; wait for startup's diagnostic too.
+wait_for 10 "an unreadable settings file is reported" \
+  grep -q "using the default settings" "$TEST_ROOT/service.log"
 gdbus monitor --session --dest "$NAME" --object-path "$OBJECT" >"$SIGNALS" 2>&1 &
 monitor_pid=$!
 trap 'kill "$service_pid" "$monitor_pid" 2>/dev/null || true' EXIT

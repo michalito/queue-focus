@@ -13,7 +13,10 @@ const xml = `<node><interface name="org.queuefocus.QueueFocus1">
 <method name="GetSettings"><arg type="s" direction="out"/></method>
 <method name="CompleteCurrent"><arg type="t" direction="out"/><arg type="s" direction="out"/></method>
 <method name="Promote"><arg type="t" direction="in"/></method>
+<method name="TogglePause"><arg type="b" direction="out"/></method>
 <signal name="Changed"><arg type="s"/></signal>
+<signal name="SyncStatusChanged"><arg type="s"/></signal>
+<signal name="CommandSettled"><arg type="s"/></signal>
 <signal name="Stopping"/>
 </interface></node>`;
 let completion;
@@ -25,6 +28,10 @@ const exported = Gio.DBusExportedObject.wrapJSObject(xml, {
     GetSettings() { return JSON.stringify({show_timer: false}); },
     PromoteAsync(_args, invocation) {
         invocation.return_dbus_error('org.freedesktop.DBus.Error.NoReply', 'Reply lost');
+    },
+    TogglePauseAsync(_args, invocation) {
+        invocation.return_dbus_error('org.queuefocus.Error.Pending',
+            'Sent, waiting for confirmation (11111111-1111-4111-8111-111111111111)');
     },
     CompleteCurrentAsync(_args, invocation) {
         ++completionCalls;
@@ -61,11 +68,15 @@ async function run() {
     await own();
     const states = [];
     const settings = [];
+    const statuses = [];
+    const settlements = [];
     connection = connectQueue({
         state: value => states.push(value),
         settings: value => settings.push(value),
         flash: () => {},
         warning: () => {},
+        status: value => statuses.push(value),
+        settled: value => settlements.push(value),
     });
     await waitFor(() => states.at(-1)?.current?.title === 'initial' && settings.length);
     check(settings.at(-1).show_timer === false, 'settings round trip');
@@ -97,6 +108,17 @@ async function run() {
     connection.request('Promote', [1], (_result, error) => { failure = error; });
     await waitFor(() => failure !== undefined);
     check(failure.message.includes('result could not be confirmed'), 'uncertain reply explained');
+    let pending;
+    connection.request('TogglePause', [], (_result, error) => { pending = error; });
+    await waitFor(() => pending !== undefined);
+    check(pending.pendingCommand === '11111111-1111-4111-8111-111111111111', 'typed Pending keeps command ID');
+    const sync = {state: 'online', pending: 1, focus_command: pending.pendingCommand};
+    exported.emit_signal('SyncStatusChanged', new GLib.Variant('(s)', [JSON.stringify(sync)]));
+    const receipt = {command: pending.pendingCommand, outcome: {status: 'applied', revision: 2}};
+    exported.emit_signal('CommandSettled', new GLib.Variant('(s)', [JSON.stringify(receipt)]));
+    await waitFor(() => statuses.length && settlements.length);
+    check(statuses.at(-1).focus_command === pending.pendingCommand, 'status signal round trip');
+    check(settlements.at(-1).command === pending.pendingCommand, 'settlement signal round trip');
     connection.destroy();
     connection.destroy();
     print('D-Bus adapter integration passed: snapshots, signals, owner loss, stale reply, cleanup');

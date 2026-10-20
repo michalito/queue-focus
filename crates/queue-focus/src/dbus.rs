@@ -49,6 +49,8 @@ const XML: &str = r#"
       <arg type="s" name="settings" direction="out"/>
     </method>
     <signal name="Changed"><arg type="s" name="json"/></signal>
+    <signal name="SyncStatusChanged"><arg type="s" name="json"/></signal>
+    <signal name="CommandSettled"><arg type="s" name="json"/></signal>
     <signal name="SettingsChanged"><arg type="s" name="json"/></signal>
     <signal name="Flash"><arg type="s" name="json"/></signal>
     <signal name="DurabilityWarning"><arg type="s" name="message"/></signal>
@@ -64,21 +66,41 @@ const ERR_PERSISTENCE: &str = "org.queuefocus.Error.Persistence";
 /// Called from `QfApplication::dbus_register`, i.e. before the bus name is owned.
 pub fn export(
     conn: &gio::DBusConnection,
-    service: &SharedService,
-    ui: &Rc<Ui>,
+    app: &crate::app::QfApplication,
 ) -> Result<gio::RegistrationId, glib::Error> {
     let node = gio::DBusNodeInfo::for_xml(XML)?;
     let iface = node.lookup_interface(IFACE).expect("interface in XML");
-
-    let svc = service.clone();
-    let ui = ui.clone();
-    let id = conn
-        .register_object(PATH, &iface)
+    let app = app.downgrade();
+    conn.register_object(PATH, &iface)
         .method_call(move |conn, _sender, _path, _iface, method, params, inv| {
-            handle(&conn, &svc, &ui, method, params, inv);
+            if let Some(app) = app.upgrade() {
+                app.dispatch(conn, method, params, inv);
+            } else {
+                inv.return_dbus_error(ERR_PERSISTENCE, "Queue Focus is stopping.");
+            }
         })
-        .build()?;
+        .build()
+}
 
+/// Attach listeners only after primary-instance startup acquired the data lock.
+pub fn attach(conn: &gio::DBusConnection, service: &SharedService) {
+    let svc = Rc::downgrade(service);
+    let changed_conn = conn.clone();
+    service.on_status_change(move || {
+        if let Some(svc) = svc.upgrade() {
+            let json = serde_json::to_string(&svc.engine().sync_status()).expect("sync status");
+            emit(
+                &changed_conn,
+                "SyncStatusChanged",
+                Some(&(json,).to_variant()),
+            );
+        }
+    });
+    let settled_conn = conn.clone();
+    service.on_settled(move |settlement| {
+        let json = serde_json::to_string(settlement).expect("settlement");
+        emit(&settled_conn, "CommandSettled", Some(&(json,).to_variant()));
+    });
     let svc = Rc::downgrade(service);
     let changed_conn = conn.clone();
     service.on_change(move || {
@@ -105,7 +127,6 @@ pub fn export(
     service.set_flash_emitter(move |event| {
         emit(&flash_conn, "Flash", Some(&(event.to_json(),).to_variant()));
     });
-    Ok(id)
 }
 
 /// Tell clients the service is exiting because it was asked to, so the
@@ -130,7 +151,7 @@ fn emit(conn: &gio::DBusConnection, signal: &str, args: Option<&glib::Variant>) 
 
 /// Each method is one engine request. Only the argument parsing and the reply
 /// are D-Bus's.
-fn handle(
+pub(crate) fn handle(
     conn: &gio::DBusConnection,
     service: &SharedService,
     ui: &Rc<Ui>,
@@ -280,6 +301,7 @@ fn reply_error(inv: gio::DBusMethodInvocation, error: EngineError) {
     let name = match error {
         EngineError::InvalidArgument(_) => ERR_INVALID_ARGS,
         EngineError::Persistence(_) => ERR_PERSISTENCE,
+        EngineError::Pending { .. } => "org.queuefocus.Error.Pending",
     };
     inv.return_dbus_error(name, &error.to_string());
 }

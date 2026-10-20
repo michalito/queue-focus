@@ -14,7 +14,7 @@ help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
 
 build: $(SCHEMAS)/gschemas.compiled   ## release build (no install)
-	$(CARGO) build --locked --release -p queue-focus
+	$(CARGO) build --locked --release -p queue-focus -p qf-sync
 
 $(SCHEMAS)/gschemas.compiled: $(SCHEMAS)/*.gschema.xml
 	glib-compile-schemas --strict $(SCHEMAS)
@@ -38,6 +38,7 @@ test-ui:         ## real GTK placement/drop/focus test (needs Xvfb)
 
 test-service:    ## the real service over D-Bus and the command line (needs Xvfb)
 	scripts/test-service.sh
+	scripts/test-sync-service.sh
 
 test-install:    ## isolated local installer integration tests
 	scripts/test-install-local.sh
@@ -137,7 +138,8 @@ update:          ## pull latest code, prompt for VERSION, and reinstall
 	$(MAKE) install
 
 deb: $(SCHEMAS)/gschemas.compiled     ## build target/debian/queue-focus_*.deb (needs cargo-deb)
-	$(CARGO) deb -p queue-focus
+	$(CARGO) build --locked --release -p queue-focus -p qf-sync
+	$(CARGO) deb -p queue-focus --no-build
 
 run: build       ## run the service in the foreground (debug)
 	target/release/queue-focus service

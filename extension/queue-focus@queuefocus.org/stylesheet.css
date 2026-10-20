@@ -177,3 +177,9 @@
   font-weight: 600;
   font-feature-settings: "tnum";
 }
+.qf-sync-status {
+  font-size: 10pt;
+  max-width: 260px;
+  color: #b8b8bd;
+  padding: 6px 0;
+}

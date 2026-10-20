@@ -12,4 +12,5 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 qf-core = { path = "../qf-core" }
+qf-sync = { path = "../qf-sync" }
 uniffi = { workspace = true }

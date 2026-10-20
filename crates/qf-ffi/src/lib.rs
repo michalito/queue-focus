@@ -26,14 +26,16 @@ pub enum QfError {
     Persistence { message: String },
     /// The arguments could not be used, or named a task that is not there.
     InvalidArgument { message: String },
+    /// Persisted shared focus command; success is reported after settlement.
+    Pending { command_id: String, message: String },
 }
 
 impl fmt::Display for QfError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QfError::Persistence { message } | QfError::InvalidArgument { message } => {
-                f.write_str(message)
-            }
+            QfError::Persistence { message }
+            | QfError::InvalidArgument { message }
+            | QfError::Pending { message, .. } => f.write_str(message),
         }
     }
 }
@@ -46,6 +48,10 @@ impl From<EngineError> for QfError {
         match error {
             EngineError::InvalidArgument(_) => QfError::InvalidArgument { message },
             EngineError::Persistence(_) => QfError::Persistence { message },
+            EngineError::Pending { command_id } => QfError::Pending {
+                command_id: command_id.to_string(),
+                message,
+            },
         }
     }
 }
@@ -62,12 +68,14 @@ pub struct QueueEngine {
     /// Where the files are, to start again from them after a panic.
     dir: PathBuf,
     state: Mutex<State>,
+    host: Mutex<qf_sync::Host>,
     open_warning: Option<String>,
 }
 
 struct State {
     engine: Engine,
     problems: Vec<String>,
+    settlements: Vec<CommandSettlement>,
     /// The engine started again from the files, so a settings problem said
     /// before no longer holds: the next tick says its outage is over.
     settings_outage_over: bool,
@@ -84,11 +92,10 @@ impl State {
     fn recover(&mut self, dir: &Path, just_panicked: bool) {
         // Settings that cannot be read would come back as the defaults, and
         // the next change would write those over the user's own.
-        let reopened =
-            Engine::open(dir, qf_core::unix_now).and_then(|(engine, warning)| match warning {
-                None => Ok(engine),
-                Some(warning) => Err(std::io::Error::other(warning)),
-            });
+        let reopened = qf_sync::open_engine(dir).and_then(|(engine, warning)| match warning {
+            None => Ok(engine),
+            Some(warning) => Err(std::io::Error::other(warning)),
+        });
         match reopened {
             Ok(engine) => {
                 self.engine = engine;
@@ -153,8 +160,36 @@ impl QueueEngine {
         };
         if panicked || state.damaged.is_some() {
             state.recover(&self.dir, panicked);
+            if state.damaged.is_none() {
+                self.host().engine_reopened();
+            }
         }
         state
+    }
+
+    fn host(&self) -> MutexGuard<'_, qf_sync::Host> {
+        self.host.lock().unwrap_or_else(|poisoned| {
+            self.host.clear_poison();
+            let mut host = poisoned.into_inner();
+            host.engine_reopened();
+            host
+        })
+    }
+
+    fn pump(&self, state: &mut State, wake: bool) {
+        let mut host = self.host();
+        if wake {
+            host.wake();
+        }
+        let update = host.pump(&mut state.engine);
+        if let Some(warning) = update.warning {
+            state.report(warning);
+        }
+        if let Some(settlement) = update.settlement {
+            if state.settlements.len() < MAX_PENDING_PROBLEMS {
+                state.settlements.push(CommandSettlement::from(&settlement));
+            }
+        }
     }
 
     fn change<T>(
@@ -164,6 +199,7 @@ impl QueueEngine {
         let mut state = self.lock();
         state.usable()?;
         let result = f(&mut state.engine);
+        self.pump(&mut state, true);
         state.settle(result)
     }
 }
@@ -177,8 +213,8 @@ impl QueueEngine {
     #[uniffi::constructor]
     pub fn new(dir: String) -> Result<Arc<Self>, QfError> {
         let dir = PathBuf::from(dir);
-        let (engine, open_warning) =
-            Engine::open(&dir, qf_core::unix_now).map_err(|e| QfError::Persistence {
+        let (host, engine, open_warning) =
+            qf_sync::Host::open(&dir).map_err(|e| QfError::Persistence {
                 message: e.to_string(),
             })?;
         Ok(Arc::new(QueueEngine {
@@ -186,9 +222,11 @@ impl QueueEngine {
             state: Mutex::new(State {
                 engine,
                 problems: Vec::new(),
+                settlements: Vec::new(),
                 settings_outage_over: false,
                 damaged: None,
             }),
+            host: Mutex::new(host),
             open_warning,
         }))
     }
@@ -202,11 +240,47 @@ impl QueueEngine {
 
     pub fn snapshot(&self) -> QueueSnapshot {
         let state = self.lock();
-        QueueSnapshot::of(state.engine.store(), state.engine.revision())
+        QueueSnapshot::of(
+            state.engine.store(),
+            state.engine.revision(),
+            state.engine.sync_status(),
+        )
     }
 
     pub fn settings(&self) -> QueueSettings {
         QueueSettings::from(self.lock().engine.settings())
+    }
+
+    pub fn sync_recovery(&self) -> Vec<SyncRecoveryChange> {
+        self.lock()
+            .engine
+            .sync_recovery()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    pub fn dismiss_sync_recovery(&self, command: String) -> Result<(), QfError> {
+        self.change(|e| e.dismiss_sync_recovery(&command))
+    }
+
+    pub fn retry_sync(&self) -> Result<(), QfError> {
+        let mut state = self.lock();
+        state.usable()?;
+        let result = self.host().retry_sync(&mut state.engine);
+        self.pump(&mut state, false);
+        state.settle(result)
+    }
+
+    pub fn export_sync(&self, destination: String) -> Result<(), QfError> {
+        let mut state = self.lock();
+        state.usable()?;
+        self.pump(&mut state, false);
+        self.host()
+            .export(&state.engine, Path::new(&destination))
+            .map_err(|error| QfError::Persistence {
+                message: error.to_string(),
+            })
     }
 
     /// When the next flash comes, or why it will not.
@@ -324,6 +398,7 @@ impl QueueEngine {
         let mut settings_problem = None;
         let mut settings_outage_ended = std::mem::take(&mut state.settings_outage_over);
         if state.damaged.is_none() {
+            self.pump(&mut state, false);
             let tick = state.engine.tick(now, local_time, random);
             settings_problem = tick.settings_problem;
             settings_outage_ended |= tick.settings_outage_ended;
@@ -334,6 +409,7 @@ impl QueueEngine {
             problems: std::mem::take(&mut state.problems),
             settings_problem,
             settings_outage_ended,
+            settlements: std::mem::take(&mut state.settlements),
         })
     }
 

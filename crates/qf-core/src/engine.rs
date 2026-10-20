@@ -5,9 +5,12 @@
 //! onto D-Bus, the macOS app onto Swift. The host calls `tick` once a second
 //! and owns the reminder's clock, calendar and entropy.
 
+mod shared;
+
 use crate::reminder::Reminder;
 use crate::settings_store::SettingsStore;
 use crate::store::{SETTINGS_FILE, TASKS_FILE};
+use crate::sync::{Client, Id, SyncStatus};
 use crate::tasks::Tasks;
 use crate::{
     Bucket, FlashEvent, FlashStatus, Outcome, Settings, Store, Tag, Task, TimeOfDay,
@@ -25,13 +28,15 @@ pub const MAX_SETTINGS_PATCH_BYTES: usize = 4 * 1024;
 /// How much of an unknown setting's name an error repeats.
 const MAX_ERROR_FIELD_CHARS: usize = 64;
 
-/// Why a request was refused. Nothing changed in either case.
+/// A refused request, or a durable command awaiting server confirmation.
 #[derive(Debug)]
 pub enum EngineError {
     /// The arguments could not be used, or named a task that is not there.
     InvalidArgument(String),
     /// The change could not be saved, so it was rolled back.
     Persistence(io::Error),
+    /// Saved locally; no optimistic change to shared Now or its timer.
+    Pending { command_id: Id },
 }
 
 impl fmt::Display for EngineError {
@@ -39,6 +44,9 @@ impl fmt::Display for EngineError {
         match self {
             EngineError::InvalidArgument(message) => f.write_str(message),
             EngineError::Persistence(error) => error.fmt(f),
+            EngineError::Pending { command_id } => {
+                write!(f, "Sent, waiting for confirmation ({command_id})")
+            }
         }
     }
 }
@@ -46,7 +54,7 @@ impl fmt::Display for EngineError {
 impl std::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            EngineError::InvalidArgument(_) => None,
+            EngineError::InvalidArgument(_) | EngineError::Pending { .. } => None,
             EngineError::Persistence(error) => Some(error),
         }
     }
@@ -78,6 +86,9 @@ pub struct Engine {
     tasks: Tasks,
     settings: SettingsStore,
     reminder: Reminder,
+    sync: Option<Client>,
+    sync_status: Option<SyncStatus>,
+    sync_status_revision: u64,
 }
 
 impl Engine {
@@ -98,6 +109,9 @@ impl Engine {
                 tasks,
                 settings,
                 reminder,
+                sync: None,
+                sync_status: None,
+                sync_status_revision: 0,
             },
             warning,
         ))
@@ -111,7 +125,15 @@ impl Engine {
 
     /// `GetState`: the compact JSON snapshot of the queue.
     pub fn state_json(&self) -> String {
-        self.store().snapshot_json()
+        let json = self.store().snapshot_json();
+        match &self.sync_status {
+            None => json,
+            Some(status) => {
+                let mut value: serde_json::Value = serde_json::from_str(&json).expect("store JSON");
+                value["sync"] = serde_json::to_value(status).expect("sync status JSON");
+                value.to_string()
+            }
+        }
     }
 
     /// How many task changes have been saved since the engine opened.
@@ -137,6 +159,9 @@ impl Engine {
         &mut self,
         f: impl FnOnce(&mut Store) -> R,
     ) -> Result<Outcome<R>, EngineError> {
+        if self.sync.is_some() {
+            return Err(invalid("shared queue changes require an explicit command"));
+        }
         Ok(self.tasks.update(f)?)
     }
 
@@ -147,6 +172,9 @@ impl Engine {
     pub fn add(&mut self, text: &str, bucket: Option<Bucket>) -> Result<Outcome<u64>, EngineError> {
         if text.len() > MAX_QUICK_ADD_BYTES {
             return Err(invalid("task text is too long"));
+        }
+        if self.sync.is_some() {
+            return self.shared_add(text, bucket);
         }
         let default = bucket.unwrap_or_else(|| match self.store().current() {
             Some(_) => self.settings().default_bucket,
@@ -162,6 +190,9 @@ impl Engine {
     /// `CompleteCurrent`: delete the current task and pull the head of Next
     /// into Now. Returns the task that was completed, if Now held one.
     pub fn complete_current(&mut self) -> Result<Outcome<Option<Task>>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_complete_current();
+        }
         Ok(self.tasks.complete_current()?)
     }
 
@@ -169,29 +200,44 @@ impl Engine {
     /// `complete_current`; any other task is deleted. Either way it is the
     /// completion `undo_complete` reverses.
     pub fn complete(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_delete(id, true);
+        }
         found(self.tasks.complete(id)?)
     }
 
     /// `UndoComplete(id)`: reverse the most recent completion. `false` when
     /// it was not `id`'s, or anything else has changed since.
     pub fn undo_complete(&mut self, id: u64) -> Result<Outcome<bool>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_undo(id);
+        }
         Ok(self.tasks.undo_complete(id)?)
     }
 
     /// `TogglePause`: pause or resume the current task's timer. `false` when
     /// there is no current task.
     pub fn toggle_pause(&mut self) -> Result<Outcome<bool>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_pause();
+        }
         self.update(Store::toggle_pause)
     }
 
     /// `Promote(id)`: make a task the current one. The task it replaces moves
     /// to the front of Next.
     pub fn promote(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_promote(id);
+        }
         found(self.update(|s| s.promote(id))?)
     }
 
     /// `Remove(id)`: delete a task. Unlike `complete`, it cannot be undone.
     pub fn remove(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_delete(id, false);
+        }
         found(self.update(|s| s.remove(id))?)
     }
 
@@ -204,11 +250,17 @@ impl Engine {
         bucket: Bucket,
         index: Option<usize>,
     ) -> Result<Outcome<()>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_move_to(id, bucket, index);
+        }
         found(self.update(|s| s.move_to(id, bucket, index))?)
     }
 
     /// `SetTag(id, tag)`: set or clear a task's tag.
     pub fn set_tag(&mut self, id: u64, tag: Option<Tag>) -> Result<Outcome<()>, EngineError> {
+        if self.sync.is_some() {
+            return self.shared_tag(id, tag);
+        }
         found(self.update(|s| s.set_tag(id, tag))?)
     }
 
@@ -219,6 +271,10 @@ impl Engine {
 
     /// Cycle a task's tag: none, work, personal, none.
     pub fn cycle_tag(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
+        if self.sync.is_some() {
+            self.require(id)?;
+            return self.shared_tag(id, Tag::cycle(self.store().get(id).unwrap().tag));
+        }
         found(self.update(|s| s.cycle_tag(id))?)
     }
 
@@ -227,6 +283,9 @@ impl Engine {
         if title.trim().is_empty() {
             return Err(invalid("empty title"));
         }
+        if self.sync.is_some() {
+            return self.shared_rename(id, title);
+        }
         found(self.update(|s| s.rename(id, title))?)
     }
 
@@ -234,6 +293,9 @@ impl Engine {
     /// it moved: a task already at the edge stays where it is.
     pub fn shift(&mut self, id: u64, delta: i32) -> Result<Outcome<bool>, EngineError> {
         self.require(id)?;
+        if self.sync.is_some() {
+            return self.shared_shift(id, delta);
+        }
         self.update(|s| s.shift(id, delta))
     }
 
@@ -247,6 +309,9 @@ impl Engine {
         before: Option<u64>,
     ) -> Result<Outcome<bool>, EngineError> {
         self.require(id)?;
+        if self.sync.is_some() {
+            return self.shared_move_before(id, bucket, before);
+        }
         self.update(|s| s.move_before(id, bucket, before))
     }
 

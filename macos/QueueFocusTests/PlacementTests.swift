@@ -13,7 +13,7 @@ private func snapshot(current: UInt64? = 4, side: [UInt64] = [3], next: [UInt64]
         side: side.map { task($0, .side) },
         next: next.map { task($0, .next) },
         later: later.map { task($0, .later) },
-        revision: 0
+        revision: 0, sync: nil
     )
 }
 

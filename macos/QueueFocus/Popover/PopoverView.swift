@@ -53,6 +53,7 @@ private struct FocusColumn: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(TagStyle.solid(current.tag, options))
+                    .disabled(!model.focusAvailable)
                     .accessibilityIdentifier("done-current")
 
                     let paused = current.pausedAt != nil
@@ -63,6 +64,7 @@ private struct FocusColumn: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    .disabled(!model.focusAvailable)
                     .accessibilityIdentifier("pause-current")
                 }
                 .controlSize(.large)
@@ -245,10 +247,14 @@ private struct AddField: View {
     @Environment(QueueModel.self) private var model
     let actions: PopoverActions
     @State private var draft = ""
+    @State private var pendingAdd: PendingAdd?
     @FocusState private var focused: Bool
 
     var body: some View {
         TextField("Add…  !now  #w #p  @later @side", text: $draft)
+                .disabled(pendingAdd != nil)
+                .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
+                .onAppear { reconcilePendingAdd() }
             .textFieldStyle(.roundedBorder)
             .controlSize(.large)
             .focused($focused)
@@ -267,7 +273,20 @@ private struct AddField: View {
     }
 
     private func submit(asCurrent: Bool) {
+        guard pendingAdd == nil else { return }
         if model.add(draft, asCurrent: asCurrent) {
+            draft = ""
+            actions.close()
+        } else if let command = model.lastRequestPending {
+            pendingAdd = PendingAdd(command: command, text: draft)
+            reconcilePendingAdd()
+        }
+    }
+
+    private func reconcilePendingAdd() {
+        guard let pending = pendingAdd, let result = model.focusResults[pending.command] else { return }
+        pendingAdd = nil
+        if result.applied && draft == pending.text {
             draft = ""
             actions.close()
         }
@@ -304,6 +323,7 @@ private struct SideCard: View {
                 }
                 .focused($focused, equals: .promote)
                 .accessibilityLabel("Make current")
+                .disabled(!model.focusAvailable)
                 .accessibilityIdentifier("promote-\(task.id)")
                 Button {
                     if model.complete(task) {
@@ -373,6 +393,15 @@ struct MessageLine: View {
             message(problem, color: .orange, systemImage: "exclamationmark.triangle") {
                 model.dismissProblems()
             }
+        }
+        if let status = model.syncMessage {
+            HStack(spacing: 6) {
+                Image(systemName: model.focusAvailable ? "checkmark.icloud" : "icloud")
+                Text(status).font(.caption).textSelection(.enabled)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .accessibilityIdentifier("sync-status")
         }
     }
 

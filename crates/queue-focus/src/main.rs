@@ -44,23 +44,14 @@ fn main() -> glib::ExitCode {
             ensure_service();
         }
     }
-    let (service, warning) = match service::Service::open() {
-        Ok(opened) => opened,
-        Err(e) => {
-            eprintln!("queue-focus: {e}; refusing to start to protect the task file");
-            return glib::ExitCode::from(1);
-        }
-    };
-    if let Some(warning) = warning.as_deref() {
-        eprintln!("queue-focus: {warning}");
-    }
-    let app = app::QfApplication::new(APP_ID, service);
-    if let Some(warning) = warning {
-        app.ui()
-            .queue_settings_problem("Could not load your settings", &warning);
-    }
+    let app = app::QfApplication::new(APP_ID);
 
     app.connect_startup(|app| {
+        if let Err(error) = app.initialize() {
+            eprintln!("queue-focus: {error}; refusing to start to protect the task file");
+            app.quit();
+            return;
+        }
         ui::load_css();
         ui::apply_theme(app.service().settings().theme);
         // Writes changed settings and keeps the reminder's schedule.
@@ -72,11 +63,22 @@ fn main() -> glib::ExitCode {
 
     // Settings changes are written a moment after they are made; the moment
     // the process ends is the one time that wait cannot be afforded.
-    app.connect_shutdown(|app| app.service().flush());
+    app.connect_shutdown(|app| {
+        if app.ready() {
+            app.service().flush();
+        }
+    });
 
-    app.connect_activate(|app| app.ui().show(Page::Queue));
+    app.connect_activate(|app| {
+        if app.ready() {
+            app.ui().show(Page::Queue);
+        }
+    });
 
     app.connect_command_line(|app, cmd| {
+        if !app.ready() {
+            return glib::ExitCode::from(1);
+        }
         glib::ExitCode::from(run_command(app, cmd, &app.ui(), &app.service()) as u8)
     });
 
@@ -242,7 +244,7 @@ fn run_command(
             } else {
                 match command_update(cmd, service.request(|e| e.add(&text, None))) {
                     Ok(id) => cmd.print_literal(&format!("added #{id}\n")),
-                    Err(EngineError::InvalidArgument(_)) => {
+                    Err(EngineError::InvalidArgument(message)) if message == "empty title" => {
                         cmd.printerr_literal("nothing to add\n");
                         return 1;
                     }

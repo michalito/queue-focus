@@ -40,6 +40,7 @@ struct AddTaskIntent: AppIntent {
             throw IntentFailure.failed("There was nothing to add.")
         }
         guard model.add(text, asCurrent: asCurrent) else {
+            if model.lastRequestPending != nil { return .result(dialog: "Sent, waiting for confirmation.") }
             throw IntentFailure.failed(model.actionError ?? "The task could not be added.")
         }
         return .result(dialog: "Added.")
@@ -58,6 +59,8 @@ struct CompleteCurrentTaskIntent: AppIntent {
         case .done(let task):
             model.offerUndo(for: task)
             return .result(value: task.title, dialog: "Done: \(task.title)")
+        case .pending:
+            return .result(value: "", dialog: "Sent, waiting for confirmation.")
         case .empty:
             return .result(value: "", dialog: "Nothing in Now.")
         case .failed(let message):

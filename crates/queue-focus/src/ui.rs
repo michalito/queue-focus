@@ -10,7 +10,7 @@ use crate::service::SharedService;
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
 use qf_core::{
-    long_elapsed, Bucket, EngineError, FlashColor, Intensity, Outcome, Settings, Store, Tag, Task,
+    long_elapsed, Bucket, Engine, EngineError, FlashColor, Intensity, Outcome, Settings, Tag, Task,
     Theme, INTERVAL_MAX, INTERVAL_MIN, MAX_TITLE_CHARS,
 };
 use std::cell::{Cell, RefCell};
@@ -20,6 +20,7 @@ use std::rc::Rc;
 mod gtk_tests;
 mod placement;
 mod styles;
+mod sync_settings;
 use placement::{Destination, Focus, Placement, ORDER};
 
 const QUEUE_SIZE: (i32, i32) = (400, 640);
@@ -233,6 +234,9 @@ pub struct Ui {
     rebuilding: Cell<bool>,
     dirty: Cell<bool>,
     quick: RefCell<Option<(gtk::Window, gtk::Entry)>>,
+    sync_labels: RefCell<Vec<glib::WeakRef<gtk::Label>>>,
+    pending_adds: RefCell<Vec<(qf_core::sync::Id, gtk::Entry, String)>>,
+    focus_controls: RefCell<Vec<glib::WeakRef<gtk::Widget>>>,
 }
 
 impl Ui {
@@ -264,11 +268,26 @@ impl Ui {
             rebuilding: Cell::new(false),
             dirty: Cell::new(false),
             quick: RefCell::new(None),
+            sync_labels: RefCell::new(Vec::new()),
+            pending_adds: RefCell::new(Vec::new()),
+            focus_controls: RefCell::new(Vec::new()),
         });
         let weak = Rc::downgrade(&ui);
         service.on_change(move || {
             if let Some(ui) = weak.upgrade() {
                 ui.rebuild();
+            }
+        });
+        let weak = Rc::downgrade(&ui);
+        service.on_status_change(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.update_sync_status();
+            }
+        });
+        let weak = Rc::downgrade(&ui);
+        service.on_settled(move |settlement| {
+            if let Some(ui) = weak.upgrade() {
+                ui.settle_add(settlement);
             }
         });
         // A setting changed here, or from another client over D-Bus: put the
@@ -286,7 +305,7 @@ impl Ui {
                 // The service usually runs with no window at all, and the
                 // store only complains once per outage. Keep the message until
                 // there is somewhere to show it.
-                ui.queue_settings_problem("Could not save your settings", message);
+                ui.queue_settings_problem("Queue Focus needs attention", message);
             }
         });
         let weak = Rc::downgrade(&ui);
@@ -352,8 +371,11 @@ impl Ui {
     }
 
     /// Run a persisted mutation asked for from this window and report on it.
-    fn update<R>(&self, f: impl FnOnce(&mut Store) -> R) -> Result<R, EngineError> {
-        self.report(self.service.update(f))
+    fn update<R>(
+        &self,
+        f: impl FnOnce(&mut Engine) -> Result<Outcome<R>, EngineError>,
+    ) -> Result<R, EngineError> {
+        self.report(self.service.request(f))
     }
 
     /// Mark a task done. Only completing the current task pulls the head of
@@ -378,6 +400,7 @@ impl Ui {
                 }
                 Ok(value)
             }
+            Err(e @ EngineError::Pending { .. }) => Err(e),
             Err(e) => {
                 self.alert("Could not safely save task changes", &e.to_string());
                 Err(e)
@@ -433,11 +456,14 @@ impl Ui {
             .width_chars(48)
             .css_classes(["quick-entry"])
             .build();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        content.append(&entry);
+        content.append(&self.sync_label());
         let win = gtk::Window::builder()
             .application(&self.app)
             .title("Add task")
             .resizable(false)
-            .child(&entry)
+            .child(&content)
             .css_classes(["quick-add"])
             .build();
         let this = self.clone();
@@ -572,6 +598,7 @@ impl Ui {
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&entry_bar);
+        toolbar.add_top_bar(&self.sync_label());
         toolbar.set_content(Some(&stack));
         win.set_content(Some(&toolbar));
         *self.entry_bar.borrow_mut() = Some(entry_bar.upcast::<gtk::Widget>());
@@ -613,15 +640,146 @@ impl Ui {
     /// where the engine puts such a task. Clears the entry on success. Text
     /// with no title in it adds nothing, and is no error to show.
     fn submit(&self, e: &gtk::Entry, bucket: Option<Bucket>) -> bool {
-        let text = e.text();
-        let added = match self.service.request(|engine| engine.add(&text, bucket)) {
-            Err(EngineError::InvalidArgument(_)) => false,
-            result => self.report(result).is_ok(),
-        };
-        if added {
-            e.set_text("");
+        if self
+            .pending_adds
+            .borrow()
+            .iter()
+            .any(|(_, entry, _)| entry == e)
+        {
+            return false;
         }
-        added
+        let text = e.text().to_string();
+        if qf_core::QuickAdd::parse(&text).is_none() {
+            return false;
+        }
+        match self.service.request(|engine| engine.add(&text, bucket)) {
+            Err(EngineError::Pending { command_id }) => {
+                e.set_sensitive(false);
+                self.pending_adds
+                    .borrow_mut()
+                    .push((command_id, e.clone(), text));
+                self.update_sync_status();
+                false
+            }
+            result => {
+                if self.report(result).is_ok() {
+                    e.set_text("");
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    fn sync_label(&self) -> gtk::Label {
+        let label = gtk::Label::builder()
+            .wrap(true)
+            .xalign(0.0)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(4)
+            .margin_bottom(4)
+            .css_classes(["dim-label"])
+            .selectable(true)
+            .build();
+        self.sync_labels.borrow_mut().push(label.downgrade());
+        self.update_sync_status();
+        label
+    }
+
+    fn focus_control(&self, widget: &impl IsA<gtk::Widget>) {
+        self.focus_controls
+            .borrow_mut()
+            .push(widget.as_ref().downgrade());
+        widget.set_sensitive(self.focus_available());
+    }
+
+    fn focus_available(&self) -> bool {
+        self.service
+            .engine()
+            .sync_status()
+            .is_none_or(|s| s.state == qf_core::sync::ConnectionState::Online && s.pending == 0)
+    }
+
+    fn update_sync_status(&self) {
+        use qf_core::sync::ConnectionState;
+        let status = self.service.engine().sync_status().cloned();
+        let message = status.as_ref().map(|s| {
+            if let Some(message) = &s.message {
+                return message.clone();
+            }
+            if s.focus_command.is_some() {
+                return "Sent, waiting for confirmation…".into();
+            }
+            if s.recovery_items > 0 {
+                return format!(
+                    "Sync needs attention: {} saved changes need review.",
+                    s.recovery_items
+                );
+            }
+            if s.pending > 0 {
+                return format!(
+                    "{} changes saved on this device, waiting to sync.",
+                    s.pending
+                );
+            }
+            if s.state == ConnectionState::Online {
+                "Synced".into()
+            } else {
+                "Offline — queue edits are saved here. Now and timer changes need a connection."
+                    .into()
+            }
+        });
+        self.sync_labels.borrow_mut().retain(|weak| {
+            let Some(label) = weak.upgrade() else {
+                return false;
+            };
+            label.set_visible(message.is_some());
+            label.set_text(message.as_deref().unwrap_or(""));
+            true
+        });
+        let enabled = self.focus_available();
+        self.focus_controls.borrow_mut().retain(|weak| {
+            let Some(widget) = weak.upgrade() else {
+                return false;
+            };
+            widget.set_sensitive(enabled);
+            true
+        });
+        if let Some(settlement) = status.and_then(|s| s.last_focus_settlement) {
+            self.settle_add(&settlement);
+        }
+    }
+
+    fn settle_add(&self, settlement: &qf_core::sync::Settlement) {
+        let mut matched = Vec::new();
+        self.pending_adds.borrow_mut().retain(|(id, entry, text)| {
+            if *id == settlement.command {
+                matched.push((entry.clone(), text.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (entry, text) in matched {
+            entry.set_sensitive(true);
+            match &settlement.outcome {
+                qf_core::sync::ReceiptOutcome::Applied { .. } => {
+                    if entry.text().as_str() == text {
+                        entry.set_text("");
+                        if let Some((window, quick)) = self.quick.borrow().as_ref() {
+                            if *quick == entry {
+                                window.set_visible(false);
+                            }
+                        }
+                    }
+                }
+                qf_core::sync::ReceiptOutcome::Rejected { reason } => {
+                    self.alert("Shared task was not added", &reason.to_string());
+                }
+            }
+        }
     }
 
     /// Queue / Board as a segmented control. AdwViewSwitcher would insist on
@@ -866,7 +1024,7 @@ impl Ui {
             head_box.add_controller(drop_target(
                 Highlight::Hero(hero.downgrade()),
                 move |id, _, _| {
-                    this.update(|s| Destination::Current.apply(s, id))
+                    this.update(|s| Destination::Current.apply_engine(s, id))
                         .unwrap_or(false)
                 },
             ));
@@ -946,6 +1104,7 @@ impl Ui {
             .spacing(22)
             .css_classes(["settings-page"])
             .build();
+        self.sync_settings_card(&column);
 
         let card = self.settings_card(
             &column,
@@ -1025,7 +1184,11 @@ impl Ui {
         self.choice_row(
             &card,
             "⏎ adds to",
-            Some("To Now while Now is empty. Ctrl+⏎ always goes to Now; @markers still win."),
+            Some(if self.service.engine().sync_status().is_some() {
+                "Uses this queue even while Now is empty. Now changes need a connection; @markers still win."
+            } else {
+                "To Now while Now is empty. Ctrl+⏎ always goes to Now; @markers still win."
+            }),
             &BUCKET_ORDER.map(|b| (b, b.label())),
             |s| s.default_bucket,
             |s, v| s.default_bucket = v,
@@ -1518,7 +1681,7 @@ impl Ui {
                 .downcast_ref::<gtk::ListBox>()
                 .and_then(|l| anchor_at(l, y))
                 .and_then(|r| row_id(&r));
-            this.update(|s| Destination::List { bucket, before }.apply(s, id))
+            this.update(|s| Destination::List { bucket, before }.apply_engine(s, id))
                 .unwrap_or(false)
         }));
 
@@ -1556,7 +1719,7 @@ impl Ui {
     ) {
         let this = self.clone();
         widget.add_controller(drop_target(highlight, move |id, _, _| {
-            this.update(|s| Destination::Append(bucket).apply(s, id))
+            this.update(|s| Destination::Append(bucket).apply_engine(s, id))
                 .unwrap_or(false)
         }));
     }
@@ -1659,7 +1822,7 @@ impl Ui {
             .build();
         let this = self.clone();
         root.add_controller(drop_target(Highlight::Ring, move |id, _, _| {
-            this.update(|s| Destination::Current.apply(s, id))
+            this.update(|s| Destination::Current.apply_engine(s, id))
                 .unwrap_or(false)
         }));
         if page == Page::Board {
@@ -1782,6 +1945,7 @@ impl Ui {
             title.upcast()
         };
         let done = self.done_button(id, style);
+        self.focus_control(&done);
         let menu = self.task_menu(id, Bucket::Now, &["flat", "hero-btn"]);
 
         match style {
@@ -1872,6 +2036,7 @@ impl Ui {
         button.connect_clicked(move |_| {
             let _ = this.update(|s| s.toggle_pause());
         });
+        self.focus_control(&button);
         self.timers.borrow_mut().push(timer);
         button
     }
@@ -1963,14 +2128,16 @@ impl Ui {
         }
         if style.inline_buttons() {
             let this = self.clone();
-            content.append(&icon_button(
+            let promote = icon_button(
                 "go-top-symbolic",
                 "Make current (⏎)",
                 &["flat", "row-btn"],
                 move || {
                     let _ = this.update(|s| s.promote(id));
                 },
-            ));
+            );
+            self.focus_control(&promote);
+            content.append(&promote);
         }
         if style == RowStyle::Later {
             let this = self.clone();
@@ -2006,15 +2173,11 @@ impl Ui {
 
         if bucket != Bucket::Now {
             let this = self.clone();
-            items.append(&menu_item(
-                &popover,
-                "Make current",
-                Some("⏎"),
-                false,
-                move || {
-                    let _ = this.update(|s| s.promote(id));
-                },
-            ));
+            let promote = menu_item(&popover, "Make current", Some("⏎"), false, move || {
+                let _ = this.update(|s| s.promote(id));
+            });
+            self.focus_control(&promote);
+            items.append(&promote);
         }
         let this = self.clone();
         items.append(&menu_item(
@@ -2243,17 +2406,22 @@ impl Ui {
                 let Some(id) = id else {
                     return glib::Propagation::Proceed;
                 };
-                let changed = match key {
-                    gdk::Key::J => self.update(|s| s.shift(id, 1)),
-                    gdk::Key::K => self.update(|s| s.shift(id, -1)),
-                    gdk::Key::d | gdk::Key::x | gdk::Key::Delete => Ok(self.complete(id)),
-                    gdk::Key::t => self.update(|s| s.cycle_tag(id)),
-                    gdk::Key::_1 => self.update(|s| s.promote(id)),
-                    gdk::Key::_2 => self.update(|s| s.move_to(id, Bucket::Next, None)),
-                    gdk::Key::_3 => self.update(|s| s.move_to(id, Bucket::Later, None)),
-                    gdk::Key::_4 => self.update(|s| s.move_to(id, Bucket::Side, None)),
-                    _ => return glib::Propagation::Proceed,
-                };
+                let changed =
+                    match key {
+                        gdk::Key::J => self.update(|s| s.shift(id, 1)),
+                        gdk::Key::K => self.update(|s| s.shift(id, -1)),
+                        gdk::Key::d | gdk::Key::x | gdk::Key::Delete => Ok(self.complete(id)),
+                        gdk::Key::t => self.update(|s| s.cycle_tag(id).map(|o| o.map(|_| true))),
+                        gdk::Key::_1 => self.update(|s| s.promote(id).map(|o| o.map(|_| true))),
+                        gdk::Key::_2 => self
+                            .update(|s| s.move_to(id, Bucket::Next, None).map(|o| o.map(|_| true))),
+                        gdk::Key::_3 => self.update(|s| {
+                            s.move_to(id, Bucket::Later, None).map(|o| o.map(|_| true))
+                        }),
+                        gdk::Key::_4 => self
+                            .update(|s| s.move_to(id, Bucket::Side, None).map(|o| o.map(|_| true))),
+                        _ => return glib::Propagation::Proceed,
+                    };
                 let _ = changed;
             }
         }

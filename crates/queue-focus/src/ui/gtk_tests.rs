@@ -513,11 +513,12 @@ fn hero_dressing() {
     // Board titles remain complete even when the Queue banner truncates them.
     let long_title = "W".repeat(256);
     let current_id = service.store().current().unwrap().id;
-    ui.update(|s| {
-        s.rename(current_id, &long_title);
-        s.rename(queued_id, &long_title);
-    })
-    .unwrap();
+    ui.service
+        .update(|s| {
+            s.rename(current_id, &long_title);
+            s.rename(queued_id, &long_title);
+        })
+        .unwrap();
     settle();
     // The panel scrolls rather than cuts, so it still has nothing to add; the
     // row under it is cut at three lines, and says the rest in a tooltip.
@@ -796,13 +797,14 @@ fn drag_feedback() {
     assert!(list(Bucket::Next).has_css_class("drop-end"));
     assert!(!next_header.has_css_class("drop-into"));
     emit_leave(&next_header);
-    ui.update(|s| {
-        let queued: Vec<u64> = s.in_bucket(Bucket::Next).map(|t| t.id).collect();
-        for id in queued {
-            s.move_to(id, Bucket::Later, None);
-        }
-    })
-    .unwrap();
+    ui.service
+        .update(|s| {
+            let queued: Vec<u64> = s.in_bucket(Bucket::Next).map(|t| t.id).collect();
+            for id in queued {
+                s.move_to(id, Bucket::Later, None);
+            }
+        })
+        .unwrap();
     settle();
     emit_motion(&space, 0.0);
     assert!(

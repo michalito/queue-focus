@@ -203,7 +203,7 @@ fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SaveError> {
     save_bytes_with_sync(path, &json, sync_directory)
 }
 
-fn save_bytes_with_sync(
+pub(crate) fn save_bytes_with_sync(
     path: &Path,
     contents: &[u8],
     sync: impl FnOnce(&Path) -> io::Result<()>,

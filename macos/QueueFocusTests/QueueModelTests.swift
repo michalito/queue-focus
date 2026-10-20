@@ -21,6 +21,7 @@ private final class Fixture {
     var changes = 0
     var flashes: [FlashEvent] = []
     var reported: [[String]] = []
+    var copies: [URL] = []
 
     init() throws {
         dir = FileManager.default.temporaryDirectory
@@ -36,7 +37,23 @@ private final class Fixture {
         model.didReport = { [unowned self] in reported.append($0) }
     }
 
+    /// Reopen the committed files in isolation while this live fixture keeps
+    /// the original directory locked, just as a running app now does.
+    func reopenedCopy() throws -> QueueModel {
+        let copy = dir.appendingPathExtension(UUID().uuidString)
+        try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+        copies.append(copy)
+        for name in ["tasks.json", "settings.json"] {
+            let source = dir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: source.path) {
+                try FileManager.default.copyItem(at: source, to: copy.appendingPathComponent(name))
+            }
+        }
+        return QueueModel(engine: try QueueEngine(dir: copy.path), clock: { self.clock.date })
+    }
+
     deinit {
+        for copy in copies { try? FileManager.default.removeItem(at: copy) }
         try? FileManager.default.removeItem(at: dir)
     }
 }
@@ -122,7 +139,7 @@ private final class Fixture {
         f.clock.advance(600)
         f.model.tick()
         #expect(try f.model.elapsed(of: try task()) == paused, "and stops while paused")
-        let reopened = QueueModel(engine: try QueueEngine(dir: f.dir.path), clock: { f.clock.date })
+        let reopened = try f.reopenedCopy()
         let stored = try #require(reopened.snapshot.current)
         #expect(stored.pausedAt == (try task()).pausedAt && stored.pausedAt != nil, "the pause is in the file")
         #expect(reopened.elapsed(of: stored) == paused)
@@ -151,7 +168,7 @@ private final class Fixture {
         #expect(f.model.settings == settings)
         // The engine writes settings on its next tick.
         f.model.tick()
-        #expect(try QueueEngine(dir: f.dir.path).settings() == settings)
+        #expect(try f.reopenedCopy().settings == settings)
     }
 
     @Test func blankTextAddsNothingAndSaysNothing() throws {
