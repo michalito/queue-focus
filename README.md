@@ -6,7 +6,7 @@ A task has a title, a bucket, and an optional `work` or `personal` tag. There ar
 
 Every so often the screen flashes the current task across the desktop. The reminder is described under [The flash reminder](#the-flash-reminder) and is configured in the Settings view.
 
-Queue Focus supports GNOME Shell 48, 49, and 50. It also runs on macOS 14 or newer as an app in the menu bar, with the same tasks in the same files; see [macOS](#macos).
+Queue Focus supports GNOME Shell 46, 48, 49, and 50, including Ubuntu 24.04. It also runs on macOS 14 or newer as an app in the menu bar, using the same task format; see [macOS](#macos).
 
 ## The four buckets
 
@@ -114,11 +114,11 @@ If `~/.local/bin` is not in `PATH`, GNOME can still open the app. Add that direc
 
 The local install needs:
 
-1. GNOME Shell 48, 49, or 50
+1. GNOME Shell 46, 48, 49, or 50
 
-2. Rust and Cargo 1.80 or newer
+2. Rust and Cargo 1.92 or newer
 
-3. GTK 4.16 or newer and libadwaita 1.6 or newer at runtime
+3. GTK 4.14 or newer, libadwaita 1.5 or newer, and GLib 2.80 or newer at runtime
 
 4. `make`, Bash, Python 3.11 or newer, a C compiler, and common Unix file tools
 
@@ -128,7 +128,20 @@ The local install needs:
 
 Install Rust from [rustup.rs](https://rustup.rs/) if it is not present.
 
+On Ubuntu 24.04, install `build-essential` for `make` and a C compiler. The
+distribution's default Rust package may be too old; use Rustup for Rust 1.92 or
+newer. The installer reads the Rust minimum from the workspace manifest and
+checks the native library and supported Shell versions before building.
+
 GTK development packages are optional. `scripts/cargo` uses them through `pkg-config` when they are installed. Otherwise it links against the GTK and libadwaita runtime libraries on the system. Use `scripts/cargo` or the Make targets so this choice is made for you.
+
+For development on Ubuntu 24.04, `pkg-config`, `libgtk-4-dev`, and
+`libadwaita-1-dev` provide the normal development setup. Both build paths check
+the actual native library versions. Builds and tests use `Cargo.lock`.
+
+GTK 4.14/libadwaita 1.5 use a compatible color stylesheet with the same layout,
+task accents, and theme handling. Newer runtimes use the modern stylesheet.
+Selected-button colors have a fallback for libadwaita versions before 1.7.
 
 Node.js is optional for installation and required by `make check`.
 
@@ -649,9 +662,9 @@ make run
 
 `make check` checks Rust formatting, runs Clippy for all targets with warnings denied, checks every extension JavaScript module with Node.js, checks the version script, and checks shell files with the `.sh` suffix.
 
-`make test` runs the Rust workspace tests, the extension tests, the local installer integration tests, and the version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
+`make test` runs the Rust workspace tests, native prerequisite tests, extension tests, local installer integration tests, and version integration tests. The integration tests use temporary homes and project copies. They do not install into the developer account.
 
-`make test-ui` exercises Queue/Board rendering, drop controllers, focus recovery and the drag feedback in a real GTK window on an isolated X display, using temporary task and settings files. It needs `Xvfb`, `xvfb-run` and `dbus-run-session`. The regular Rust tests cover placement and anchored movement across all bucket pairs.
+`make test-ui` checks CSS parsing, rendered work/personal/untagged colors, light/dark theme changes, selected-button fallbacks, Queue/Board rendering, drop controllers, focus recovery and drag feedback in a real GTK window on an isolated X display, using temporary task and settings files. It needs `Xvfb`, `xvfb-run` and `dbus-run-session`. The regular Rust tests cover placement and anchored movement across all bucket pairs.
 
 `make test-install` runs only the installer tests. `make test-version` runs only the version tests. `make test-extension` runs only the extension tests.
 

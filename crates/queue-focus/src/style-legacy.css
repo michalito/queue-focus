@@ -1,0 +1,329 @@
+/* GTK 4.14 / libadwaita 1.5. Named colors are global, so accents use
+   window selectors instead of attempting per-window @define-color overrides. */
+@define-color qf_work_bg #3584e4;
+@define-color qf_personal_bg #e66100;
+@define-color qf_work_ink mix(@qf_work_bg, @window_fg_color, 0.34);
+@define-color qf_personal_ink mix(@qf_personal_bg, @window_fg_color, 0.34);
+
+headerbar,
+.entry-bar,
+toolbarview .collapse-spacing {
+  background-color: mix(@headerbar_bg_color, @accent_bg_color, 0.22);
+}
+
+.view-switch {
+  background-color: mix(transparent, currentColor, 0.08);
+}
+
+.view-switch button:hover {
+  background-color: mix(transparent, currentColor, 0.08);
+}
+
+.view-switch > button:checked {
+  background-color: @qf_toggle_bg;
+  color: @window_fg_color;
+}
+
+.current-banner {
+  background-color: mix(@card_bg_color, @accent_bg_color, 0.12);
+  border-bottom: 1px solid @card_shade_color;
+}
+
+.current-banner:focus-visible {
+  outline-color: @accent_color;
+}
+
+.now-label {
+  color: @accent_color;
+}
+
+.timer {
+  color: @accent_color;
+}
+
+.queue-card {
+  background-color: @card_bg_color;
+  border: 1px solid @card_shade_color;
+}
+
+.section-header.divided {
+  border-top: 1px solid @card_shade_color;
+}
+
+.chip.untagged {
+  color: mix(transparent, currentColor, 0.6);
+  /* Named rather than `currentColor`, which this rule has just faded to 60% —
+     the outline would compound to 0.15 and the chip would barely read. */
+  box-shadow: inset 0 0 0 1px mix(transparent, @window_fg_color, 0.25);
+}
+
+.later-footer {
+  background-color: @card_bg_color;
+  border-top: 1px solid @card_shade_color;
+}
+
+.to-next-btn {
+  border: 1px solid @card_shade_color;
+}
+
+.menu-item.destructive {
+  color: @destructive_color;
+}
+
+.board .section-header.now .bucket-header {
+  color: @accent_color;
+}
+
+.now-hero {
+  background-color: mix(@card_bg_color, @accent_bg_color, 0.12);
+  box-shadow: 0 0 0 1px @card_shade_color;
+}
+
+.now-hero:focus-visible {
+  outline-color: @accent_color;
+}
+
+.hero-done {
+  background-color: mix(transparent, currentColor, 0.1);
+}
+
+.hero-done:hover {
+  background-color: mix(transparent, currentColor, 0.18);
+}
+
+.side-cards > row {
+  background-color: mix(@card_bg_color, @accent_bg_color, 0.05);
+  box-shadow: 0 0 0 1px @card_shade_color;
+}
+
+.side-cards > row:hover {
+  background-color: mix(@card_bg_color, currentColor, 0.12);
+}
+
+.side-empty {
+  box-shadow: inset 0 0 0 1px mix(transparent, currentColor, 0.1);
+}
+
+.board-card {
+  border: 1px solid @card_shade_color;
+  background-color: @card_bg_color;
+}
+
+.board-rows > row {
+  border-top: 1px solid @card_shade_color;
+}
+
+.board-rows > row:hover {
+  background-color: mix(transparent, currentColor, 0.04);
+}
+
+.board-later-rows > row {
+  border-top: 1px solid mix(transparent, currentColor, 0.06);
+}
+
+.task-row.drop-before {
+  box-shadow: inset 0 2px 0 @accent_color;
+}
+
+.bucket-list.drop-end {
+  box-shadow: inset 0 -2px 0 @accent_color;
+}
+
+.board-rows > row.drop-before,
+.board-rows.drop-end {
+  box-shadow: none;
+  background-image: linear-gradient(@accent_color, @accent_color);
+}
+
+.side-cards > row.drop-before {
+  box-shadow:
+    0 -5px 0 -3px @accent_color,
+    0 0 0 1px @card_shade_color;
+}
+
+.drop-into {
+  box-shadow: inset 0 0 0 2px @accent_color;
+}
+
+.now-hero.drop-into {
+  box-shadow: 0 0 0 2px @accent_color;
+}
+
+.gear-btn.active {
+  background-color: @qf_toggle_bg;
+  color: @window_fg_color;
+}
+
+.settings-card {
+  background-color: @card_bg_color;
+  border: 1px solid @card_shade_color;
+  color: @card_fg_color;
+}
+
+.settings-row.divided {
+  border-top: 1px solid @card_shade_color;
+}
+
+.settings-value {
+  color: @accent_color;
+}
+
+window.tag-work headerbar,
+window.tag-work .entry-bar,
+window.tag-work toolbarview .collapse-spacing {
+  background-color: mix(@headerbar_bg_color, @qf_work_bg, 0.22);
+}
+
+window.tag-work .current-banner {
+  background-color: mix(@card_bg_color, @qf_work_bg, 0.12);
+  border-bottom: 1px solid @card_shade_color;
+}
+
+window.tag-work .current-banner:focus-visible {
+  outline-color: @qf_work_ink;
+}
+
+window.tag-work .now-label {
+  color: @qf_work_ink;
+}
+
+window.tag-work .timer {
+  color: @qf_work_ink;
+}
+
+window.tag-work .board .section-header.now .bucket-header {
+  color: @qf_work_ink;
+}
+
+window.tag-work .now-hero {
+  background-color: mix(@card_bg_color, @qf_work_bg, 0.12);
+  box-shadow: 0 0 0 1px @card_shade_color;
+}
+
+window.tag-work .now-hero:focus-visible {
+  outline-color: @qf_work_ink;
+}
+
+window.tag-work .side-cards > row {
+  background-color: mix(@card_bg_color, @qf_work_bg, 0.05);
+  box-shadow: 0 0 0 1px @card_shade_color;
+}
+
+window.tag-work .task-row.drop-before {
+  box-shadow: inset 0 2px 0 @qf_work_ink;
+}
+
+window.tag-work .bucket-list.drop-end {
+  box-shadow: inset 0 -2px 0 @qf_work_ink;
+}
+
+window.tag-work .board-rows > row.drop-before,
+window.tag-work .board-rows.drop-end {
+  box-shadow: none;
+  background-image: linear-gradient(@qf_work_ink, @qf_work_ink);
+}
+
+window.tag-work .side-cards > row.drop-before {
+  box-shadow:
+    0 -5px 0 -3px @qf_work_ink,
+    0 0 0 1px @card_shade_color;
+}
+
+window.tag-work .drop-into {
+  box-shadow: inset 0 0 0 2px @qf_work_ink;
+}
+
+window.tag-work .now-hero.drop-into {
+  box-shadow: 0 0 0 2px @qf_work_ink;
+}
+
+window.tag-work .settings-value {
+  color: @qf_work_ink;
+}
+
+window.tag-work .current-banner.empty {
+  background: none;
+}
+window.tag-work .side-cards > row:hover {
+  background-color: mix(@card_bg_color, currentColor, 0.12);
+}
+
+window.tag-personal headerbar,
+window.tag-personal .entry-bar,
+window.tag-personal toolbarview .collapse-spacing {
+  background-color: mix(@headerbar_bg_color, @qf_personal_bg, 0.22);
+}
+
+window.tag-personal .current-banner {
+  background-color: mix(@card_bg_color, @qf_personal_bg, 0.12);
+  border-bottom: 1px solid @card_shade_color;
+}
+
+window.tag-personal .current-banner:focus-visible {
+  outline-color: @qf_personal_ink;
+}
+
+window.tag-personal .now-label {
+  color: @qf_personal_ink;
+}
+
+window.tag-personal .timer {
+  color: @qf_personal_ink;
+}
+
+window.tag-personal .board .section-header.now .bucket-header {
+  color: @qf_personal_ink;
+}
+
+window.tag-personal .now-hero {
+  background-color: mix(@card_bg_color, @qf_personal_bg, 0.12);
+  box-shadow: 0 0 0 1px @card_shade_color;
+}
+
+window.tag-personal .now-hero:focus-visible {
+  outline-color: @qf_personal_ink;
+}
+
+window.tag-personal .side-cards > row {
+  background-color: mix(@card_bg_color, @qf_personal_bg, 0.05);
+  box-shadow: 0 0 0 1px @card_shade_color;
+}
+
+window.tag-personal .task-row.drop-before {
+  box-shadow: inset 0 2px 0 @qf_personal_ink;
+}
+
+window.tag-personal .bucket-list.drop-end {
+  box-shadow: inset 0 -2px 0 @qf_personal_ink;
+}
+
+window.tag-personal .board-rows > row.drop-before,
+window.tag-personal .board-rows.drop-end {
+  box-shadow: none;
+  background-image: linear-gradient(@qf_personal_ink, @qf_personal_ink);
+}
+
+window.tag-personal .side-cards > row.drop-before {
+  box-shadow:
+    0 -5px 0 -3px @qf_personal_ink,
+    0 0 0 1px @card_shade_color;
+}
+
+window.tag-personal .drop-into {
+  box-shadow: inset 0 0 0 2px @qf_personal_ink;
+}
+
+window.tag-personal .now-hero.drop-into {
+  box-shadow: 0 0 0 2px @qf_personal_ink;
+}
+
+window.tag-personal .settings-value {
+  color: @qf_personal_ink;
+}
+
+window.tag-personal .current-banner.empty {
+  background: none;
+}
+window.tag-personal .side-cards > row:hover {
+  background-color: mix(@card_bg_color, currentColor, 0.12);
+}

@@ -3,7 +3,14 @@
 # straight against the runtime libraries (see devlibs-env.sh). macOS builds
 # only the crates that need no GTK, so it skips both.
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-if [ "$(uname -s)" != Darwin ] && ! pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
-  source "$(dirname "${BASH_SOURCE[0]}")/devlibs-env.sh" || exit 1
+if [ "$(uname -s)" != Darwin ]; then
+  case "${1:-}" in
+    build|test|check|clippy|run|deb)
+      python3 "$(dirname "${BASH_SOURCE[0]}")/check-runtime" || exit 1
+      ;;
+  esac
+  if ! pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
+    source "$(dirname "${BASH_SOURCE[0]}")/devlibs-env.sh" || exit 1
+  fi
 fi
 exec cargo "$@"

@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Validate native libraries without requiring headers or pkg-config."""
+import ctypes
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def library_version(soname, prefix):
+    library = ctypes.CDLL(soname)
+    if prefix == "glib":
+        return tuple(
+            ctypes.c_uint.in_dll(library, f"glib_{part}_version").value
+            for part in ("major", "minor", "micro")
+        )
+    values = []
+    for part in ("major", "minor", "micro"):
+        function = getattr(library, f"{prefix}_get_{part}_version")
+        function.restype = ctypes.c_uint
+        function.argtypes = []
+        values.append(function())
+    return tuple(values)
+
+
+def check(shell=False):
+    if sys.version_info < (3, 11):
+        raise RuntimeError("Python 3.11 or newer is required")
+    for label, soname, prefix, minimum in (
+        ("GTK", "libgtk-4.so.1", "gtk", (4, 14, 0)),
+        ("libadwaita", "libadwaita-1.so.0", "adw", (1, 5, 0)),
+        ("GLib", "libglib-2.0.so.0", "glib", (2, 80, 0)),
+    ):
+        try:
+            version = library_version(soname, prefix)
+        except (OSError, AttributeError, ValueError) as error:
+            raise RuntimeError(f"cannot query {label} runtime ({soname}): {error}") from error
+        if version[0] != minimum[0] or version < minimum:
+            required = ".".join(map(str, minimum))
+            found = ".".join(map(str, version))
+            raise RuntimeError(f"{label} {required} or newer is required (found {found})")
+    if shell:
+        metadata = Path(__file__).resolve().parent.parent / "extension/queue-focus@queuefocus.org/metadata.json"
+        supported = json.loads(metadata.read_text())["shell-version"]
+        result = subprocess.run(
+            ["gnome-shell", "--version"], check=True, capture_output=True, text=True
+        )
+        match = re.search(r"GNOME Shell (\d+)", result.stdout)
+        if not match or match[1] not in supported:
+            raise RuntimeError(
+                f"GNOME Shell {', '.join(supported)} is required (found {result.stdout.strip()!r})"
+            )
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] not in ([], ["--shell"]):
+        sys.exit("usage: scripts/check-runtime [--shell]")
+    try:
+        check(shell=bool(sys.argv[1:]))
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:
+        sys.exit(f"queue-focus prerequisites: {error}")

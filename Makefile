@@ -14,20 +14,21 @@ help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*##' '{printf "  %-13s %s\n", $$1, $$2}'
 
 build: $(SCHEMAS)/gschemas.compiled   ## release build (no install)
-	$(CARGO) build --release -p queue-focus
+	$(CARGO) build --locked --release -p queue-focus
 
 $(SCHEMAS)/gschemas.compiled: $(SCHEMAS)/*.gschema.xml
 	glib-compile-schemas --strict $(SCHEMAS)
 
 test:            ## unit + isolated integration tests
-	$(CARGO) test --workspace
+	$(CARGO) test --locked --workspace
+	python3 scripts/test-runtime.py
 	node extension/test/flash.test.mjs
 	node extension/test/connection.test.mjs
 	scripts/test-install-local.sh
 	scripts/test-set-version.sh
 
 test-core:       ## engine and FFI tests; runs on Linux and macOS
-	$(CARGO) test -p qf-core -p qf-ffi
+	$(CARGO) test --locked -p qf-core -p qf-ffi
 
 test-mac-core: mac-core  ## Swift tests of the engine through its bindings (macOS)
 	cd macos/QfCore && swift test
@@ -56,14 +57,15 @@ test-extension-shell: ## real quick-add, menu and width tests in a disposable he
 
 check:           ## fmt + clippy + JS/Python/shell syntax
 	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 	for js in extension/$(UUID)/*.js; do node --check "$$js" || exit 1; done
 	for script in scripts/*.sh; do bash -n "$$script" || exit 1; done
 	python3 -c 'from pathlib import Path; compile(Path("scripts/set-version").read_text(), "scripts/set-version", "exec")'
+	python3 -c 'from pathlib import Path; compile(Path("scripts/check-runtime").read_text(), "scripts/check-runtime", "exec")'
 
 check-core:      ## fmt + clippy for the crates the macOS app uses; runs on Linux and macOS
 	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy -p qf-core -p qf-ffi -p uniffi-bindgen --all-targets -- -D warnings
+	$(CARGO) clippy --locked -p qf-core -p qf-ffi -p uniffi-bindgen --all-targets -- -D warnings
 
 mac-core:        ## build the engine's XCFramework and Swift module for the macOS app
 	scripts/build-mac-core.sh --if-changed

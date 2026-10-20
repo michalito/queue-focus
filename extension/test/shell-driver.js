@@ -319,6 +319,30 @@ export default class ShellTest extends Extension {
 
         await this._menu(Main.panel.statusArea[UUID]);
         await this._widths(Main.panel.statusArea[UUID]);
+        await this._flashes(Main.panel.statusArea[UUID]);
+    }
+
+    /** Real compositor actors and timers, across both animation preferences. */
+    async _flashes(indicator) {
+        const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        const original = settings.get_boolean('enable-animations');
+        try {
+            for (const animations of [false, true]) {
+                settings.set_boolean('enable-animations', animations);
+                await this._wait(() => St.Settings.get().enable_animations === animations,
+                    'animation preference reached St');
+                for (const style of ['wash', 'wash2', 'edges', 'edgesSoft', 'topbar', 'topbarBeam']) {
+                    indicator._flash.show({style, intensity: 'normal', palette: 'blue',
+                        title: 'Compatibility reminder', timer: '1m'});
+                    check(indicator._flash._overlay !== null, `${style} created an overlay`);
+                    await this._wait(() => indicator._flash._overlay === null,
+                        `${style} cleaned up with animations ${animations}`);
+                }
+            }
+        } finally {
+            indicator._flash.clear();
+            settings.set_boolean('enable-animations', original);
+        }
     }
 
     /** The focus card and queue with a populated fixture, driven by pointer and actors. */

@@ -3,6 +3,7 @@
 #   source scripts/devlibs-env.sh && cargo build --release
 # Not needed if libgtk-4-dev + libadwaita-1-dev are installed.
 _qf_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 "$_qf_root/scripts/check-runtime" || return 1
 _qf_libs="$_qf_root/.devlibs"
 mkdir -p "$_qf_libs" || return 1
 _qf_multiarch=$(cc -print-multiarch 2>/dev/null || true)

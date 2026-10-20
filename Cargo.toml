@@ -5,6 +5,7 @@ members = ["crates/qf-core", "crates/qf-ffi", "crates/queue-focus", "crates/unif
 [workspace.package]
 version = "0.6.0"
 edition = "2021"
+rust-version = "1.92"
 license = "MIT"
 authors = ["Michael Sinoplis"]
 

@@ -7,7 +7,10 @@ name: macOS
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.claude/**', 'AGENTS.md', 'CLAUDE.md']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ['**/*.md', 'docs/**', '.claude/**', 'AGENTS.md', 'CLAUDE.md']
   workflow_dispatch:
     inputs:
       ui:
@@ -19,12 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: Tests (${{ matrix.runner }})
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +40,9 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
           components: clippy, rustfmt
@@ -61,7 +67,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.ui
         run: make test-mac-ui
       - name: Release dry run
-        if: matrix.runner == 'macos-26'
+        if: matrix.runner == 'macos-26' && github.event_name != 'pull_request'
         run: make release-mac-dry-run
       # The test plan keeps no screenshots, so the results hold none.
       - uses: actions/upload-artifact@v4

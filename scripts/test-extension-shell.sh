@@ -81,5 +81,5 @@ if not result['ok']:
     raise SystemExit(result.get('stack', result['error']))
 print('GNOME Shell integration passed: quick-add draft preservation, late reply, disable/re-enable, '
       'clock pill pausing without opening the menu, focus card, Side cards, undo, one task in Now, views, '
-      'titles shown whole with the panel and menu growing to fit')
+      'titles shown whole with the panel and menu growing to fit, all six flash styles with animations on/off')
 PY

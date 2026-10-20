@@ -11,18 +11,22 @@ name: Linux
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.claude/**', 'AGENTS.md', 'CLAUDE.md']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ['**/*.md', 'docs/**', '.claude/**', 'AGENTS.md', 'CLAUDE.md']
 
 permissions:
   contents: read
 
 concurrency:
-  group: linux-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gnome:
     name: GNOME app, engine and extension
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     timeout-minutes: 45
@@ -39,12 +43,21 @@ jobs:
             libgl1-mesa-dri mesa-vulkan-drivers libegl1 libgles2 \
             desktop-file-utils gtk-update-icon-cache fonts-dejavu-core fonts-cantarell
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /home/tester/.cargo/registry
+            /home/tester/.cargo/git
+            target
+          key: cargo-linux-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
       # The tests make files unwritable to see a save fail, which root would
       # write all the same: they run as a user of their own.
       - name: A user to test as
         run: |
           useradd -m -s /bin/bash tester
-          chown -R tester "$GITHUB_WORKSPACE"
+          chown -R tester /home/tester "$GITHUB_WORKSPACE"
           runuser -u tester -- env HOME=/home/tester sh -c \
             'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component rustfmt,clippy'
       - name: make check

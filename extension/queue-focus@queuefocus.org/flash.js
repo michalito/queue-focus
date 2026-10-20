@@ -81,7 +81,7 @@ function safeTitle(value) {
 
 /**
  * St.BoxLayout traded `vertical` for `orientation` after GNOME 48, and this
- * extension supports 48 as well.
+ * extension supports 46 and 48 as well.
  */
 function verticalBox(props) {
     const box = new St.BoxLayout(props);
