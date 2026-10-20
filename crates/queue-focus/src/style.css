@@ -3,41 +3,20 @@
    and tints the header bar, the quick-add bar and the Now banner. Radii are a
    flat 6px for controls and 12px for cards — no pills, no circles. */
 
-/* ---- accent follows the current task's tag ------------------------- */
-/* (libadwaita ≥ 1.6 CSS variables) */
+/* Colors are supplied by the runtime-selected palette stylesheet. */
 
-window.tag-work {
-  --accent-bg-color: #3584e4;
-}
-window.tag-personal {
-  --accent-bg-color: #e66100;
-}
-/* The accent is two tones, not one: a wash for the tints (--accent-bg-color)
-   and an ink for what is drawn on top of them — the Now label, the clock, and
-   the lines a drag leaves behind. libadwaita calls the ink the standalone
-   accent and lightens it for dark themes so it reads against the window; GTK
-   CSS cannot ask which theme is on, but mixing towards the window's own
-   foreground lightens in the dark and darkens in the light by itself. */
-window.tag-work,
-window.tag-personal {
-  --accent-color: color-mix(in srgb, var(--accent-bg-color) 66%, var(--window-fg-color));
-}
-
-/* AdwToolbarView leaves a few pixels below the last top bar, so the container
-   is tinted too — otherwise the window background shows through as a dark strip
-   under the quick-add bar. */
+/* Tint the toolbar's spacing as well as the bar itself. */
 headerbar,
 .entry-bar,
 toolbarview .collapse-spacing {
-  background: color-mix(in srgb, var(--accent-bg-color) 22%, var(--headerbar-bg-color));
   transition: background 150ms ease;
 }
+
 /* ---- header bar ---------------------------------------------------- */
 
 .view-switch {
   padding: 2px;
   border-radius: 6px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 .view-switch button {
   min-height: 0;
@@ -51,14 +30,11 @@ toolbarview .collapse-spacing {
   opacity: 0.7;
 }
 .view-switch button:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
   opacity: 1;
 }
 /* The same treatment libadwaita's own segmented control uses: an opaque chip
    in light, a soft white lift in dark. */
 .view-switch > button:checked {
-  background: var(--active-toggle-bg-color);
-  color: var(--active-toggle-fg-color);
   font-weight: 700;
   opacity: 1;
 }
@@ -108,15 +84,12 @@ popover.shortcuts-pop > contents {
 
 .current-banner {
   padding: 18px 20px;
-  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
-  border-bottom: 1px solid var(--card-shade-color);
   transition: background 150ms ease;
 }
 .current-banner.empty {
   background: none;
 }
 .current-banner:focus-visible {
-  outline-color: var(--accent-color);
   outline-style: solid;
   outline-width: 2px;
   outline-offset: -3px;
@@ -126,7 +99,6 @@ popover.shortcuts-pop > contents {
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent-color);
 }
 .current-title {
   font-size: 1.3em;
@@ -151,7 +123,6 @@ popover.shortcuts-pop > contents {
 .timer {
   font-weight: 600;
   font-size: 1.1em;
-  color: var(--accent-color);
   transition: opacity 150ms ease;
 }
 .timer-btn.paused .timer {
@@ -190,8 +161,6 @@ popover.shortcuts-pop > contents {
 }
 /* One flat card holds Side and Next; the sections are split by a hairline. */
 .queue-card {
-  background: var(--card-bg-color);
-  border: 1px solid var(--card-shade-color);
   border-radius: 12px;
 }
 .section-header {
@@ -199,7 +168,6 @@ popover.shortcuts-pop > contents {
 }
 .section-header.divided {
   margin-top: 6px;
-  border-top: 1px solid var(--card-shade-color);
 }
 .queue-card .placeholder {
   padding: 6px 12px 10px 12px;
@@ -264,12 +232,7 @@ popover.shortcuts-pop > contents {
   background: #c64600;
 }
 /* No tag yet: an outlined dash, so the chip is always in the same place. */
-.chip.untagged {
-  color: color-mix(in srgb, currentColor 60%, transparent);
-  /* Named rather than `currentColor`, which this rule has just faded to 60% —
-     the outline would compound to 0.15 and the chip would barely read. */
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--window-fg-color) 25%, transparent);
-}
+
 .chip-btn {
   min-width: 0;
   min-height: 0;
@@ -279,10 +242,6 @@ popover.shortcuts-pop > contents {
 
 /* ---- Later, pinned to the bottom ----------------------------------- */
 
-.later-footer {
-  background: var(--card-bg-color);
-  border-top: 1px solid var(--card-shade-color);
-}
 .later-toggle {
   padding: 10px 16px;
   border-radius: 0;
@@ -306,7 +265,6 @@ popover.shortcuts-pop > contents {
   /* 20px + the 1px border on each side = the design's 22px box. */
   min-height: 20px;
   padding: 0 8px;
-  border: 1px solid var(--card-shade-color);
   border-radius: 6px;
   font-size: 0.72em;
   font-weight: 700;
@@ -328,9 +286,7 @@ popover.task-menu > contents {
   border-radius: 6px;
   font-weight: 400;
 }
-.menu-item.destructive {
-  color: var(--destructive-color);
-}
+
 .menu-accel {
   font-size: 0.85em;
   opacity: 0.5;
@@ -360,7 +316,6 @@ popover.task-menu > contents {
 }
 /* Now is the one header that gets the accent: it names what you are doing. */
 .board .section-header.now .bucket-header {
-  color: var(--accent-color);
   opacity: 1;
 }
 
@@ -368,14 +323,11 @@ popover.task-menu > contents {
   min-height: 112px;
   padding: 14px 18px 12px 18px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent-bg-color) 12%, var(--card-bg-color));
-  box-shadow: 0 0 0 1px var(--card-shade-color);
   transition:
     background 150ms ease,
     box-shadow 120ms ease;
 }
 .now-hero:focus-visible {
-  outline-color: var(--accent-color);
   outline-style: solid;
   outline-width: 2px;
   outline-offset: -3px;
@@ -391,12 +343,8 @@ popover.task-menu > contents {
   border: none;
   border-radius: 6px;
   box-shadow: none;
-  background: color-mix(in srgb, currentColor 10%, transparent);
   font-size: 0.85em;
   font-weight: 700;
-}
-.hero-done:hover {
-  background: color-mix(in srgb, currentColor 18%, transparent);
 }
 
 /* Side: free-standing cards, tinted a touch by the current task's tag. The 1px
@@ -407,17 +355,13 @@ popover.task-menu > contents {
 }
 .side-cards > row {
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent-bg-color) 5%, var(--card-bg-color));
-  box-shadow: 0 0 0 1px var(--card-shade-color);
   margin-bottom: 8px;
   transition: background 150ms ease;
 }
 .side-cards > row:last-child {
   margin-bottom: 0;
 }
-.side-cards > row:hover {
-  background: color-mix(in srgb, currentColor 12%, var(--card-bg-color));
-}
+
 .side-cards .row-box {
   padding: 10px 12px 10px 14px;
 }
@@ -428,25 +372,18 @@ popover.task-menu > contents {
 .side-empty {
   min-height: 70px;
   border-radius: 12px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 10%, transparent);
 }
 
 /* Next: one card of hairline-separated rows. The first sits against the card's
    edge, so it draws no line of its own. */
 .board-card {
-  border: 1px solid var(--card-shade-color);
   border-radius: 12px;
-  background: var(--card-bg-color);
 }
-.board-rows > row {
-  border-top: 1px solid var(--card-shade-color);
-}
+
 .board-rows > row:first-child {
   border-top: none;
 }
-.board-rows > row:hover {
-  background: color-mix(in srgb, currentColor 4%, transparent);
-}
+
 .board-rows .row-box {
   padding: 8px 8px 8px 12px;
 }
@@ -458,9 +395,7 @@ popover.task-menu > contents {
 .board-later-rows {
   padding: 0 4px;
 }
-.board-later-rows > row {
-  border-top: 1px solid color-mix(in srgb, currentColor 6%, transparent);
-}
+
 /* Nothing to react to down here: Adwaita's own row hover is turned off. */
 .board-later-rows > row:hover {
   background: none;
@@ -486,19 +421,12 @@ popover.task-menu > contents {
 .now-hero.dragging {
   opacity: 0.35;
 }
-.task-row.drop-before {
-  box-shadow: inset 0 2px 0 var(--accent-color);
-}
-.bucket-list.drop-end {
-  box-shadow: inset 0 -2px 0 var(--accent-color);
-}
+
 /* Next's rows sit in a card, so their line is inset from its edges rather than
    run into them. A background image, because box-shadow cannot be inset
    sideways and the hairline above the row has to stay. */
 .board-rows > row.drop-before,
 .board-rows.drop-end {
-  box-shadow: none;
-  background-image: linear-gradient(var(--accent-color), var(--accent-color));
   background-repeat: no-repeat;
   background-size: calc(100% - 16px) 2px;
   background-position: 8px 0;
@@ -511,18 +439,8 @@ popover.task-menu > contents {
    picking the card out rather than pointing between two of them. An outer
    shadow shrunk by 3px and lifted 5px leaves exactly that 2px band showing,
    and the card keeps the ring that makes it a card. */
-.side-cards > row.drop-before {
-  box-shadow:
-    0 -5px 0 -3px var(--accent-color),
-    0 0 0 1px var(--card-shade-color);
-}
-.drop-into {
-  box-shadow: inset 0 0 0 2px var(--accent-color);
-}
+
 /* The hero is a card with room around it, so its ring can sit outside. */
-.now-hero.drop-into {
-  box-shadow: 0 0 0 2px var(--accent-color);
-}
 
 /* ---- settings ------------------------------------------------------ */
 
@@ -536,10 +454,7 @@ popover.task-menu > contents {
 }
 /* Lit while its page is showing, in the same clothes the view switcher's
    selected segment wears. */
-.gear-btn.active {
-  background: var(--active-toggle-bg-color);
-  color: var(--active-toggle-fg-color);
-}
+
 .settings-heading {
   padding: 0 2px;
 }
@@ -555,24 +470,18 @@ popover.task-menu > contents {
   opacity: 0.75;
 }
 .settings-card {
-  background: var(--card-bg-color);
-  border: 1px solid var(--card-shade-color);
   border-radius: 12px;
-  color: var(--card-fg-color);
 }
 .settings-row {
   padding: 10px 14px;
 }
-.settings-row.divided {
-  border-top: 1px solid var(--card-shade-color);
-}
+
 /* The slider's marks hang below it, so the row needs less padding under. */
 .settings-slider-row {
   padding: 10px 14px 4px 14px;
 }
 .settings-value {
   font-weight: 600;
-  color: var(--accent-color);
 }
 /* The window is 400px wide: settings segments are tighter than the header
    bar's two, and the four-bucket one tighter still. */

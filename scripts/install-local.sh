@@ -205,6 +205,8 @@ fi
 
 for required in \
   "$ROOT/scripts/cargo" \
+  "$ROOT/scripts/check-runtime" \
+  "$ROOT/Cargo.toml" \
   "$ROOT/scripts/queue-focus-setup" \
   "$ROOT/data/$APPID.desktop" \
   "$ROOT/data/icons/hicolor/scalable/apps/$APPID.svg" \
@@ -214,29 +216,37 @@ for required in \
   [ -e "$required" ] || die "required project file is missing: $required"
 done
 
-for command in bash chmod cp glib-compile-schemas gnome-extensions gsettings \
+for command in bash cc chmod cp glib-compile-schemas gnome-extensions gsettings \
   install mkdir mktemp mv python3 rm rmdir; do
   require_command "$command"
 done
 
+python3 "$ROOT/scripts/check-runtime" --shell
+minimum_rust=$(python3 - "$ROOT/Cargo.toml" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], 'rb') as source:
+    print(tomllib.load(source)['workspace']['package']['rust-version'])
+PY
+)
 rust_output=$(PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" rustc --version) || \
-  die "Rust is unavailable; install Rust 1.80 or newer from https://rustup.rs"
+  die "Rust is unavailable; install Rust $minimum_rust or newer from https://rustup.rs"
 rust_version=${rust_output#rustc }
 rust_version=${rust_version%% *}
 IFS=. read -r rust_major rust_minor _ <<<"$rust_version"
 if ! [[ "$rust_major" =~ ^[0-9]+$ && "$rust_minor" =~ ^[0-9]+$ ]]; then
   die "could not parse Rust version: $rust_output"
 fi
-if (( rust_major < 1 || (rust_major == 1 && rust_minor < 80) )); then
-  die "Rust 1.80 or newer is required (found $rust_version)"
+IFS=. read -r minimum_major minimum_minor _ <<<"$minimum_rust"
+if (( rust_major < minimum_major || (rust_major == minimum_major && rust_minor < minimum_minor) )); then
+  die "Rust $minimum_rust or newer is required (found $rust_version)"
 fi
 
 if ! PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" cargo --version >/dev/null 2>&1; then
-  die "Cargo is unavailable; install Rust 1.80 or newer from https://rustup.rs"
+  die "Cargo is unavailable; install Rust $minimum_rust or newer from https://rustup.rs"
 fi
 
 cd "$ROOT"
-"$ROOT/scripts/cargo" build --release -p queue-focus
+"$ROOT/scripts/cargo" build --locked --release -p queue-focus
 [ -x "$BUILD_BIN" ] || die "the release build did not produce $BUILD_BIN"
 if ! LD_BIND_NOW=1 "$BUILD_BIN" version >/dev/null; then
   die "the built application cannot run with the installed GTK/libadwaita runtime"

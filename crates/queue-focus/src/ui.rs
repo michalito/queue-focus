@@ -21,9 +21,8 @@ use std::rc::Rc;
 #[cfg(test)]
 mod gtk_tests;
 mod placement;
+mod styles;
 use placement::{Destination, Focus, Placement, ORDER};
-
-const CSS: &str = include_str!("style.css");
 
 const QUEUE_SIZE: (i32, i32) = (400, 640);
 const BOARD_SIZE: (i32, i32) = (1040, 640);
@@ -48,15 +47,7 @@ const SHORTCUTS: [(&str, &str); 12] = [
 ];
 
 pub fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(CSS);
-    if let Some(display) = gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
+    styles::load();
 }
 
 /// Puts one stored setting into the control that shows it.

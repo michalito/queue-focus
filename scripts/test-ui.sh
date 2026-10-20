@@ -27,4 +27,4 @@ export XDG_RUNTIME_DIR="$test_dir/runtime"
 export GIO_USE_VFS=local GTK_A11Y=none GDK_BACKEND=x11 GSK_RENDERER=cairo
 export GSETTINGS_BACKEND=memory
 xvfb-run -a dbus-run-session --config-file="$test_dir/bus.conf" -- \
-  scripts/cargo test -p queue-focus ui::gtk_tests -- --ignored --test-threads=1
+  scripts/cargo test --locked -p queue-focus ui::gtk_tests -- --ignored --test-threads=1

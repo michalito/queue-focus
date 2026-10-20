@@ -56,9 +56,104 @@ fn emit_leave(widget: &impl IsA<gtk::Widget>) {
 #[ignore = "requires an isolated display; run make test-ui"]
 fn real_widgets_drive_placement_drops_focus_and_drag_feedback() {
     adw::init().unwrap();
+    compatible_styles_and_task_colors();
     placement_drops_and_focus();
     drag_feedback();
     hero_dressing();
+}
+
+/// Check the stylesheet with the real parser, then the actual widgets' colors:
+/// parsing alone accepts undefined named colors and misses broken theme/tag
+/// propagation. This runs on the oldest supported native runtime in CI.
+fn compatible_styles_and_task_colors() {
+    for legacy in [true, false] {
+        if !legacy && styles::legacy_runtime() {
+            continue;
+        }
+        for dark in [false, true] {
+            let provider = gtk::CssProvider::new();
+            let errors = Rc::new(RefCell::new(Vec::new()));
+            let captured = errors.clone();
+            provider.connect_parsing_error(move |_, _, error| {
+                captured.borrow_mut().push(error.to_string());
+            });
+            provider.load_from_string(&styles::stylesheet(legacy, dark));
+            assert!(
+                errors.borrow().is_empty(),
+                "CSS diagnostics: {:?}",
+                errors.borrow()
+            );
+        }
+    }
+
+    load_css();
+    let app = adw::Application::new(
+        Some("org.queuefocus.ColorTest"),
+        gtk::gio::ApplicationFlags::NON_UNIQUE,
+    );
+    app.register(None::<&gtk::gio::Cancellable>).unwrap();
+    let window = adw::ApplicationWindow::new(&app);
+    let label = gtk::Label::new(Some("NOW"));
+    label.add_css_class("now-label");
+    let toggle = gtk::ToggleButton::with_label("Queue");
+    toggle.set_active(true);
+    let switcher = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    switcher.add_css_class("view-switch");
+    switcher.append(&toggle);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&label);
+    content.append(&switcher);
+    window.set_content(Some(&content));
+    window.present();
+    let manager = adw::StyleManager::default();
+    let mut work = Vec::new();
+    for theme in [Theme::Light, Theme::Dark] {
+        apply_theme(theme);
+        settle();
+        assert_eq!(manager.is_dark(), theme == Theme::Dark);
+        window.add_css_class("tag-work");
+        settle();
+        let blue = label.color();
+        assert!(
+            blue.blue() > blue.red(),
+            "work accent should be blue: {blue}"
+        );
+        work.push(blue);
+        window.remove_css_class("tag-work");
+        window.add_css_class("tag-personal");
+        settle();
+        let orange = label.color();
+        assert!(
+            orange.red() > orange.blue(),
+            "personal accent should be orange: {orange}"
+        );
+        assert_ne!(
+            blue, orange,
+            "changing the task tag must update the actual label"
+        );
+        window.remove_css_class("tag-personal");
+        settle();
+        let untagged = label.color();
+        assert_ne!(
+            untagged, orange,
+            "clearing the tag restores the native accent"
+        );
+
+        // Selected segment colors need the fallback on libadwaita 1.5/1.6.
+        #[allow(deprecated)]
+        let background = toggle
+            .style_context()
+            .lookup_color("qf_toggle_bg")
+            .expect("selected segment fallback must resolve");
+        assert!((background.alpha() - if manager.is_dark() { 0.2 } else { 1.0 }).abs() < 0.01);
+    }
+    assert_ne!(
+        work[0], work[1],
+        "standalone accents must adapt to the theme"
+    );
+    apply_theme(Theme::System);
+    settle();
+    window.destroy();
 }
 
 /// Every widget under `root`, depth first.
@@ -99,6 +194,93 @@ fn find_class(root: &impl IsA<gtk::Widget>, class: &str) -> Option<gtk::Widget> 
 fn offers_tooltip(title: &gtk::Label) -> bool {
     let tooltip = glib::Object::new::<gtk::Tooltip>();
     title.emit_by_name::<bool>("query-tooltip", &[&0i32, &0i32, &false, &tooltip])
+}
+
+fn widget_picture(widget: &impl IsA<gtk::Widget>) -> gdk::Texture {
+    let widget = widget.as_ref();
+    let snapshot = gtk::Snapshot::new();
+    gtk::WidgetPaintable::new(Some(widget)).snapshot(
+        &snapshot,
+        widget.width() as f64,
+        widget.height() as f64,
+    );
+    // Keep widget coordinates fixed: shadow/gradient drawing bounds can change.
+    let viewport =
+        gtk::graphene::Rect::new(0.0, 0.0, widget.width() as f32, widget.height() as f32);
+    widget
+        .native()
+        .unwrap()
+        .renderer()
+        .unwrap()
+        .render_texture(snapshot.to_node().unwrap(), Some(&viewport))
+}
+
+fn picture_pixels(widget: &impl IsA<gtk::Widget>) -> (Vec<u8>, usize, usize) {
+    let texture = widget_picture(widget);
+    let (width, height) = (texture.width() as usize, texture.height() as usize);
+    let mut pixels = vec![0; width * height * 4];
+    texture.download(&mut pixels, width * 4);
+    (pixels, width, height)
+}
+
+fn save_picture(widget: &impl IsA<gtk::Widget>, name: &str) {
+    if let Some(directory) = std::env::var_os("QF_UI_TEST_SHOTS") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        widget_picture(widget)
+            .save_to_png(directory.join(format!("{name}.png")))
+            .unwrap();
+    }
+}
+
+/// Board insertion lines must be inset, without a second full-width shadow.
+/// Check rendered pixels so CSS specificity/order regressions are caught.
+fn board_lines_are_inset(window: &adw::ApplicationWindow, list: &gtk::ListBox) {
+    for tag in [None, Some("tag-work"), Some("tag-personal")] {
+        window.remove_css_class("tag-work");
+        window.remove_css_class("tag-personal");
+        if let Some(tag) = tag {
+            window.add_css_class(tag);
+        }
+        settle();
+        for (widget, class, bottom) in [
+            (
+                list.row_at_index(0).unwrap().upcast::<gtk::Widget>(),
+                "drop-before",
+                false,
+            ),
+            (list.clone().upcast::<gtk::Widget>(), "drop-end", true),
+        ] {
+            for hovered in [false, true] {
+                if hovered {
+                    widget.set_state_flags(gtk::StateFlags::PRELIGHT, false);
+                    settle();
+                }
+                let (before, width, height) = picture_pixels(&widget);
+                widget.add_css_class(class);
+                settle();
+                let (after, _, _) = picture_pixels(&widget);
+                let y = if bottom { height - 2 } else { 1 };
+                let pixel =
+                    |bytes: &[u8], x| bytes[(y * width + x) * 4..(y * width + x) * 4 + 4].to_vec();
+                assert_eq!(
+                    pixel(&before, 2),
+                    pixel(&after, 2),
+                    "{tag:?} {class} hovered={hovered} must leave the inset edge untouched"
+                );
+                assert_ne!(
+                    pixel(&before, width / 2),
+                    pixel(&after, width / 2),
+                    "{tag:?} {class} hovered={hovered} must draw an insertion line"
+                );
+                widget.remove_css_class(class);
+                widget.unset_state_flags(gtk::StateFlags::PRELIGHT);
+                settle();
+            }
+        }
+    }
+    window.remove_css_class("tag-personal");
+    settle();
 }
 
 fn title_in(root: &impl IsA<gtk::Widget>, class: &str) -> gtk::Label {
@@ -457,6 +639,9 @@ fn drag_feedback() {
     };
     let hero = hero_of(&ui, Page::Board);
     let next = list(Bucket::Next);
+    let window = ui.win.borrow().as_ref().unwrap().clone();
+    board_lines_are_inset(&window, &next);
+    save_picture(&window, "board");
     let (first, second) = (next.row_at_index(0).unwrap(), next.row_at_index(1).unwrap());
     let band = |row: &gtk::ListBoxRow| {
         let bounds = row.compute_bounds(&next).unwrap();

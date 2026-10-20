@@ -2,6 +2,7 @@
 name = "queue-focus"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Minimal focus queue for GNOME: Now / Next / Later / Side"
 
@@ -11,8 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 qf-core = { path = "../qf-core" }
-gtk = { package = "gtk4", version = "0.11", features = ["v4_16"] }
-adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
 gio = { version = "0.22", features = ["v2_80"] }
 serde_json = "1"
 
@@ -21,8 +22,8 @@ name = "queue-focus"
 maintainer = "Michael Sinoplis <sinoplismichael@gmail.com>"
 section = "utils"
 priority = "optional"
-depends = "$auto, libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.6), libglib2.0-bin, python3"
-recommends = "gnome-shell (>= 48)"
+depends = "$auto, libgtk-4-1 (>= 4.14), libadwaita-1-0 (>= 1.5), libglib2.0-bin, python3"
+recommends = "gnome-shell (>= 46)"
 extended-description = """\
 A minimal focus queue for GNOME. Tasks are titles arranged in four buckets
 (Now, Next, Later, Side); the head of Now is what you are doing right now and is

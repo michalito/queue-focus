@@ -41,6 +41,7 @@ mkdir -p "$FIXTURE/scripts" "$TEST_HOME" "$TEST_DATA" "$MOCK_BIN"
 cp -a "$SOURCE_ROOT/data" "$SOURCE_ROOT/extension" "$FIXTURE/"
 cp "$SOURCE_ROOT/scripts/install-local.sh" "$SOURCE_ROOT/scripts/queue-focus-setup" \
   "$FIXTURE/scripts/"
+cp "$SOURCE_ROOT/Cargo.toml" "$FIXTURE/"
 chmod 0755 "$FIXTURE/scripts/install-local.sh" "$FIXTURE/scripts/queue-focus-setup"
 
 # The fixture's Cargo wrapper produces a tiny stand-in executable. The real
@@ -50,7 +51,7 @@ cat >"$FIXTURE/scripts/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "${1:-}" = "--version" ]; then
-  echo "cargo 1.80.0 (installer test)"
+  echo "cargo 1.92.0 (installer test)"
   exit 0
 fi
 if [ "${QF_TEST_BUILD_FAIL:-0}" = "1" ]; then
@@ -74,7 +75,21 @@ ln -s "$FIXTURE/scripts/cargo" "$MOCK_BIN/cargo"
 
 cat >"$MOCK_BIN/rustc" <<'EOF'
 #!/usr/bin/env bash
-echo "rustc 1.80.0 (installer test)"
+echo "rustc ${QF_TEST_RUST_VERSION:-1.92.0} (installer test)"
+EOF
+
+cat >"$MOCK_BIN/cc" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+# Native libraries/Shell are checked separately by test-runtime.py. Keep this
+# integration fixture independent of the caller's installed desktop runtime.
+cat >"$FIXTURE/scripts/check-runtime" <<'EOF'
+import os, sys
+with open(os.environ['QF_TEST_COMMAND_LOG'], 'a') as log:
+    log.write('check-runtime ' + ' '.join(sys.argv[1:]) + '\n')
+sys.exit(int(os.environ.get('QF_TEST_RUNTIME_FAIL', '0')))
 EOF
 
 cat >"$MOCK_BIN/gsettings" <<'EOF'
@@ -148,6 +163,7 @@ readonly INSTALLED_SETUP="$TEST_HOME/.local/bin/queue-focus-setup"
 readonly SERVICE="$TEST_DATA/dbus-1/services/org.queuefocus.QueueFocus.service"
 readonly DESKTOP="$TEST_DATA/applications/org.queuefocus.QueueFocus.desktop"
 readonly INSTALLED_EXTENSION="$TEST_DATA/gnome-shell/extensions/queue-focus@queuefocus.org"
+assert_line "$COMMAND_LOG" "check-runtime --shell"
 SERVICE_EXEC_PATH=${INSTALLED_BIN//\\/\\\\\\\\}
 SERVICE_EXEC_PATH=${SERVICE_EXEC_PATH//\"/\\\\\"}
 DESKTOP_EXEC_PATH=${SERVICE_EXEC_PATH//\$/\\\\$}
@@ -231,6 +247,24 @@ if env HOME="$FAILED_HOME" XDG_DATA_HOME="$FAILED_DATA" CARGO_HOME="$TEST_ROOT/c
 fi
 assert_absent "$FAILED_HOME/.local/bin/queue-focus"
 assert_absent "$FAILED_DATA/dbus-1/services/org.queuefocus.QueueFocus.service"
+
+# Prerequisite failures must happen before building or replacing any files.
+for rejected in runtime rust; do
+  rejected_output=""
+  if [ "$rejected" = runtime ]; then
+    if rejected_output=$(QF_TEST_RUNTIME_FAIL=1 run_installer 2>&1); then
+      fail "unsupported runtime unexpectedly installed"
+    fi
+  else
+    if rejected_output=$(QF_TEST_RUST_VERSION=1.80.0 run_installer 2>&1); then
+      fail "old Rust unexpectedly installed"
+    fi
+    grep -Fq 'Rust 1.92 or newer is required' <<<"$rejected_output" || \
+      fail "old Rust diagnostic did not report the workspace minimum"
+  fi
+  assert_absent "$INSTALLED_BIN"
+  assert_absent "$INSTALLED_EXTENSION"
+done
 
 # GNOME's safety switch is a successful app installation with an explicit
 # manual-action warning, not an ambiguous partial-install failure.

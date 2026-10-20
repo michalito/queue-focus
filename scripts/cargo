@@ -2,6 +2,11 @@
 # cargo wrapper: uses the GTK -dev packages when present, otherwise links
 # straight against the runtime libraries (see devlibs-env.sh).
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+case "${1:-}" in
+  build|test|check|clippy|run|deb)
+    python3 "$(dirname "${BASH_SOURCE[0]}")/check-runtime" || exit 1
+    ;;
+esac
 if ! pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
   source "$(dirname "${BASH_SOURCE[0]}")/devlibs-env.sh" || exit 1
 fi

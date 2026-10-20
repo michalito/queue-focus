@@ -3,6 +3,7 @@
   "name": "Queue Focus",
   "description": "Shows your current task in the top bar; quick access to Now / Side / Next.",
   "shell-version": [
+    "46",
     "48",
     "49",
     "50"
