@@ -146,6 +146,11 @@ assert not text or plistlib.loads(text.encode()) == {}
 PY
 executable="$app/Contents/MacOS/$APP_NAME"
 [ "$(lipo -archs "$executable")" = "x86_64 arm64" ] || fail "the app is not universal"
+sync_executable="$app/Contents/Helpers/qf-sync"
+[ -x "$sync_executable" ] || fail "the sync setup utility is missing"
+[ "$(lipo -archs "$sync_executable")" = "x86_64 arm64" ] || fail "the sync utility is not universal"
+codesign --verify --strict "$sync_executable"
+"$sync_executable" --help >/dev/null
 plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$app/Contents/Info.plist"; }
 [ "$(plist CFBundleShortVersionString)" = "$app_version" ] || fail "the app's version is not $app_version"
 [ "$(plist LSMinimumSystemVersion)" = "14.0" ] || fail "the app's minimum macOS is not 14.0"

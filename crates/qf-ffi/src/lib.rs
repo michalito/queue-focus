@@ -251,6 +251,38 @@ impl QueueEngine {
         QueueSettings::from(self.lock().engine.settings())
     }
 
+    pub fn sync_recovery(&self) -> Vec<SyncRecoveryChange> {
+        self.lock()
+            .engine
+            .sync_recovery()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    pub fn dismiss_sync_recovery(&self, command: String) -> Result<(), QfError> {
+        self.change(|e| e.dismiss_sync_recovery(&command))
+    }
+
+    pub fn retry_sync(&self) -> Result<(), QfError> {
+        let mut state = self.lock();
+        state.usable()?;
+        let result = self.host().retry_sync(&mut state.engine);
+        self.pump(&mut state, false);
+        state.settle(result)
+    }
+
+    pub fn export_sync(&self, destination: String) -> Result<(), QfError> {
+        let mut state = self.lock();
+        state.usable()?;
+        self.pump(&mut state, false);
+        self.host()
+            .export(&state.engine, Path::new(&destination))
+            .map_err(|error| QfError::Persistence {
+                message: error.to_string(),
+            })
+    }
+
     /// When the next flash comes, or why it will not.
     pub fn flash_status(&self, now: u64, local_time: TimeOfDay) -> Result<FlashStatus, QfError> {
         let local_time = local_time.try_into().map_err(invalid)?;

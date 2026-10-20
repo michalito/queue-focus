@@ -1,10 +1,21 @@
 # Sync setup and recovery
 
-The sync utility and journal are under development. Native app integration is
-the next checkpoint; released apps do not yet use the journal.
+The macOS and GNOME apps share queues, Now and the timer through your private
+server. Install a build containing sync support on both machines before setup.
+Local appearance, reminders and keyboard shortcuts stay device-specific.
 
-Build the utility with `cargo build --locked --release -p qf-sync`. Its path is
-`target/release/qf-sync`. The server must already be initialized and have a
+Queue edits can be saved offline. Moving into or out of Now, completion of Now,
+pause/resume and undo require a fresh server connection. Those actions show
+“Sent, waiting for confirmation” until the server accepts or rejects them.
+The timer continues to display offline. Rejected drafts remain available;
+ordinary additions use your configured queue even when Now is empty.
+
+Linux's installer and Debian package include `qf-sync`. The Mac app includes it
+at `/Applications/Queue Focus.app/Contents/Helpers/qf-sync`; use that quoted path
+in place of `qf-sync` below, or assign it to a shell variable and invoke `"$QF_SYNC"`.
+
+For a source checkout, build with `cargo build --locked --release -p qf-sync`;
+the resulting path is `target/release/qf-sync`. The server must already be initialized and have a
 separate enrollment for each device; see [server operations](sync-server.md).
 
 The default data directories are:
@@ -94,6 +105,14 @@ After repairing a server/configuration problem, `qf-sync retry DIR` clears a
 repairable suspension without removing pending commands. Restart the app to
 retry. A history mismatch requires recovery into a new directory and cannot
 be bypassed by `retry`.
+
+Both apps offer a **Sync** section in Settings. It shows status and rejected
+changes with their attempted action and reason. **Copy change** copies the full
+intent record; **Export recovery copy** asks for a folder and creates a new
+private subdirectory containing the task view, settings and intent record.
+Neither export nor retry removes pending commands. **Dismiss** requires explicit
+confirmation and removes only the selected rejected record. A history recovery
+state disables retry and dismissal; preserve/export it instead.
 
 Rejected edits remain as recoverable intent. After reviewing/exporting one,
 `qf-sync dismiss DIR COMMAND_UUID` explicitly removes that recovery item.

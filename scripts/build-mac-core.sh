@@ -82,6 +82,7 @@ INPUTS=$(inputs) || die "could not hash the engine's inputs"
 readonly INPUTS
 if $if_changed && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$INPUTS" ] &&
   [ -d "$PACKAGE/QfCoreFFI.xcframework" ] && [ -f "$PACKAGE/lib/libqf_ffi.a" ] &&
+  [ -x "$PACKAGE/bin/qf-sync" ] &&
   [ -f "$PACKAGE/include/module.modulemap" ] && [ -f "$PACKAGE/Sources/QfCore/QfCore.swift" ]; then
   echo "build-mac-core: up to date"
   exit 0
@@ -93,9 +94,11 @@ if command -v rustup >/dev/null 2>&1 || [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/ru
 fi
 
 libraries=()
+clients=()
 for target in "${TARGETS[@]}"; do
-  "$CARGO" build --locked -p qf-ffi --lib --profile "$PROFILE" --target "$target"
+  "$CARGO" build --locked -p qf-ffi -p qf-sync --lib --bins --profile "$PROFILE" --target "$target"
   libraries+=("$TARGET_DIR/$target/$PROFILE/libqf_ffi.a")
+  clients+=("$TARGET_DIR/$target/$PROFILE/qf-sync")
 done
 
 rm -rf "$WORK"
@@ -117,6 +120,9 @@ mkdir -p "$PACKAGE/lib" "$PACKAGE/include" "$PACKAGE/Sources/QfCore"
 cp "$WORK/libqf_ffi.a" "$PACKAGE/lib/"
 cp "$WORK/headers/QfCoreFFI.h" "$WORK/headers/module.modulemap" "$PACKAGE/include/"
 cp "$WORK/swift/QfCore.swift" "$PACKAGE/Sources/QfCore/QfCore.swift"
+mkdir -p "$PACKAGE/bin"
+lipo -create "${clients[@]}" -output "$PACKAGE/bin/qf-sync"
+chmod 0755 "$PACKAGE/bin/qf-sync"
 
 echo "$INPUTS" >"$STAMP"
 echo "built $PACKAGE: QfCoreFFI.xcframework ($(lipo -archs "$WORK/libqf_ffi.a")) and Sources/QfCore/QfCore.swift"

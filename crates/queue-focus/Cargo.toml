@@ -31,6 +31,7 @@ A minimal focus queue for GNOME. Tasks are titles arranged in four buckets
 shown in the GNOME top bar via the bundled shell extension."""
 assets = [
   ["target/release/queue-focus", "usr/bin/", "755"],
+  ["target/release/qf-sync", "usr/bin/", "755"],
   ["../../data/org.queuefocus.QueueFocus.desktop", "usr/share/applications/", "644"],
   ["../../data/org.queuefocus.QueueFocus.service", "usr/share/dbus-1/services/", "644"],
   ["../../extension/queue-focus@queuefocus.org/*", "usr/share/gnome-shell/extensions/queue-focus@queuefocus.org/", "644"],
@@ -39,4 +40,6 @@ assets = [
   ["../../data/icons/hicolor/symbolic/apps/org.queuefocus.QueueFocus-symbolic.svg", "usr/share/icons/hicolor/symbolic/apps/", "644"],
   ["../../scripts/queue-focus-setup", "usr/bin/", "755"],
   ["../../README.md", "usr/share/doc/queue-focus/", "644"],
+  ["../../docs/sync-client.md", "usr/share/doc/queue-focus/", "644"],
+  ["../../docs/sync-server.md", "usr/share/doc/queue-focus/", "644"],
 ]

@@ -66,7 +66,9 @@ struct SettingsView: View {
                     Text("Later").tag(Bucket.later)
                 } label: {
                     Text("⏎ adds to")
-                    Text("To Now while Now is empty. ⌘⏎ always goes to Now; @markers still win.").settingNote()
+                    Text(model.snapshot.sync == nil
+                         ? "To Now while Now is empty. ⌘⏎ always goes to Now; @markers still win."
+                         : "Uses this queue even while Now is empty. Now changes need a connection; @markers still win.").settingNote()
                 }
                 .accessibilityIdentifier("setting-default-bucket")
             }
@@ -82,6 +84,7 @@ struct SettingsView: View {
                     Button("Allow in System Settings…", action: loginItem.openSystemSettings)
                 }
             }
+            SyncSettingsView()
         }
         .formStyle(.grouped)
     }

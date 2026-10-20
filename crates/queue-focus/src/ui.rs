@@ -20,6 +20,7 @@ use std::rc::Rc;
 mod gtk_tests;
 mod placement;
 mod styles;
+mod sync_settings;
 use placement::{Destination, Focus, Placement, ORDER};
 
 const QUEUE_SIZE: (i32, i32) = (400, 640);
@@ -1103,6 +1104,7 @@ impl Ui {
             .spacing(22)
             .css_classes(["settings-page"])
             .build();
+        self.sync_settings_card(&column);
 
         let card = self.settings_card(
             &column,
@@ -1182,7 +1184,11 @@ impl Ui {
         self.choice_row(
             &card,
             "⏎ adds to",
-            Some("To Now while Now is empty. Ctrl+⏎ always goes to Now; @markers still win."),
+            Some(if self.service.engine().sync_status().is_some() {
+                "Uses this queue even while Now is empty. Now changes need a connection; @markers still win."
+            } else {
+                "To Now while Now is empty. Ctrl+⏎ always goes to Now; @markers still win."
+            }),
             &BUCKET_ORDER.map(|b| (b, b.label())),
             |s| s.default_bucket,
             |s, v| s.default_bucket = v,

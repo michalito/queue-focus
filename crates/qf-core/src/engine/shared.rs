@@ -36,6 +36,51 @@ impl Engine {
         self.sync.as_mut()
     }
 
+    pub fn sync_envelope(&self) -> Option<&Envelope> {
+        self.sync.as_ref().map(Client::envelope)
+    }
+
+    pub fn sync_recovery(&self) -> Vec<RecoveryChange> {
+        self.sync
+            .as_ref()
+            .map(Client::recovery_changes)
+            .unwrap_or_default()
+    }
+
+    pub fn dismiss_sync_recovery(&mut self, command: &str) -> Result<Outcome<()>, EngineError> {
+        let clock = ClockSample::now()?;
+        let command = command
+            .parse()
+            .map_err(|_| invalid("invalid command identity"))?;
+        let client = self
+            .sync
+            .as_mut()
+            .ok_or_else(|| invalid("sync is not enabled"))?;
+        if !client
+            .envelope()
+            .recovery
+            .iter()
+            .any(|item| item.command.id == command)
+        {
+            return Err(invalid("no rejected change with that identity"));
+        }
+        let result = client.dismiss_recovery(command).map_err(shared_error);
+        self.refresh_sync(clock);
+        result
+    }
+
+    pub fn retry_sync(&mut self) -> Result<Outcome<()>, EngineError> {
+        let clock = ClockSample::now()?;
+        let result = self
+            .sync
+            .as_mut()
+            .ok_or_else(|| invalid("sync is not enabled"))?
+            .resume_after_repair()
+            .map_err(shared_error);
+        self.refresh_sync(clock);
+        result
+    }
+
     pub fn sync_status(&self) -> Option<&SyncStatus> {
         self.sync_status.as_ref()
     }

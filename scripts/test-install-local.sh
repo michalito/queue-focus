@@ -69,6 +69,7 @@ case "${1:-}" in
 esac
 APP
 chmod 0755 target/release/queue-focus
+cp target/release/queue-focus target/release/qf-sync
 EOF
 chmod 0755 "$FIXTURE/scripts/cargo"
 ln -s "$FIXTURE/scripts/cargo" "$MOCK_BIN/cargo"
@@ -172,6 +173,8 @@ readonly SERVICE_EXEC_PATH DESKTOP_EXEC_PATH
 
 assert_file "$INSTALLED_BIN"
 assert_file "$INSTALLED_SETUP"
+assert_file "$TEST_HOME/.local/bin/qf-sync"
+[ -x "$TEST_HOME/.local/bin/qf-sync" ] || fail "sync utility must be executable"
 [ ! -L "$INSTALLED_BIN" ] || fail "installed binary must not be a symlink"
 [ ! -L "$INSTALLED_SETUP" ] || fail "installed setup helper must not be a symlink"
 [ "$(stat -c '%a' "$INSTALLED_BIN")" = "755" ] || fail "installed binary mode is not 755"
@@ -232,6 +235,7 @@ printf '{"kept":true}\n' >"$TEST_DATA/queue-focus/tasks.json"
 run_installer --uninstall >/dev/null 2>&1
 assert_absent "$INSTALLED_BIN"
 assert_absent "$INSTALLED_SETUP"
+assert_absent "$TEST_HOME/.local/bin/qf-sync"
 assert_absent "$SERVICE"
 assert_absent "$DESKTOP"
 assert_absent "$INSTALLED_EXTENSION"

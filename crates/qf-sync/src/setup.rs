@@ -423,6 +423,23 @@ pub fn export(directory: &Path, destination: &Path) -> Result<()> {
             serde_json::to_value(&envelope)?,
         )
     };
+    export_snapshot(
+        destination,
+        &store,
+        &intents,
+        &qf_core::load_settings(&directory.join("settings.json"))?,
+    )
+}
+
+/// The caller holds the source host's lock and supplies a coherent snapshot.
+pub(crate) fn export_snapshot(
+    destination: &Path,
+    store: &Store,
+    intents: &serde_json::Value,
+    settings: &qf_core::Settings,
+) -> Result<()> {
+    // create_dir, not create_dir_all: an existing destination is never reused,
+    // even if another process creates it after a picker or existence check.
     fs::create_dir(destination)?;
     let _destination_lock = DataLock::acquire(destination)?;
     // Interrupted export is recognizable, never an apparently empty queue.
@@ -431,16 +448,13 @@ pub fn export(directory: &Path, destination: &Path) -> Result<()> {
         &serde_json::json!({ "export_incomplete": true }),
         4096,
     )?;
-    qf_core::save(&destination.join("tasks.json"), &store)?;
+    qf_core::save(&destination.join("tasks.json"), store)?;
     save_private(
         &destination.join("sync-intents-export.json"),
-        &intents,
+        intents,
         MAX_ENVELOPE_BYTES,
     )?;
-    qf_core::save_settings(
-        &destination.join("settings.json"),
-        &qf_core::load_settings(&directory.join("settings.json"))?,
-    )?;
+    qf_core::save_settings(&destination.join("settings.json"), settings)?;
     fs::remove_file(destination.join(SETUP_FILE))?;
     sync_parent(&destination.join("tasks.json"))?;
     Ok(())

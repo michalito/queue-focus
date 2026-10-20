@@ -197,6 +197,27 @@ pub struct SyncUndo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SyncRecoveryChange {
+    pub command: String,
+    pub title: String,
+    pub attempt: String,
+    pub reason: String,
+    pub copy_text: String,
+}
+
+impl From<qf_core::sync::RecoveryChange> for SyncRecoveryChange {
+    fn from(value: qf_core::sync::RecoveryChange) -> Self {
+        Self {
+            command: value.command,
+            title: value.title,
+            attempt: value.attempt,
+            reason: value.reason,
+            copy_text: value.copy_text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SyncInfo {
     pub state: String,
     pub message: Option<String>,

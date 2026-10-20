@@ -1,8 +1,8 @@
 # Sync server operations
 
-This is the server portion of the sync implementation. The desktop client
-integration is still in progress; deploying this service alone does not enable
-sync in the released apps. See [the design](sync-design.md) for behavior and
+This service connects the macOS and GNOME apps. Deploying it alone does not
+activate sync: install sync-capable apps, enroll each device, then follow
+[client setup](sync-client.md). See [the design](sync-design.md) for behavior and
 [progress](sync-progress.md) for the review checkpoints.
 
 The server serves one person's shared queue. Each device has its own bearer

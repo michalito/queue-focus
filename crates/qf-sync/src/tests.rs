@@ -33,6 +33,143 @@ fn host_locks_standalone_and_refuses_partial_sync_directories() {
 }
 
 #[test]
+fn live_host_exports_pending_intent_and_unsaved_settings_without_changing_source() {
+    let mut server = Server::new();
+    let source = server.initialize();
+    let (host, mut engine, _) = Host::open(&source).unwrap();
+    engine.add("offline capture", None).unwrap();
+    engine.update_settings(|settings| settings.show_timer = false);
+    let before = fs::read(source.join(STATE_FILE)).unwrap();
+    let destination = server.dir.join("live-export");
+    host.export(&engine, &destination).unwrap();
+    assert_eq!(
+        qf_core::load(&destination.join("tasks.json"))
+            .unwrap()
+            .tasks[0]
+            .title,
+        "offline capture"
+    );
+    assert!(
+        !qf_core::load_settings(&destination.join("settings.json"))
+            .unwrap()
+            .show_timer
+    );
+    let exported: Envelope = read_private(
+        &destination.join("sync-intents-export.json"),
+        MAX_ENVELOPE_BYTES,
+    )
+    .unwrap();
+    assert_eq!(exported.pending, engine.sync_envelope().unwrap().pending);
+    assert!(!destination.join(CONFIG_FILE).exists());
+    assert!(!destination.join(STATE_FILE).exists());
+    assert!(!destination.join(setup::SETUP_FILE).exists());
+    assert_eq!(fs::read(source.join(STATE_FILE)).unwrap(), before);
+    assert!(
+        DataLock::acquire(&source).is_err(),
+        "host retains source ownership"
+    );
+    assert!(
+        host.export(&engine, &destination).is_err(),
+        "never reuse a destination"
+    );
+    assert!(
+        host.export(&engine, &source).is_err(),
+        "never downgrade in place"
+    );
+}
+
+#[test]
+fn native_retry_restarts_suspended_transport_with_the_same_pending_command() {
+    let mut server = Server::new();
+    let directory = server.initialize();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    Config {
+        url: format!("http://{}", listener.local_addr().unwrap()),
+        ..server.config.clone()
+    }
+    .save(&directory)
+    .unwrap();
+    let mut database = Database::open(&server.dir.join("server/queue.db")).unwrap();
+    let token = server.config.token.clone();
+    let peer = thread::spawn(move || {
+        let mut requests = vec![];
+        for attempt in 0..2 {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut header = vec![];
+            while !header.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                header.push(byte[0]);
+                assert!(header.len() < 8192);
+            }
+            let header = String::from_utf8(header).unwrap().to_ascii_lowercase();
+            let size: usize = header
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(size < MAX_HTTP_BYTES);
+            let mut body = vec![0; size];
+            socket.read_exact(&mut body).unwrap();
+            let request: ExchangeRequest = serde_json::from_slice(&body).unwrap();
+            let (status, body) = if attempt == 0 {
+                ("401 Unauthorized", vec![])
+            } else {
+                let response = database
+                    .exchange(&token, &request, qf_core::unix_now())
+                    .unwrap();
+                ("200 OK", serde_json::to_vec(&response).unwrap())
+            };
+            requests.push(request);
+            write!(
+                socket,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            socket.write_all(&body).unwrap();
+        }
+        requests
+    });
+    let (mut host, mut engine, _) = Host::open(&directory).unwrap();
+    engine.add("survive suspended worker", None).unwrap();
+    let pending = engine.sync_envelope().unwrap().pending.clone();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.sync_envelope().unwrap().suspension.is_none() {
+        host.pump(&mut engine);
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(engine.sync_envelope().unwrap().pending, pending);
+    host.retry_sync(&mut engine).unwrap();
+    while engine.sync_status().unwrap().pending != 0 {
+        host.pump(&mut engine);
+        assert!(
+            Instant::now() < deadline,
+            "retry must unhalt the existing worker"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let requests = peer.join().unwrap();
+    assert_eq!(requests[0].command, requests[1].command);
+    assert_eq!(requests[1].command.as_ref(), pending.first());
+    assert_eq!(engine.store().tasks.len(), 1);
+    engine
+        .sync_client_mut()
+        .unwrap()
+        .suspend("history mismatch", true)
+        .unwrap();
+    let quarantined = engine.sync_envelope().unwrap().clone();
+    assert!(host.retry_sync(&mut engine).is_err());
+    assert_eq!(engine.sync_envelope(), Some(&quarantined));
+}
+
+#[test]
 fn two_native_hosts_share_queue_now_pause_and_settlement() {
     let mut server = Server::new();
     let mac = server.initialize();

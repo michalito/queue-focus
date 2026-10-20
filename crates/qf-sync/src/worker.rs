@@ -71,6 +71,15 @@ impl Worker {
         self.busy
     }
 
+    /// Only the host calls this, after the journal accepted an explicit retry.
+    /// History quarantine is checked before reaching this transport reset.
+    pub(crate) fn retry(&mut self) {
+        self.halted = false;
+        self.backoff = 1;
+        self.next = 0;
+        self.wake = true;
+    }
+
     /// An engine reopened its durable journal after a panic. Let any old
     /// request finish, then exchange the reopened head/checkpoint. Its receipt
     /// is still idempotent; applying a response to a different journal is not.

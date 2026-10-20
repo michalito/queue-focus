@@ -148,6 +148,7 @@
 				B00000000000000000000051 /* Sources */,
 				B00000000000000000000052 /* Frameworks */,
 				B00000000000000000000055 /* Resources */,
+				B00000000000000000000035 /* Embed sync utility */,
 			);
 			buildRules = (
 			);
@@ -264,6 +265,17 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		B00000000000000000000035 /* Embed sync utility */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ("$(SRCROOT)/QfCore/bin/qf-sync", "$(SRCROOT)/../scripts/embed-mac-sync.sh");
+			name = "Embed sync utility";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/qf-sync");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "bash \"$SRCROOT/../scripts/embed-mac-sync.sh\"";
+		};
 		B00000000000000000000034 /* Build the Rust core */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -279,6 +291,7 @@
 			);
 			outputPaths = (
 				"$(SRCROOT)/QfCore/lib/libqf_ffi.a",
+				"$(SRCROOT)/QfCore/bin/qf-sync",
 				"$(SRCROOT)/QfCore/include/QfCoreFFI.h",
 				"$(SRCROOT)/QfCore/include/module.modulemap",
 				"$(SRCROOT)/QfCore/Sources/QfCore/QfCore.swift",

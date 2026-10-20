@@ -63,6 +63,7 @@ final class QueueModel {
     var actionError: String?
     private(set) var lastRequestPending: String?
     private(set) var focusResults: [String: CommandSettlement] = [:]
+    private(set) var recoveryChanges: [SyncRecoveryChange]
 
     var focusAvailable: Bool {
         guard let sync = snapshot.sync else { return true }
@@ -103,9 +104,22 @@ final class QueueModel {
         snapshot = engine.snapshot()
         settings = engine.settings()
         now = clock()
+        recoveryChanges = engine.syncRecovery()
     }
 
     // MARK: Reading
+
+    func dismissRecovery(_ command: String) {
+        perform { try engine.dismissSyncRecovery(command: command) }
+    }
+
+    func retrySync() {
+        perform { try engine.retrySync() }
+    }
+
+    func exportSync(to destination: URL) -> Bool {
+        perform { try engine.exportSync(destination: destination.path) } != nil
+    }
 
     /// Unix seconds, as the engine counts them.
     var unixNow: UInt64 {
@@ -374,6 +388,8 @@ final class QueueModel {
     private func refresh() {
         let snapshot = engine.snapshot()
         if snapshot != self.snapshot { self.snapshot = snapshot }
+        let recovery = engine.syncRecovery()
+        if recovery != recoveryChanges { recoveryChanges = recovery }
         if let settlement = snapshot.sync?.lastFocusSettlement { record(settlement) }
         let settings = engine.settings()
         if settings != self.settings { self.settings = settings }

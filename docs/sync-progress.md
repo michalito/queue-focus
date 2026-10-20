@@ -31,8 +31,8 @@ is visible even when the app's windows are closed.
 - [x] Protocol and deterministic reducer, tests, Sol green.
 - [x] SQLite server, HTTP and operator tools, tests, Sol green.
 - [x] Client journal, transport and migration utility, tests, Sol green.
-- [ ] Shared engine and native app integration, tests, Sol green.
-- [ ] Full Linux/macOS and end-to-end verification, final Sol green.
+- [x] Shared engine, native apps, recovery and packaging, tests, Sol green.
+- [x] Required Linux/macOS checks and end-to-end verification; optional macOS UI automation blocked as noted below.
 
 Checkpoint one: 23 new sync tests; all 157 core/golden/FFI tests and
 `make check-core` passed. Sol code review round 1 returned green and
@@ -98,4 +98,30 @@ when the settlement event is missed. The headless fixture waits for the actual
 virtual pointer position and enables animations despite software rendering so
 both animation preferences are exercised.
 
-Native recovery surfaces, packaging and final verification remain. Nothing has been activated in the user's app data or deployed to the VPS.
+Checkpoint 5 (native recovery and packaging) is green after two Sol rounds.
+Rejected intent is readable/copyable in Settings, with explicit confirmed
+dismissal and export into a new private directory. Live export retains the
+source lock, pending commands and unflushed settings, and excludes credentials.
+The Linux installer and Debian package include qf-sync; the Mac app bundles a
+signed helper built for both architectures. Sol found that clearing suspension
+did not reset the halted worker, and that GTK cached dismissal sensitivity
+across quarantine transitions. Both were fixed and re-reviewed green. A new
+HTTP test verifies retry after 401 without app restart, preserving command
+identity, and refuses retry for quarantined history.
+
+Final validation: 226 Linux Rust tests plus the isolated GTK widget test,
+Python/JavaScript/installer/version checks, both native D-Bus service suites,
+real GJS adapter and headless GNOME 50 Shell suites pass. macOS required checks,
+core/FFI tests, seven Swift binding tests and 145 app unit tests pass (one existing
+system-shortcut known issue). Rust 1.92 checks pass. The universal macOS release
+dry run passes, including the signed helper; the Debian package builds and both
+packaged executables run. The non-root, read-only server container passes health,
+authentication, initialization, mutation retry after restart, backup and generation
+rotation checks.
+
+The optional macOS UI suite could not initialize: XCTest timed out enabling
+automation mode before running tests. It remains unverified on this machine;
+no permissions or system settings were changed to work around it. This does
+not affect the required CI suite, where UI automation is an opt-in dispatch.
+
+Nothing has been activated in the user's app data or deployed to the VPS.

@@ -42,6 +42,28 @@ impl Host {
         }
     }
 
+    pub fn retry_sync(
+        &mut self,
+        engine: &mut Engine,
+    ) -> Result<qf_core::Outcome<()>, qf_core::EngineError> {
+        let outcome = engine.retry_sync()?;
+        if let Some(worker) = &mut self.worker {
+            worker.retry();
+        }
+        Ok(outcome)
+    }
+
+    /// Export without releasing the source lock or changing its pending work.
+    pub fn export(&self, engine: &Engine, destination: &Path) -> crate::setup::Result<()> {
+        let envelope = engine.sync_envelope().ok_or("sync is not enabled")?;
+        crate::setup::export_snapshot(
+            destination,
+            engine.store(),
+            &serde_json::to_value(envelope)?,
+            engine.settings(),
+        )
+    }
+
     pub fn engine_reopened(&mut self) {
         if let Some(worker) = &mut self.worker {
             worker.engine_reopened();

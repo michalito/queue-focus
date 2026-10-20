@@ -92,6 +92,17 @@ impl Service {
         Ref::map(self.engine.borrow(), Engine::settings)
     }
 
+    pub fn export_sync(&self, destination: &Path) -> qf_sync::setup::Result<()> {
+        self.request(|_| ());
+        self.host
+            .borrow()
+            .export(&self.engine.borrow(), destination)
+    }
+
+    pub fn retry_sync(&self) -> Result<Outcome<()>, EngineError> {
+        self.request(|engine| self.host.borrow_mut().retry_sync(engine))
+    }
+
     pub fn flash_status(&self) -> FlashStatus {
         let now = qf_core::unix_now();
         self.engine.borrow().flash_status(now, local_time(now))

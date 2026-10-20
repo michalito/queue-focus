@@ -210,6 +210,46 @@ fn stale_focus_rejection_keeps_server_state_and_persists_result() {
         Some(result)
     );
     assert_eq!(f.engine.sync_status().unwrap().recovery_items, 1);
+    let recovery = f.engine.sync_recovery();
+    assert_eq!(recovery.len(), 1);
+    assert_eq!(recovery[0].title, "draft");
+    assert_eq!(recovery[0].attempt, "Add to Now");
+    let copy: RecoveryItem = serde_json::from_str(&recovery[0].copy_text).unwrap();
+    assert_eq!(copy.command.id, command);
+    // Dismissal removes only a definitive rejection, never uncertain work.
+    f.engine.add("still pending", None).unwrap();
+    let pending = f.engine.sync_envelope().unwrap().pending.clone();
+    assert!(f
+        .engine
+        .dismiss_sync_recovery(&pending[0].id.to_string())
+        .is_err());
+    let confirmed = f.engine.sync_envelope().unwrap().confirmed.clone();
+    f.engine
+        .dismiss_sync_recovery(&command.to_string())
+        .unwrap();
+    f.reopen();
+    assert!(f.engine.sync_recovery().is_empty());
+    assert_eq!(f.engine.sync_envelope().unwrap().pending, pending);
+    assert_eq!(f.engine.sync_envelope().unwrap().confirmed, confirmed);
+}
+
+#[test]
+fn quarantined_recovery_cannot_be_dismissed_or_retried() {
+    let mut f = Fixture::new();
+    f.engine.add("preserved", None).unwrap();
+    f.engine
+        .sync_client_mut()
+        .unwrap()
+        .suspend("history mismatch", true)
+        .unwrap();
+    f.engine.refresh_sync(ClockSample::now().unwrap());
+    let before = f.engine.sync_envelope().unwrap().clone();
+    assert!(f.engine.retry_sync().is_err());
+    assert!(f
+        .engine
+        .dismiss_sync_recovery(&before.pending[0].id.to_string())
+        .is_err());
+    assert_eq!(f.engine.sync_envelope(), Some(&before));
 }
 
 #[test]
