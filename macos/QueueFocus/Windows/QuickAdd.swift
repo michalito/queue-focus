@@ -35,7 +35,9 @@ final class QuickAddController: NSObject, NSWindowDelegate {
             QuickAddView(close: close).environment(model)
         }
         let host = NSHostingController(rootView: content)
-        host.sizingOptions = [.preferredContentSize]
+        // Keep the content's minimum height while following its preferred
+        // size: a sync message otherwise makes the panel's constraints loop.
+        host.sizingOptions = [.minSize, .preferredContentSize]
         panel.contentViewController = host
         panel.delegate = self
     }
