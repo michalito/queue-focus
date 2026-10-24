@@ -194,9 +194,7 @@ extension View {
     func dropRing(_ ring: DropRing, in drag: DragState, page: Page, cornerRadius: CGFloat = 8) -> some View {
         overlay {
             if drag.marks(.ring(ring), in: page) {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
-                    .accessibilityHidden(true)
+                DropRingShape(cornerRadius: cornerRadius)
             }
         }
     }
@@ -213,12 +211,26 @@ extension View {
     }
 }
 
-/// The line a drop would land on.
+/// The line a drop would land on, in the window's accent.
 struct InsertionLine: View {
+    @Environment(\.adwAccent) private var accent
+
     var body: some View {
-        Capsule()
-            .fill(Color(nsColor: .controlAccentColor))
+        Rectangle()
+            .fill(accent.ink)
             .frame(height: 2)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The ring round a target that takes the task whole.
+private struct DropRingShape: View {
+    let cornerRadius: CGFloat
+    @Environment(\.adwAccent) private var accent
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .strokeBorder(accent.ink, lineWidth: 2)
             .accessibilityHidden(true)
     }
 }

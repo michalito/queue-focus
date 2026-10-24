@@ -163,7 +163,7 @@ final class AccessibilityUITests: AppUITestCase {
         _ = openPopover()
         click(app.menuButtons["gear-menu"])
         click(app.menuItems["gear-settings"])
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        let settings = app.windows["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         return settings
     }

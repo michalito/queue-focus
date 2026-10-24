@@ -244,16 +244,16 @@ extension Keystroke {
 
 /// The `?` popover's list, as GTK's, with the Mac's own keys.
 let shortcutList: [(keys: String, does: String)] = [
-    ("j / k", "move"),
-    ("J / K", "reorder"),
-    ("⏎", "make current"),
+    ("j/k", "move"),
+    ("J/K", "reorder"),
+    ("⏎", "focus"),
     ("d", "done"),
     ("p", "pause"),
-    ("1–4", "Now, Next, Later, Side"),
+    ("1-4", "bucket"),
     ("t", "tag"),
     ("r", "rename"),
-    ("l", "Later shelf"),
+    ("l", "later"),
     ("n", "add"),
-    ("q / b", "Queue / Board"),
+    ("b/q", "view"),
     ("⌘,", "settings"),
 ]

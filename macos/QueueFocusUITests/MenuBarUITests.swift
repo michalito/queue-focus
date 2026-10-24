@@ -161,7 +161,7 @@ final class MenuBarUITests: AppUITestCase {
         _ = openPopover()
         click(app.menuButtons["gear-menu"])
         click(app.menuItems["gear-settings"])
-        XCTAssertTrue(app.windows["com_apple_SwiftUI_Settings_window"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.windows["Settings"].waitForExistence(timeout: 5),
                       "Settings opens from the gear menu")
     }
 
@@ -188,7 +188,7 @@ final class MenuBarUITests: AppUITestCase {
         _ = openPopover()
         click(app.menuButtons["gear-menu"])
         click(app.menuItems["gear-settings"])
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        let settings = app.windows["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.descendants(matching: .any)["setting-show-timer"].firstMatch.click()
         let file = dataHome.appendingPathComponent("queue-focus/settings.json")

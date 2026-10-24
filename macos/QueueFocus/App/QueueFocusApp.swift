@@ -4,6 +4,7 @@ import SwiftUI
 enum WindowID {
     static let queue = "queue"
     static let board = "board"
+    static let settings = "settings"
 }
 
 /// Queue Focus lives in the menu bar: no Dock icon, no window at launch. The
@@ -20,17 +21,26 @@ struct QueueFocusApp: App {
         MenuBarExtra("Queue Focus", isInserted: .constant(false)) {
             EmptyView()
         }
-        Settings {
-            WithModel(delegate: delegate) { SettingsView() }
-        }
+        // Each window draws GNOME's header bar where its title bar was.
         Window("Queue", id: WindowID.queue) {
             WithModel(delegate: delegate) { QueueWindow() }
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 400, height: 640)
         Window("Board", id: WindowID.board) {
             WithModel(delegate: delegate) { BoardWindow() }
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1040, height: 640)
+        // A window of its own rather than SwiftUI's Settings scene, which
+        // draws its own title bar over the header bar.
+        Window("Settings", id: WindowID.settings) {
+            WithModel(delegate: delegate) { SettingsView() }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultSize(width: 400, height: 640)
+        .defaultPosition(.center)
         .commands { AppCommands(delegate: delegate) }
     }
 }
@@ -42,6 +52,10 @@ private struct AppCommands: Commands {
     let delegate: AppDelegate
 
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { openWindow(id: WindowID.settings) }
+                .keyboardShortcut(",")
+        }
         // In the standard View menu: a menu of their own would be a second one.
         CommandGroup(before: .toolbar) {
             Button("Queue") { openWindow(id: WindowID.queue) }

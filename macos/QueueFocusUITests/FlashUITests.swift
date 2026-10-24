@@ -25,7 +25,7 @@ final class FlashUITests: AppUITestCase {
         _ = openPopover()
         click(app.menuButtons["gear-menu"])
         click(app.menuItems["gear-settings"])
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        let settings = app.windows["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         click(settings.buttons["flash-now"])
         XCTAssertTrue(overlay.waitForExistence(timeout: 3), "Flash now draws one at once")

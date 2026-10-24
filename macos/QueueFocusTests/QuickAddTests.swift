@@ -9,7 +9,51 @@ import Testing
 /// makes the app active. Here the keys go to the panel itself, as AppKit
 /// would deliver them.
 @MainActor
-@Suite struct QuickAddTests {
+@Suite(.serialized) struct QuickAddTests {
+    /// Sync already has a status line at launch, while the panel is hidden.
+    /// Its hosting view must settle before it is ever opened, and resize
+    /// when a message is added or cleared without a constraint feedback loop.
+    @Test func aHiddenSyncedPanelLaysOutAndItsMessagesCanChange() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("qf-quick-sync-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let device = UUID().uuidString.lowercased()
+        let envelope: [String: Any] = [
+            "version": 1, "device": device, "server_time": 0, "wall_time": 0,
+            "pending": [], "handles": [:], "next_handle": 1, "recovery": [], "suspension": NSNull(),
+            "confirmed": [
+                "version": 1, "dataset": UUID().uuidString, "generation": UUID().uuidString,
+                "revision": 1, "history": String(repeating: "0", count: 64), "initialized": true,
+                "tasks": [], "focus": ["version": UUID().uuidString, "session": NSNull()], "undo": NSNull(),
+            ],
+        ]
+        let config: [String: Any] = [
+            "version": 1, "url": "http://127.0.0.1:1", "device": device,
+            "token": "localtest", "allow_loopback_http": true,
+        ]
+        for (name, value) in [("sync-state.json", envelope), ("sync-config.json", config)] {
+            let file = dir.appendingPathComponent(name)
+            try JSONSerialization.data(withJSONObject: value).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        }
+        let model = QueueModel(engine: try QueueEngine(dir: dir.path))
+        #expect(model.syncMessage != nil)
+        let quickAdd = QuickAddController(model: model, display: Display(defaults: UserDefaults(suiteName: "qf-quick-add-tests")!))
+        defer { quickAdd.close() }
+        let panel = try #require(NSApp.windows.last { $0.identifier == QuickAddController.identifier })
+        try await Task.sleep(for: .milliseconds(150))
+        panel.contentView?.layoutSubtreeIfNeeded()
+        #expect(!quickAdd.isShown)
+        #expect(try await eventually { panel.frame.height > 60 }, "the sync status has been laid out")
+        let initialHeight = panel.frame.height
+        model.actionError = "The server could not confirm this change. Your draft is still available."
+        #expect(try await eventually { panel.frame.height > initialHeight })
+        model.actionError = nil
+        #expect(try await eventually { abs(panel.frame.height - initialHeight) < 1 },
+                "clearing the message restores height \(initialHeight), got \(panel.frame.height)")
+        #expect(!quickAdd.isShown)
+    }
+
     private func key(_ characters: String, code: UInt16, in window: NSWindow, modifiers: NSEvent.ModifierFlags = []) -> [NSEvent] {
         [NSEvent.EventType.keyDown, .keyUp].compactMap { type in
             NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,

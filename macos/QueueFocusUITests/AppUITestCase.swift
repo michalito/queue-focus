@@ -93,6 +93,10 @@ class AppUITestCase: XCTestCase {
         }
         // Asking for notifications would put the system's prompt on screen.
         app.launchArguments += ["-notifications", "off"]
+        // A window that opens zooms and fades in for a moment after it
+        // exists; an audit then reads its text blended with whatever is
+        // behind it. Without the animation it is whole when it appears.
+        app.launchArguments += ["-NSAutomaticWindowAnimationsEnabled", "NO"]
         for shortcut in Self.testShortcuts {
             // A string in the arguments' plist syntax, holding the JSON
             // KeyboardShortcuts stores.

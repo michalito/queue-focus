@@ -25,6 +25,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     // The item is the controller's to drive; the tests read what it says.
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
+    /// How wide the popover's columns have grown while it is open.
+    private let popoverWidths = PopoverWidths()
     /// What the popover points at when it opens from the item, made when
     /// it first does.
     private var itemAnchor: PopoverAnchorPanel?
@@ -82,16 +84,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             close: { [weak self] in self?.closePopover() },
             quit: quit
         )
+        let widths = popoverWidths
         let host = NSHostingController(rootView: FollowingDisplay(display: display) {
             PopoverView(actions: actions)
                 .environment(model)
                 .environment(loginItem)
+                .environment(widths)
         })
         host.sizingOptions = [.preferredContentSize]
         // SwiftUI's root is a group with no name, and nothing to name: the
         // accessibility audit is told which one it is.
         host.view.setAccessibilityIdentifier(Self.popoverRootIdentifier)
         popover.contentViewController = host
+        // Dark whatever the Mac's appearance, as GNOME Shell's menus are.
+        popover.appearance = NSAppearance(named: .darkAqua)
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
@@ -424,6 +430,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             anchor.orderFrontRegardless()
             pointsAt = anchor.mark
         }
+        popoverWidths.cap = ((window.screen ?? NSScreen.main)?.visibleFrame.width ?? 1440) - 24
         popover.show(relativeTo: pointsAt.bounds, of: pointsAt, preferredEdge: .minY)
         let shown = popover.contentViewController?.view.window
         // Hung on a window of the app's own, the popover has no name of its
@@ -439,6 +446,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     nonisolated func popoverDidClose(_ notification: Notification) {
         MainActor.assumeIsolated {
             popoverIsOnLabel = false
+            popoverWidths.reset()
             itemAnchor?.orderOut(nil)
             let event = NSApp.currentEvent
             closing = Closing(at: ProcessInfo.processInfo.systemUptime, by: event?.type, eventTime: event?.timestamp ?? 0,
