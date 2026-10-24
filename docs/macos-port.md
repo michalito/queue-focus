@@ -165,8 +165,25 @@ Deliberate differences from GNOME, so far:
 - A task completed from a window can be undone from the popover.
 - Settings has a Menu bar section (the title's width in points) where GNOME
   has Top bar; Mac-only settings live in UserDefaults.
-- The windows' controls sit beside the add field, not in a toolbar: a
-  toolbar rebuilt with every tick of the clock crashed AppKit's layout.
+- The look is the GNOME app's, as libadwaita 1.5 draws it on Ubuntu 24.04
+  (`Support/Adwaita.swift`): its colours, the stylesheet's sizes, header
+  bars, cards, chips, switches and segmented choices; the popover is GNOME
+  Shell's menu, dark whatever the Mac's appearance. What still differs:
+  SF at 14 pt where GNOME has Ubuntu Sans at 11 pt (a line of the same
+  length); GNOME's 55% grey text is the readable grey (4.5 to 1); the
+  window's own buttons sit at the header bar's start, the title bar made
+  taller by an empty compact toolbar to centre them (a full-height one
+  takes the header bar's clicks); Queue and Board in the header bar open
+  the other window; the task menu is a Mac menu, without key hints (a
+  menu button's key equivalents act while it is in the window); the
+  popover keeps its arrow. Its columns grow with their titles as GNOME's
+  do, up to the screen's width, and only grow while it is open. The
+  header bar holds no toolbar items: a toolbar rebuilt with every tick of
+  the clock crashed AppKit's layout. The scenes ask for a hidden title
+  bar themselves: set only on the window, SwiftUI put its own back at the
+  next update.
+- The keyboard ring shows once a key has moved it, not after a click, as
+  GTK shows focus only to someone using the keys.
 - The flash is drawn on the screen with the menu bar, as GNOME draws it on
   the primary monitor; the top bar styles colour the menu bar (or the notch
   row, which is taller). Reduce Motion holds it still for 1.5 s, as GNOME
@@ -195,8 +212,10 @@ Deliberate differences from GNOME, so far:
   card is solid. The paused timer in the windows carries the `❚❚` glyph, as
   the menu bar's does, rather than a fainter colour alone.
 - Settings is a window of its own that scrolls, rather than a page in the
-  Queue's window; it adds the menu bar title width, the global shortcuts and
-  Launch at login.
+  Queue's window, laid out as GNOME's page; it adds the menu bar title
+  width, the global shortcuts, the keys and Launch at login. It is a
+  `Window` scene: SwiftUI's `Settings` scene draws its own title bar over
+  the header bar.
 - The Queue and Board windows have no full-screen mode (SwiftUI gives its
   `Window` scenes none).
 - `-displayOptions increaseContrast,reduceTransparency,…` stands in for the
@@ -205,6 +224,12 @@ Deliberate differences from GNOME, so far:
 - `-flashPreview <style>` (`all` for the six in turn), with
   `-flashIntensity` and `-flashPalette`, draws a flash with a sample task
   two seconds after launch, for checking a style by eye.
+- In Debug builds, `-showAtLaunch queue,board,settings,add,popover` opens
+  those a second after launch (`-showAtLaunchHeight` makes the windows
+  taller), to compare them with GNOME's by eye. With `XDG_DATA_HOME` on a
+  folder of its own and `-allowSecondInstance YES`, it shows a made-up
+  queue beside the installed app. Capture a window by its id
+  (`screencapture -l`), never the screen.
 
 Known gaps, to close later:
 - ⌃⌥D is also Rectangle's default for "First Third", and two apps can hold
@@ -262,7 +287,7 @@ points Phase 9 answers. What Phase 9 adds, to check by eye on its build:
 | README section | On the Mac | Covered by |
 | --- | --- | --- |
 | The four buckets | The same: the shared engine. | QfCore EngineTests, QueueModelTests |
-| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, dimmed while paused, and the clock with `❚❚` then. Right-click pauses. A setting draws the title in the centre of the menu bar instead, the item kept as a dot. The popover is fixed-width, with tooltips, and points at the item's right end, which stays put when the title changes; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, CentreTitleTests, MenuBarUITests, CentreTitleUITests, NoticesTests, HotkeyUITests |
+| Top bar | A status item: dot in the tag's colour, the title cut to a width set in Settings, dimmed while paused, and the clock with `❚❚` then. Right-click pauses. A setting draws the title in the centre of the menu bar instead, the item kept as a dot. The popover's columns grow with their titles, as GNOME's menu does, and only grow while it is open; it points at the item's right end, which stays put when the title changes; Done offers Undo for eight seconds; the global shortcut's completion is a notification with Undo, or the popover. Save problems are notifications and the message line. No service to start or quit. | StatusTitleTests, CentreTitleTests, MenuBarUITests, CentreTitleUITests, NoticesTests, HotkeyUITests |
 | Queue view | The same three bands; its own window. | WindowUITests, AccessibilityUITests |
 | Board view | The same four quadrants, drags, rings and lines; its own window. | WindowUITests, DragStateTests |
 | Settings view | Its own window (⌘,), scrolling; adds the menu bar title width, the global shortcuts and Launch at login. | SettingsUITests, HotkeyUITests |
@@ -1068,3 +1093,53 @@ full run without failing a check: the disk had 13 GB free of 926, and as
 Vision compiled its text model macOS purged the test runner's caches and
 ended the runner to do it (`CacheDeleteAppContainerCaches`, in the log).
 With 10 GB of old build output deleted, it passed.
+
+### The GNOME look, GPT (gpt-6.1-sol, xhigh)
+
+The windows, Settings, the popover and quick add redrawn to match the GNOME
+app on Ubuntu 24.04 (`Support/Adwaita.swift`), compared by eye with GTK
+pictures rendered in a 24.04 container and with GNOME Shell 46's own menu.
+
+First pass, not green: four minor findings. The shortcut recorders had lost
+their names for VoiceOver; `→ next` (3.2 to 1) and the popover's empty Side
+line (4.4 to 1) were too faint; the Now panel's focus ring was half the
+accent where the stylesheet has the accent's ink. All fixed.
+
+Second pass, not green: three minor. Settings could be widened past its
+content; on a screen narrower than the popover's floors it could not fit;
+with a bright system accent (yellow) the untagged task's NOW and clock
+read at 3 to 1. Settings sizes to its content; the floors shrink alike past
+the screen; the accent's ink now steps from GNOME's mix towards the text
+colour until it reads at 4.5 to 1 on the panel (AdwaitaTests).
+
+Third and fourth passes, not green: the same check under the pointer and
+pressed. The ink now has to read on the panel at rest and under the hover
+wash; the panel's grey (paused clock, untagged chip, empty panel) is
+stepped the same way; the timer keeps its hover wash while pressed; the
+chosen segment's lift eases off on a header tinted by a bright accent
+(SegmentedLiftTests). Found meanwhile by hand: SwiftUI put its title bar
+back over the header bar at the next update unless the scene asks for a
+hidden one.
+
+Fifth pass, not green: the sliders had lost their steps for VoiceOver and
+the keyboard. They are drawn as GNOME's scale now, stepping by the arrow
+keys, with AppKit's slider as their accessibility representation.
+
+Sixth pass: green, one nit, that GTK 4.14 mixes premultiplied. Taken.
+Seventh pass: green, no findings. 153 unit tests pass; the UI tests wait
+for the user.
+
+The UI suite then ran twice. First: 57 of 59 passed, the quiet hours'
+screen reading skipped for the disk, and the Board's audit with Increase
+Contrast failed two Later titles and a chip whose colours measure 7 to 1
+and more; run alone it passed three times. Pictures of the Board taken as
+it opens showed why: the first is smaller and paler, the window zooming
+and fading in after it exists, so an audit begun then reads text blended
+with what is behind. The tests now launch the app with
+`-NSAutomaticWindowAnimationsEnabled NO`, under which the first picture is
+already the window as it stays. Second run: 57 of 59 again. The audit
+passed; the quiet hours' test, with room on the disk at last, read nothing,
+its pickers now below the fold of Settings, and scrolls to them first; and
+a right click on the centre title once found it not hittable, which it
+was in every run before and after (three alone). Both then passed three
+times running.

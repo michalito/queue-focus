@@ -56,18 +56,33 @@ enum TagStyle {
     }
 }
 
-/// A task's tag as a small coloured letter.
+/// A task's tag as a small coloured letter, in GNOME's chip: a 6 pt
+/// rounded block at least 22 by 18, or the top bar menu's smaller one.
 struct TagChip: View {
     @Environment(\.displayOptions) private var options
     let tag: TaskTag
+    var compact = false
 
     var body: some View {
         Text(TagStyle.letter(tag))
-            .font(.caption2.weight(.bold))
+            .font(Adw.font(compact ? 0.75 : 0.72, .heavy))
             .foregroundStyle(.white)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(TagStyle.solid(tag, options), in: RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, compact ? 6 : 0)
+            .frame(minWidth: compact ? nil : 22, minHeight: compact ? nil : 18)
+            .background(TagStyle.solid(tag, options), in: RoundedRectangle(cornerRadius: Adw.radius))
             .accessibilityLabel(Text(TagStyle.name(tag)))
+    }
+}
+
+/// No tag yet: an outlined dash, so the chip is always in the same place.
+struct UntaggedChip: View {
+    var color = Adw.dim
+
+    var body: some View {
+        Text("–")
+            .font(Adw.font(0.72, .heavy))
+            .foregroundStyle(color)
+            .frame(minWidth: 22, minHeight: 18)
+            .overlay(RoundedRectangle(cornerRadius: Adw.radius).strokeBorder(Adw.wash(0.25)))
     }
 }

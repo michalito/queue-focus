@@ -25,20 +25,29 @@ struct TaskWindow<Content: View>: View {
     }
 
     var body: some View {
-        let tag = model.snapshot.current?.tag
+        let accent = AdwAccent.of(model.snapshot.current?.tag)
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            // GNOME's header bar and the add field's band under it, tinted
+            // together by the current task's tag.
+            VStack(spacing: 0) {
+                HeaderBar {
+                    ViewSwitcher(page: page)
+                } end: {
+                    WindowButtons()
+                }
                 WindowAddField(focus: $focus, firstStop: { order.first })
-                WindowButtons(page: page)
+                    .padding(10)
             }
-            .padding([.horizontal, .top], 12)
-            .padding(.bottom, 8)
-            content($focus)
+            .background(accent.headerBar)
             MessageLine()
+            content($focus)
         }
+        .background(Adw.window)
+        .foregroundStyle(Adw.foreground)
+        .modifier(HeaderBarWindow())
         .environment(context)
-        .background(TagStyle.accent(tag).opacity(tag == nil ? 0 : 0.04))
-        .tint(TagStyle.solid(tag, options))
+        .environment(\.adwAccent, accent)
+        .tint(accent.background)
         .onKeyPress(phases: .down, action: handle)
         .onAppear { settleFocus() }
         .onChange(of: model.snapshot) { _, _ in
@@ -53,6 +62,8 @@ struct TaskWindow<Content: View>: View {
             settleFocus()
         }
         .onChange(of: focus) { _, now in
+            // Tab moves the keyboard without a key reaching `handle`.
+            if NSApp.currentEvent?.type == .keyDown { context.showsFocus = true }
             if let target = keeper.moved(to: now, order: order, renaming: context.renaming) {
                 focus = target
             }
@@ -79,6 +90,7 @@ struct TaskWindow<Content: View>: View {
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
+        context.showsFocus = true
         // Typing goes to the field being typed in.
         switch focus {
         case .add, .rename: return .ignored
@@ -129,38 +141,44 @@ struct TaskWindow<Content: View>: View {
     }
 }
 
-/// The other view, the keys, and Settings, beside the add field. Not in the
-/// toolbar: a toolbar rebuilt with every tick of the clock sends AppKit's
-/// layout round in circles until it gives up.
-private struct WindowButtons: View {
-    @Environment(WindowContext.self) private var context
+/// Queue and Board, as GNOME's header bar switches between them. Here they
+/// are two windows: the other one opens, and this one stays.
+private struct ViewSwitcher: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.adwAccent) private var accent
     let page: Page
 
     var body: some View {
-        @Bindable var context = context
-        HStack(spacing: 2) {
-            Button(page == .queue ? "Board" : "Queue") {
-                openWindow(id: page == .queue ? WindowID.board : WindowID.queue)
+        Segmented(options: [(Page.queue, "Queue"), (Page.board, "Board")], selection: page,
+                  help: { $0 == .queue ? "Queue (q, ⌘1)" : "Board (b, ⌘2)" },
+                  identifier: { $0 == page ? nil : "open-other-view" },
+                  surface: accent.headerBarNS) { other in
+            if other != page {
+                openWindow(id: other == .queue ? WindowID.queue : WindowID.board)
             }
-            .help(page == .queue ? "Open the Board (⌘2)" : "Open the Queue (⌘1)")
-            .accessibilityIdentifier("open-other-view")
-            Button {
-                context.showShortcuts.toggle()
-            } label: {
-                Image(systemName: "questionmark.circle")
-            }
-            .help("Keyboard shortcuts (?)")
-            .accessibilityLabel("Keyboard shortcuts")
-            .popover(isPresented: $context.showShortcuts) { ShortcutList() }
-            .accessibilityIdentifier("shortcuts")
-            SettingsLink {
-                Image(systemName: "gearshape")
-            }
-            .help("Settings (⌘,)")
-            .accessibilityLabel("Settings")
         }
-        .buttonStyle(.borderless)
+    }
+}
+
+/// Settings and the keys, at the end of the header bar. Not in a toolbar:
+/// a toolbar rebuilt with every tick of the clock sends AppKit's layout
+/// round in circles until it gives up.
+private struct WindowButtons: View {
+    @Environment(WindowContext.self) private var context
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        @Bindable var context = context
+        HStack(spacing: 6) {
+            HeaderGlyphButton(glyph: "gearshape.fill", symbol: true) { openWindow(id: WindowID.settings) }
+                .help("Settings (⌘,)")
+                .accessibilityLabel("Settings")
+            HeaderGlyphButton(glyph: "?") { context.showShortcuts.toggle() }
+                .help("Keyboard shortcuts (?)")
+                .accessibilityLabel("Keyboard shortcuts")
+                .popover(isPresented: $context.showShortcuts, arrowEdge: .bottom) { ShortcutList() }
+                .accessibilityIdentifier("shortcuts")
+        }
     }
 }
 
@@ -175,11 +193,11 @@ private struct WindowAddField: View {
     @State private var pendingAdd: PendingAdd?
 
     var body: some View {
-        TextField("Add…  !now  #w #p  @later @side", text: $draft)
+        TextField("Add…  !now  #w #p  @later @side  (⏎)", text: $draft)
                 .disabled(pendingAdd != nil)
                 .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
                 .onAppear { reconcilePendingAdd() }
-            .textFieldStyle(.roundedBorder)
+            .modifier(AdwEntry(focused: focus.wrappedValue == .add))
             .focused(focus, equals: .add)
             .onSubmit {
                 submit(asCurrent: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
@@ -227,23 +245,29 @@ private struct WindowAddField: View {
 /// The keys, as the `?` button lists them.
 private struct ShortcutList: View {
     var body: some View {
-        ShortcutLines(spacing: 6)
-            .padding(14)
+        ShortcutLines(rowSpacing: 5)
+            .font(Adw.font(0.8))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
     }
 }
 
-/// The task keys, a line each: the key, set apart by weight (a key such as
-/// `l` is one thin stroke, too faint in grey) and padded so the meanings line
-/// up, then what it does. One text a line, which VoiceOver reads whole.
+/// The task keys, a line each: the key in a faded monospace column, then
+/// what it does. One element a line, which VoiceOver reads whole.
 struct ShortcutLines: View {
-    let spacing: CGFloat
+    let rowSpacing: CGFloat
 
     var body: some View {
-        let width = shortcutList.map(\.keys.count).max() ?? 0
-        VStack(alignment: .leading, spacing: spacing) {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: rowSpacing) {
             ForEach(shortcutList, id: \.keys) { shortcut in
-                let key = shortcut.keys.padding(toLength: width, withPad: " ", startingAt: 0)
-                Text("\(Text(key).font(.body.monospaced().weight(.semibold)))   \(shortcut.does)")
+                GridRow {
+                    Text(shortcut.keys)
+                        .font(Adw.font(0.8, .semibold, design: .monospaced))
+                        .foregroundStyle(Adw.dim)
+                        .frame(minWidth: 44, alignment: .leading)
+                    Text(shortcut.does)
+                }
+                .accessibilityElement(children: .combine)
             }
         }
     }

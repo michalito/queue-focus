@@ -78,7 +78,7 @@ final class HotkeyUITests: AppUITestCase {
         _ = openPopover()
         click(app.menuButtons["gear-menu"])
         click(app.menuItems["gear-settings"])
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        let settings = app.windows["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         for title in ["Show or hide the Queue", "Quick add", "Show the Board", "Complete the current task"] {
             XCTAssertTrue(settings.staticTexts[title].waitForExistence(timeout: 5), title)

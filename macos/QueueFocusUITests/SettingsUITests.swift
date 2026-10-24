@@ -8,7 +8,7 @@ final class SettingsUITests: AppUITestCase {
         _ = openPopover()
         click(app.menuButtons["gear-menu"])
         click(app.menuItems["gear-settings"])
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        let settings = app.windows["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings opens")
         return settings
     }
@@ -74,6 +74,13 @@ final class SettingsUITests: AppUITestCase {
         let from = settings.datePickers["setting-quiet-from"]
         let to = settings.datePickers["setting-quiet-to"]
         XCTAssertTrue(from.waitForExistence(timeout: 5))
+        // Settings scrolls, and the Quiet group is below the fold: a picture
+        // of a picker out of view is of whatever is there instead.
+        let form = settings.scrollViews.firstMatch
+        for _ in 0..<8 where !(form.frame.contains(from.frame) && form.frame.contains(to.frame)) {
+            form.scroll(byDeltaX: 0, deltaY: -150)
+        }
+        XCTAssertTrue(form.frame.contains(from.frame) && form.frame.contains(to.frame), "the pickers are in view")
         let shown = try "\(readText(from)) / \(readText(to))"
         XCTAssertTrue(shown.contains("2:30") && (shown.contains("18:45") || shown.contains("6:45")), shown)
     }

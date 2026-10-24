@@ -83,6 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Alerts.show("Queue Focus could not read its settings", warning, style: .warning)
         }
         FlashPreview.schedule(FlashPreview.events(.standard), on: flash)
+        #if DEBUG
+        ShowAtLaunch.schedule(.standard, windows: windows, quickAdd: quickAdd, popover: { statusItem.showPopover() })
+        #endif
         links.open { [weak self] in self?.follow($0) }
     }
 

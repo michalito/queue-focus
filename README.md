@@ -262,6 +262,8 @@ There is no automatic update yet. To update, quit Queue Focus and replace the ap
 
 Nothing opens. The current task appears in the menu bar with its clock. Click it to open the menu, which holds the current task, the add field, Side, and buttons for the Queue and Board windows. Right-click it, or Control-click it, to pause or resume the timer. While the timer is paused the title is dimmed, the time stops, and a `❚❚` leads the clock. The menu points at the right end of the title, the end that stays where it is when the title changes, so the menu does not move while it is open. The gear in the menu opens Settings, turns on Launch at Login, and quits.
 
+The windows look as they do on GNOME: a header bar tinted by the current task's tag, with Queue and Board in the middle and the gear and `?` at the end, the add field under it, and the same cards, chips and colours. Choosing Queue or Board in the header bar opens that window. The menu is dark, as GNOME Shell's menus are, whatever the Mac's appearance.
+
 macOS may ask you to allow Launch at Login in System Settings › General › Login Items. Queue Focus asks to show notifications the first time it has one to show; without them, the menu opens instead. It needs no Accessibility permission.
 
 ### The task in the centre of the menu bar

@@ -38,6 +38,9 @@ final class QuickAddController: NSObject, NSWindowDelegate {
         // Keep the content's minimum height while following its preferred
         // size: a sync message otherwise makes the panel's constraints loop.
         host.sizingOptions = [.minSize, .preferredContentSize]
+        // The view's header is the panel's title bar: no room is kept for
+        // the bar the panel does not show.
+        host.safeAreaRegions = []
         panel.contentViewController = host
         panel.delegate = self
     }
@@ -111,14 +114,37 @@ private struct QuickAddView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Add…  !now  #w #p  @later @side", text: $draft)
+            // GNOME's quick add is a small window of its own: its title bar,
+            // then the entry. This one floats, as a panel, and moves by its
+            // background.
+            ZStack {
+                Text("Add task")
+                    .font(Adw.font(1, .bold))
+                    .accessibilityAddTraits(.isHeader)
+                HStack {
+                    Spacer()
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .heavy))
+                            .frame(width: 22, height: 22)
+                            .background(Adw.wash(0.1), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close (Escape)")
+                    .accessibilityLabel("Close")
+                }
+                .padding(.trailing, 10)
+            }
+            .frame(height: 38)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: Adw.headerBarNS))
+            TextField("Add…  !now  #w #p  @later @side  (⏎)", text: $draft)
                 .disabled(pendingAdd != nil)
                 .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
                 .onAppear { reconcilePendingAdd() }
-                .textFieldStyle(.plain)
-                .font(.title2)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .modifier(AdwEntry(font: Adw.font(1.2), padding: EdgeInsets(top: 7, leading: 14, bottom: 7, trailing: 14),
+                                   focused: true))
+                .padding(8)
                 .onSubmit {
                     submit(asCurrent: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
                 }
@@ -141,6 +167,8 @@ private struct QuickAddView: View {
             MessageLine()
         }
         .frame(width: 520)
+        .background(Adw.window)
+        .foregroundStyle(Adw.foreground)
     }
 
     private func submit(asCurrent: Bool) {
