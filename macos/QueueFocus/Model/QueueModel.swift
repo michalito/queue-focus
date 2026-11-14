@@ -82,8 +82,8 @@ final class QueueModel {
     private(set) var undoOffer: UndoOffer?
     /// Why the last request from a view failed, for the popover's message line.
     var actionError: String?
-    /// The server's answers to the adds an add field waits for, by command.
-    /// Only awaited adds are kept, and each until its field takes it.
+    /// The server's answers to the adds an add field waits for, by command,
+    /// each kept until its field takes it or goes.
     private(set) var settledAdds: [String: CommandSettlement] = [:]
     private(set) var recoveryChanges: [SyncRecoveryChange]
 
@@ -110,8 +110,7 @@ final class QueueModel {
     /// Told of every problem the engine reports, after the message line is.
     @ObservationIgnored var didReport: @MainActor ([String]) -> Void = { _ in }
 
-    /// The adds whose settlement an add field waits for.
-    @ObservationIgnored private var awaitedAdds: Set<String> = []
+    @ObservationIgnored private var inbox = SettlementInbox()
     @ObservationIgnored private let engine: QueueEngine
     @ObservationIgnored private let clock: () -> Date
     @ObservationIgnored private let calendar: Calendar
@@ -125,6 +124,8 @@ final class QueueModel {
         settings = engine.settings()
         now = clock()
         recoveryChanges = engine.syncRecovery()
+        // A receipt kept from before the app started was told then.
+        if let settlement = snapshot.sync?.lastFocusSettlement { inbox.alreadyTold(settlement) }
     }
 
     // MARK: Reading
@@ -184,18 +185,18 @@ final class QueueModel {
         }
     }
 
-    /// Keep the server's answer to a pending add until `takeSettlement`
-    /// asks for it. An answer already in hand is kept at once.
-    func awaitSettlement(of command: String) {
-        awaitedAdds.insert(command)
-        if let settlement = snapshot.sync?.lastFocusSettlement { keep(settlement) }
+    /// Keep the server's answer to a pending add for `draft`, until it takes
+    /// it or goes. An answer already in hand is kept at once.
+    func awaitSettlement(of command: String, by draft: AddDraft) {
+        inbox.wait(for: command, by: draft, latest: snapshot.sync?.lastFocusSettlement)
+        publishSettledAdds()
     }
 
     /// The server's answer to an awaited add, once it has come. Taking it
     /// ends the wait.
     func takeSettlement(of command: String) -> CommandSettlement? {
-        guard let settlement = settledAdds.removeValue(forKey: command) else { return nil }
-        awaitedAdds.remove(command)
+        let settlement = inbox.take(command)
+        publishSettledAdds()
         return settlement
     }
 
@@ -364,7 +365,7 @@ final class QueueModel {
                 settingsProblem = problem
                 tell([problem])
             }
-            for settlement in tick.settlements { settled(settlement) }
+            for settlement in tick.settlements { hear(settlement) }
             report(tick.problems)
             if let flash = tick.flash {
                 presentFlash(flash)
@@ -432,25 +433,29 @@ final class QueueModel {
         let recovery = engine.syncRecovery()
         if recovery != recoveryChanges { recoveryChanges = recovery }
         // The settlement event can be missed; the status keeps the last one.
-        if let settlement = snapshot.sync?.lastFocusSettlement { keep(settlement) }
+        if let settlement = snapshot.sync?.lastFocusSettlement { hear(settlement) }
+        if inbox.hasAbandoned {
+            inbox.dropAbandoned()
+            publishSettledAdds()
+        }
         let settings = engine.settings()
         if settings != self.settings { self.settings = settings }
         didChange()
     }
 
-    /// A receipt from the server, told once by the engine's tick.
-    private func settled(_ settlement: CommandSettlement) {
+    /// A receipt from the server, by either way it comes. A refusal is said
+    /// on the message line once, however many times it is heard.
+    private func hear(_ settlement: CommandSettlement) {
+        guard inbox.hear(settlement) else { return }
         if !settlement.applied {
             actionError = settlement.message ?? "The shared change was not applied."
         }
-        keep(settlement)
+        publishSettledAdds()
     }
 
-    /// Keep an awaited add's receipt for its field.
-    private func keep(_ settlement: CommandSettlement) {
-        let command = settlement.commandId
-        guard awaitedAdds.contains(command), settledAdds[command] == nil else { return }
-        settledAdds[command] = settlement
+    /// Show the add fields the receipts held for them, when that changed.
+    private func publishSettledAdds() {
+        if inbox.held != settledAdds { settledAdds = inbox.held }
     }
 
     private func localTime(_ date: Date) -> TimeOfDay {
@@ -468,3 +473,5 @@ final class QueueModel {
         }
     }
 }
+
+extension QueueModel: DraftHost {}
