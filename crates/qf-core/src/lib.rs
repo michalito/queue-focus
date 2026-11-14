@@ -19,7 +19,7 @@ pub mod sync;
 mod tasks;
 
 pub use elapsed::{long_elapsed, short_elapsed};
-pub use engine::{Engine, EngineError, Tick, MAX_SETTINGS_PATCH_BYTES};
+pub use engine::{pending_message, Engine, EngineError, Submitted, Tick, MAX_SETTINGS_PATCH_BYTES};
 
 pub use model::{
     unix_now, Bucket, Completed, QuickAdd, Store, Tag, Task, MAX_QUICK_ADD_BYTES, MAX_TITLE_CHARS,

@@ -4,18 +4,23 @@
 //! Each host maps its own surface onto this one to one: the GNOME service
 //! onto D-Bus, the macOS app onto Swift. The host calls `tick` once a second
 //! and owns the reminder's clock, calendar and entropy.
+//!
+//! The queue is either this device's own file or a shared queue kept in step
+//! with a sync server. Both answer the same requests; only the shared one can
+//! answer that a change was sent and waits for the server.
 
 mod shared;
 
 use crate::reminder::Reminder;
 use crate::settings_store::SettingsStore;
 use crate::store::{SETTINGS_FILE, TASKS_FILE};
-use crate::sync::{Client, Id, SyncStatus};
+use crate::sync::{Client, ClockSample, Envelope, Id, RecoveryChange, SyncStatus};
 use crate::tasks::Tasks;
 use crate::{
     Bucket, FlashEvent, FlashStatus, Outcome, Settings, Store, Tag, Task, TimeOfDay,
     MAX_QUICK_ADD_BYTES,
 };
+use shared::Shared;
 use std::fmt;
 use std::io;
 use std::path::Path;
@@ -28,15 +33,13 @@ pub const MAX_SETTINGS_PATCH_BYTES: usize = 4 * 1024;
 /// How much of an unknown setting's name an error repeats.
 const MAX_ERROR_FIELD_CHARS: usize = 64;
 
-/// A refused request, or a durable command awaiting server confirmation.
+/// A refused request. Nothing changed.
 #[derive(Debug)]
 pub enum EngineError {
     /// The arguments could not be used, or named a task that is not there.
     InvalidArgument(String),
     /// The change could not be saved, so it was rolled back.
     Persistence(io::Error),
-    /// Saved locally; no optimistic change to shared Now or its timer.
-    Pending { command_id: Id },
 }
 
 impl fmt::Display for EngineError {
@@ -44,9 +47,6 @@ impl fmt::Display for EngineError {
         match self {
             EngineError::InvalidArgument(message) => f.write_str(message),
             EngineError::Persistence(error) => error.fmt(f),
-            EngineError::Pending { command_id } => {
-                write!(f, "Sent, waiting for confirmation ({command_id})")
-            }
         }
     }
 }
@@ -54,7 +54,7 @@ impl fmt::Display for EngineError {
 impl std::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            EngineError::InvalidArgument(_) | EngineError::Pending { .. } => None,
+            EngineError::InvalidArgument(_) => None,
             EngineError::Persistence(error) => Some(error),
         }
     }
@@ -70,6 +70,55 @@ fn invalid(message: &str) -> EngineError {
     EngineError::InvalidArgument(message.into())
 }
 
+/// What a request that was taken came to.
+///
+/// A change to the queue is applied at once, except a change to the shared
+/// Now or its timer: that is a command the server has to confirm first. It
+/// is saved and sent, the queue stays as it was, and the result arrives as a
+/// settlement in the sync status. Until then nothing may report it done,
+/// offer to undo it, or send it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub enum Submitted<T> {
+    /// Applied and saved: the queue shows it now.
+    Applied(Outcome<T>),
+    /// Saved and sent; the server decides. The id names the command whose
+    /// settlement will say how it went.
+    Pending(Id),
+}
+
+impl<T> Submitted<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Submitted<U> {
+        match self {
+            Submitted::Applied(outcome) => Submitted::Applied(outcome.map(f)),
+            Submitted::Pending(command) => Submitted::Pending(command),
+        }
+    }
+
+    /// The applied change, or `None` while the server has it.
+    pub fn applied(self) -> Option<Outcome<T>> {
+        match self {
+            Submitted::Applied(outcome) => Some(outcome),
+            Submitted::Pending(_) => None,
+        }
+    }
+
+    /// The command the server is deciding, if it is one.
+    pub fn pending(&self) -> Option<Id> {
+        match self {
+            Submitted::Applied(_) => None,
+            Submitted::Pending(command) => Some(*command),
+        }
+    }
+}
+
+/// How a host words a pending change where it can only answer with an
+/// error, as D-Bus and Swift do. Clients read the command id back out of the
+/// parentheses, so the form is part of the D-Bus interface.
+pub fn pending_message(command: Id) -> String {
+    format!("Sent, waiting for confirmation ({command})")
+}
+
 /// What one second of the engine produced.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Tick {
@@ -83,12 +132,35 @@ pub struct Tick {
 
 #[derive(Debug)]
 pub struct Engine {
-    tasks: Tasks,
+    queue: Queue,
     settings: SettingsStore,
     reminder: Reminder,
-    sync: Option<Client>,
-    sync_status: Option<SyncStatus>,
-    sync_status_revision: u64,
+}
+
+/// Where the tasks live.
+#[derive(Debug)]
+enum Queue {
+    /// This device's own task file.
+    Local(Tasks),
+    /// The shared queue, as this device's sync journal projects it. Boxed: it
+    /// carries the whole journal.
+    Shared(Box<Shared>),
+}
+
+impl Queue {
+    fn store(&self) -> &Store {
+        match self {
+            Queue::Local(tasks) => tasks.store(),
+            Queue::Shared(shared) => shared.store(),
+        }
+    }
+
+    fn revision(&self) -> u64 {
+        match self {
+            Queue::Local(tasks) => tasks.revision(),
+            Queue::Shared(shared) => shared.revision(),
+        }
+    }
 }
 
 impl Engine {
@@ -104,41 +176,53 @@ impl Engine {
         let tasks = Tasks::load(dir.join(TASKS_FILE))?;
         let (settings, warning) = SettingsStore::load(dir.join(SETTINGS_FILE));
         let reminder = Reminder::new(now(), settings.get());
-        Ok((
-            Engine {
-                tasks,
-                settings,
-                reminder,
-                sync: None,
-                sync_status: None,
-                sync_status_revision: 0,
-            },
-            warning,
-        ))
+        let engine = Engine {
+            queue: Queue::Local(tasks),
+            settings,
+            reminder,
+        };
+        Ok((engine, warning))
+    }
+
+    /// Open the shared queue held by `client`, and the settings in `dir`. The
+    /// host owns the directory lock and the transport. The standalone task
+    /// file is never read or written: sync has replaced it.
+    pub fn open_with_sync(
+        dir: &Path,
+        client: Client,
+        clock: ClockSample,
+    ) -> (Engine, Option<String>) {
+        let (settings, warning) = SettingsStore::load(dir.join(SETTINGS_FILE));
+        let reminder = Reminder::new(clock.wall, settings.get());
+        let engine = Engine {
+            queue: Queue::Shared(Box::new(Shared::new(client, clock))),
+            settings,
+            reminder,
+        };
+        (engine, warning)
     }
 
     // ---- reading -------------------------------------------------------
 
     pub fn store(&self) -> &Store {
-        self.tasks.store()
+        self.queue.store()
     }
 
-    /// `GetState`: the compact JSON snapshot of the queue.
+    /// `GetState`: the compact JSON snapshot of the queue, with the sync
+    /// status beside it when the queue is shared.
     pub fn state_json(&self) -> String {
-        let json = self.store().snapshot_json();
-        match &self.sync_status {
-            None => json,
-            Some(status) => {
-                let mut value: serde_json::Value = serde_json::from_str(&json).expect("store JSON");
-                value["sync"] = serde_json::to_value(status).expect("sync status JSON");
-                value.to_string()
-            }
+        let mut state = self.store().snapshot_value();
+        if let Some(status) = self.sync_status() {
+            state["sync"] = serde_json::to_value(status).expect("sync status is plain data");
         }
+        state.to_string()
     }
 
-    /// How many task changes have been saved since the engine opened.
+    /// Changes to the queue seen since the engine opened: saved here, or, for
+    /// a shared queue, arrived from the server. Polls that change nothing do
+    /// not count.
     pub fn revision(&self) -> u64 {
-        self.tasks.revision()
+        self.queue.revision()
     }
 
     pub fn settings(&self) -> &Settings {
@@ -152,93 +236,102 @@ impl Engine {
 
     // ---- task changes --------------------------------------------------
 
-    /// Apply any change to the queue and save it. The named methods below
-    /// are the requests other processes can make; a window that drags and
-    /// renames tasks uses this.
+    /// Apply any change to a standalone queue and save it. A shared queue
+    /// refuses: every change to it has to be one of the named requests below,
+    /// which the server can check.
     pub fn update<R>(
         &mut self,
         f: impl FnOnce(&mut Store) -> R,
     ) -> Result<Outcome<R>, EngineError> {
-        if self.sync.is_some() {
-            return Err(invalid("shared queue changes require an explicit command"));
+        match &mut self.queue {
+            Queue::Local(tasks) => Ok(tasks.update(f)?),
+            Queue::Shared(_) => Err(invalid("shared queue changes require an explicit command")),
         }
-        Ok(self.tasks.update(f)?)
     }
 
     /// `Add(text, bucket)`: parse the add markers and create a task. Without
-    /// a bucket the task goes where Settings says, or to Now while Now is
-    /// empty, so that the first task is the one being done; a marker in the
-    /// text wins either way. Returns the new task's id.
-    pub fn add(&mut self, text: &str, bucket: Option<Bucket>) -> Result<Outcome<u64>, EngineError> {
+    /// a bucket the task goes where Settings says; a marker in the text wins
+    /// either way. Standalone, a task added while Now is empty goes to Now,
+    /// so that the first task is the one being done; shared, it does not, as
+    /// taking Now needs the server. Returns the new task's id.
+    pub fn add(
+        &mut self,
+        text: &str,
+        bucket: Option<Bucket>,
+    ) -> Result<Submitted<u64>, EngineError> {
         if text.len() > MAX_QUICK_ADD_BYTES {
             return Err(invalid("task text is too long"));
         }
-        if self.sync.is_some() {
-            return self.shared_add(text, bucket);
-        }
-        let default = bucket.unwrap_or_else(|| match self.store().current() {
-            Some(_) => self.settings().default_bucket,
-            None => Bucket::Now,
-        });
-        let outcome = self.update(|s| s.quick_add(text, default))?;
-        match outcome.value {
-            Some(id) => Ok(outcome.map(|_| id)),
-            None => Err(invalid("empty title")),
+        let default = self.settings.get().default_bucket;
+        match &mut self.queue {
+            Queue::Local(tasks) => {
+                let default = bucket.unwrap_or(match tasks.store().current() {
+                    Some(_) => default,
+                    None => Bucket::Now,
+                });
+                let outcome = tasks.update(|s| s.quick_add(text, default))?;
+                match outcome.value {
+                    Some(id) => applied(outcome.map(|_| id)),
+                    None => Err(invalid("empty title")),
+                }
+            }
+            Queue::Shared(shared) => shared.add(text, bucket.unwrap_or(default)),
         }
     }
 
     /// `CompleteCurrent`: delete the current task and pull the head of Next
     /// into Now. Returns the task that was completed, if Now held one.
-    pub fn complete_current(&mut self) -> Result<Outcome<Option<Task>>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_complete_current();
+    pub fn complete_current(&mut self) -> Result<Submitted<Option<Task>>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(tasks.complete_current()?),
+            Queue::Shared(shared) => shared.complete_current(),
         }
-        Ok(self.tasks.complete_current()?)
     }
 
     /// `Complete(id)`: the current task is completed as by
     /// `complete_current`; any other task is deleted. Either way it is the
-    /// completion `undo_complete` reverses.
-    pub fn complete(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_delete(id, true);
+    /// completion `undo_complete` reverses, but a shared queue only keeps the
+    /// current task's.
+    pub fn complete(&mut self, id: u64) -> Result<Submitted<()>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(found(tasks.complete(id)?)?),
+            Queue::Shared(shared) => shared.delete(id, true),
         }
-        found(self.tasks.complete(id)?)
     }
 
     /// `UndoComplete(id)`: reverse the most recent completion. `false` when
     /// it was not `id`'s, or anything else has changed since.
-    pub fn undo_complete(&mut self, id: u64) -> Result<Outcome<bool>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_undo(id);
+    pub fn undo_complete(&mut self, id: u64) -> Result<Submitted<bool>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(tasks.undo_complete(id)?),
+            Queue::Shared(shared) => shared.undo(id),
         }
-        Ok(self.tasks.undo_complete(id)?)
     }
 
     /// `TogglePause`: pause or resume the current task's timer. `false` when
     /// there is no current task.
-    pub fn toggle_pause(&mut self) -> Result<Outcome<bool>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_pause();
+    pub fn toggle_pause(&mut self) -> Result<Submitted<bool>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(tasks.update(Store::toggle_pause)?),
+            Queue::Shared(shared) => shared.toggle_pause(),
         }
-        self.update(Store::toggle_pause)
     }
 
     /// `Promote(id)`: make a task the current one. The task it replaces moves
     /// to the front of Next.
-    pub fn promote(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_promote(id);
+    pub fn promote(&mut self, id: u64) -> Result<Submitted<()>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(found(tasks.update(|s| s.promote(id))?)?),
+            Queue::Shared(shared) => shared.promote(id),
         }
-        found(self.update(|s| s.promote(id))?)
     }
 
     /// `Remove(id)`: delete a task. Unlike `complete`, it cannot be undone.
-    pub fn remove(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_delete(id, false);
+    pub fn remove(&mut self, id: u64) -> Result<Submitted<()>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(found(tasks.update(|s| s.remove(id))?)?),
+            Queue::Shared(shared) => shared.delete(id, false),
         }
-        found(self.update(|s| s.remove(id))?)
     }
 
     /// `Move(id, bucket, index)`: move a task to a zero-based position, or to
@@ -249,54 +342,50 @@ impl Engine {
         id: u64,
         bucket: Bucket,
         index: Option<usize>,
-    ) -> Result<Outcome<()>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_move_to(id, bucket, index);
+    ) -> Result<Submitted<()>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(found(tasks.update(|s| s.move_to(id, bucket, index))?)?),
+            Queue::Shared(shared) => shared.move_to(id, bucket, index),
         }
-        found(self.update(|s| s.move_to(id, bucket, index))?)
     }
 
     /// `SetTag(id, tag)`: set or clear a task's tag.
-    pub fn set_tag(&mut self, id: u64, tag: Option<Tag>) -> Result<Outcome<()>, EngineError> {
-        if self.sync.is_some() {
-            return self.shared_tag(id, tag);
+    pub fn set_tag(&mut self, id: u64, tag: Option<Tag>) -> Result<Submitted<()>, EngineError> {
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(found(tasks.update(|s| s.set_tag(id, tag))?)?),
+            Queue::Shared(shared) => shared.set_tag(id, tag),
         }
-        found(self.update(|s| s.set_tag(id, tag))?)
     }
 
     // ---- what a window asks for ---------------------------------------
     //
-    // Not on D-Bus, where the GNOME windows change the queue in-process. A
-    // host that cannot pass `update` a closure asks for these by name.
+    // Not on D-Bus, where the GNOME windows change the queue in-process.
 
     /// Cycle a task's tag: none, work, personal, none.
-    pub fn cycle_tag(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
-        if self.sync.is_some() {
-            self.require(id)?;
-            return self.shared_tag(id, Tag::cycle(self.store().get(id).unwrap().tag));
-        }
-        found(self.update(|s| s.cycle_tag(id))?)
+    pub fn cycle_tag(&mut self, id: u64) -> Result<Submitted<()>, EngineError> {
+        let tag = self.require(id)?.tag;
+        self.set_tag(id, Tag::cycle(tag))
     }
 
     /// Rename a task. An empty title is refused and the old one stays.
-    pub fn rename(&mut self, id: u64, title: &str) -> Result<Outcome<()>, EngineError> {
+    pub fn rename(&mut self, id: u64, title: &str) -> Result<Submitted<()>, EngineError> {
         if title.trim().is_empty() {
             return Err(invalid("empty title"));
         }
-        if self.sync.is_some() {
-            return self.shared_rename(id, title);
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(found(tasks.update(|s| s.rename(id, title))?)?),
+            Queue::Shared(shared) => shared.rename(id, title),
         }
-        found(self.update(|s| s.rename(id, title))?)
     }
 
     /// Move a task up (negative) or down within its bucket. Answers whether
     /// it moved: a task already at the edge stays where it is.
-    pub fn shift(&mut self, id: u64, delta: i32) -> Result<Outcome<bool>, EngineError> {
+    pub fn shift(&mut self, id: u64, delta: i32) -> Result<Submitted<bool>, EngineError> {
         self.require(id)?;
-        if self.sync.is_some() {
-            return self.shared_shift(id, delta);
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(tasks.update(|s| s.shift(id, delta))?),
+            Queue::Shared(shared) => shared.shift(id, delta),
         }
-        self.update(|s| s.shift(id, delta))
     }
 
     /// Drop a task before the row `before` of `bucket`, or at its end
@@ -307,18 +396,84 @@ impl Engine {
         id: u64,
         bucket: Bucket,
         before: Option<u64>,
-    ) -> Result<Outcome<bool>, EngineError> {
+    ) -> Result<Submitted<bool>, EngineError> {
         self.require(id)?;
-        if self.sync.is_some() {
-            return self.shared_move_before(id, bucket, before);
+        match &mut self.queue {
+            Queue::Local(tasks) => applied(tasks.update(|s| s.move_before(id, bucket, before))?),
+            Queue::Shared(shared) => shared.move_before(id, bucket, before),
         }
-        self.update(|s| s.move_before(id, bucket, before))
     }
 
-    fn require(&self, id: u64) -> Result<(), EngineError> {
-        match self.store().get(id) {
-            Some(_) => Ok(()),
-            None => Err(invalid("no such task")),
+    fn require(&self, id: u64) -> Result<&Task, EngineError> {
+        self.store().get(id).ok_or_else(|| invalid("no such task"))
+    }
+
+    // ---- sync ------------------------------------------------------------
+    //
+    // A standalone queue has no sync status, and refuses the requests that
+    // only make sense for a shared one.
+
+    /// How the shared queue stands; `None` for a standalone one.
+    pub fn sync_status(&self) -> Option<&SyncStatus> {
+        self.shared().map(Shared::status)
+    }
+
+    /// Bumped whenever `sync_status` changes, so a host can tell its
+    /// listeners without comparing the status itself.
+    pub fn sync_status_revision(&self) -> u64 {
+        self.shared().map_or(0, Shared::status_revision)
+    }
+
+    /// The sync journal, for the host's worker to exchange with the server.
+    pub fn sync_client_mut(&mut self) -> Option<&mut Client> {
+        match &mut self.queue {
+            Queue::Local(_) => None,
+            Queue::Shared(shared) => Some(shared.client_mut()),
+        }
+    }
+
+    /// The saved sync journal, for a recovery export.
+    pub fn sync_envelope(&self) -> Option<&Envelope> {
+        self.shared().map(|shared| shared.client().envelope())
+    }
+
+    /// Changes the server refused, readable, for the user to review.
+    pub fn sync_recovery(&self) -> Vec<RecoveryChange> {
+        self.shared()
+            .map(|shared| shared.client().recovery_changes())
+            .unwrap_or_default()
+    }
+
+    /// Put away one refused change, named by its command id.
+    pub fn dismiss_sync_recovery(&mut self, command: &str) -> Result<Outcome<()>, EngineError> {
+        self.shared_mut()?.dismiss_recovery(command)
+    }
+
+    /// Lift a suspension once its cause is repaired, so the worker sends the
+    /// same commands again.
+    pub fn retry_sync(&mut self) -> Result<Outcome<()>, EngineError> {
+        self.shared_mut()?.retry()
+    }
+
+    /// Take in what the worker changed in the journal: the queue the views
+    /// show and the status. Called after each exchange.
+    pub fn refresh_sync(&mut self, clock: ClockSample) {
+        if let Queue::Shared(shared) = &mut self.queue {
+            shared.refresh(clock);
+        }
+    }
+
+    fn shared(&self) -> Option<&Shared> {
+        match &self.queue {
+            Queue::Local(_) => None,
+            Queue::Shared(shared) => Some(shared),
+        }
+    }
+
+    fn shared_mut(&mut self) -> Result<&mut Shared, EngineError> {
+        match &mut self.queue {
+            Queue::Local(_) => Err(invalid("sync is not enabled")),
+            Queue::Shared(shared) => Ok(shared),
         }
     }
 
@@ -358,7 +513,7 @@ impl Engine {
         let settings_problem = self.settings.tick();
         let settings_outage_ended = was_out && !self.settings.in_outage();
         let flash = self.reminder.tick(
-            self.tasks.store(),
+            self.queue.store(),
             self.settings.get(),
             now,
             local_time,
@@ -375,14 +530,19 @@ impl Engine {
     /// The wait for the next one starts over.
     pub fn flash_now(&mut self, now: u64, random: u32) -> Option<FlashEvent> {
         self.reminder
-            .flash_now(self.tasks.store(), self.settings.get(), now, random)
+            .flash_now(self.queue.store(), self.settings.get(), now, random)
     }
 
     /// Why the next flash is held back, or how long until it arrives.
     pub fn flash_status(&self, now: u64, local_time: TimeOfDay) -> FlashStatus {
         self.reminder
-            .status(self.tasks.store(), self.settings.get(), now, local_time)
+            .status(self.queue.store(), self.settings.get(), now, local_time)
     }
+}
+
+/// A change to the standalone queue: always applied once it is saved.
+fn applied<T>(outcome: Outcome<T>) -> Result<Submitted<T>, EngineError> {
+    Ok(Submitted::Applied(outcome))
 }
 
 /// A request that named a task found it; one that did not is refused.
@@ -443,6 +603,14 @@ mod tests {
         engine.store().in_bucket(bucket).map(|t| t.id).collect()
     }
 
+    /// A standalone request is applied, never pending.
+    fn done<T: fmt::Debug>(result: Result<Submitted<T>, EngineError>) -> Outcome<T> {
+        match result {
+            Ok(Submitted::Applied(outcome)) => outcome,
+            other => panic!("expected an applied change, got {other:?}"),
+        }
+    }
+
     fn invalid_message<T: fmt::Debug>(result: Result<T, EngineError>) -> String {
         match result {
             Err(EngineError::InvalidArgument(message)) => message,
@@ -454,7 +622,7 @@ mod tests {
     fn opening_reads_both_files_from_one_directory() {
         let dir = temp_dir("open");
         let mut engine = open(&dir);
-        let id = engine.add("first #w", None).unwrap().value;
+        let id = done(engine.add("first #w", None)).value;
         assert!(engine.set_settings(r#"{"interval_min":5}"#).unwrap());
         assert!(engine.flush().is_none());
 
@@ -484,7 +652,7 @@ mod tests {
             NOON
         })
         .unwrap();
-        engine.add("now", Some(Bucket::Now)).unwrap();
+        done(engine.add("now", Some(Bucket::Now)));
         assert_eq!(engine.flash_status(NOON, noon()).remaining, Some(60));
         fs::remove_dir_all(dir).unwrap();
     }
@@ -513,20 +681,14 @@ mod tests {
     fn add_parses_markers_and_falls_back_to_the_chosen_bucket() {
         let dir = temp_dir("add");
         let mut engine = open(&dir);
-        let current = engine.add("now #p", Some(Bucket::Now)).unwrap().value;
-        let next = engine.add("plain", None).unwrap().value;
+        let current = done(engine.add("now #p", Some(Bucket::Now))).value;
+        let next = done(engine.add("plain", None)).value;
         assert_eq!(ids(&engine, Bucket::Next), vec![next]);
 
         engine.update_settings(|s| s.default_bucket = Bucket::Side);
-        let side = engine.add("side by default", None).unwrap().value;
-        let later = engine
-            .add("asked for later", Some(Bucket::Later))
-            .unwrap()
-            .value;
-        let marked = engine
-            .add("marker wins @next", Some(Bucket::Later))
-            .unwrap()
-            .value;
+        let side = done(engine.add("side by default", None)).value;
+        let later = done(engine.add("asked for later", Some(Bucket::Later))).value;
+        let marked = done(engine.add("marker wins @next", Some(Bucket::Later))).value;
         assert_eq!(ids(&engine, Bucket::Side), vec![side]);
         assert_eq!(ids(&engine, Bucket::Later), vec![later]);
         assert_eq!(ids(&engine, Bucket::Next), vec![next, marked]);
@@ -543,23 +705,23 @@ mod tests {
         let dir = temp_dir("add-first");
         let mut engine = open(&dir);
         engine.update_settings(|s| s.default_bucket = Bucket::Later);
-        let asked = engine.add("asked for", Some(Bucket::Next)).unwrap().value;
-        let marked = engine.add("marked @side", None).unwrap().value;
+        let asked = done(engine.add("asked for", Some(Bucket::Next))).value;
+        let marked = done(engine.add("marked @side", None)).value;
         assert!(engine.store().current().is_none(), "a named bucket is kept");
         assert_eq!(ids(&engine, Bucket::Next), vec![asked]);
         assert_eq!(ids(&engine, Bucket::Side), vec![marked]);
 
-        let first = engine.add("first #w", None).unwrap().value;
+        let first = done(engine.add("first #w", None)).value;
         let current = engine.store().current().unwrap();
         assert_eq!((current.id, current.tag), (first, Some(Tag::Work)));
         assert!(current.started_at.is_some(), "and its clock runs");
-        let second = engine.add("second", None).unwrap().value;
+        let second = done(engine.add("second", None)).value;
         assert_eq!(ids(&engine, Bucket::Now), vec![first]);
         assert_eq!(ids(&engine, Bucket::Later), vec![second], "Settings again");
 
         // Emptied by hand, as a completion with Next empty would leave it.
-        engine.remove(first).unwrap();
-        let third = engine.add("third", None).unwrap().value;
+        done(engine.remove(first));
+        let third = done(engine.add("third", None)).value;
         assert_eq!(ids(&engine, Bucket::Now), vec![third]);
 
         fs::remove_dir_all(dir).unwrap();
@@ -587,7 +749,7 @@ mod tests {
     fn requests_naming_a_missing_task_are_refused_and_change_nothing() {
         let dir = temp_dir("missing");
         let mut engine = open(&dir);
-        engine.add("only", None).unwrap();
+        done(engine.add("only", None));
         let revision = engine.revision();
         for message in [
             invalid_message(engine.complete(99)),
@@ -606,31 +768,26 @@ mod tests {
     fn a_window_s_requests_answer_whether_they_did_anything() {
         let dir = temp_dir("window");
         let mut engine = open(&dir);
-        let a = engine.add("a", Some(Bucket::Next)).unwrap().value;
-        let b = engine.add("b", Some(Bucket::Next)).unwrap().value;
-        let side = engine.add("side", Some(Bucket::Side)).unwrap().value;
+        let a = done(engine.add("a", Some(Bucket::Next))).value;
+        let b = done(engine.add("b", Some(Bucket::Next))).value;
+        let side = done(engine.add("side", Some(Bucket::Side))).value;
 
-        engine.cycle_tag(a).unwrap();
+        done(engine.cycle_tag(a));
         assert_eq!(engine.store().get(a).unwrap().tag, Some(Tag::Work));
-        engine.rename(a, "  renamed ").unwrap();
+        done(engine.rename(a, "  renamed "));
         assert_eq!(engine.store().get(a).unwrap().title, "renamed");
         assert_eq!(invalid_message(engine.rename(a, "   ")), "empty title");
         assert_eq!(engine.store().get(a).unwrap().title, "renamed");
 
-        assert!(!engine.shift(a, -1).unwrap().value, "already first");
-        assert!(engine.shift(a, 1).unwrap().value);
+        assert!(!done(engine.shift(a, -1)).value, "already first");
+        assert!(done(engine.shift(a, 1)).value);
         assert_eq!(ids(&engine, Bucket::Next), vec![b, a]);
 
-        assert!(
-            engine
-                .move_before(side, Bucket::Next, Some(a))
-                .unwrap()
-                .value
-        );
+        assert!(done(engine.move_before(side, Bucket::Next, Some(a))).value);
         assert_eq!(ids(&engine, Bucket::Next), vec![b, side, a]);
         let revision = engine.revision();
         assert!(
-            !engine.move_before(a, Bucket::Later, Some(b)).unwrap().value,
+            !done(engine.move_before(a, Bucket::Later, Some(b))).value,
             "b is not in Later"
         );
         assert_eq!(engine.revision(), revision, "a refused drop saves nothing");
@@ -651,42 +808,39 @@ mod tests {
     fn the_named_requests_do_what_the_interface_says() {
         let dir = temp_dir("requests");
         let mut engine = open(&dir);
-        let a = engine.add("a", Some(Bucket::Now)).unwrap().value;
-        let b = engine.add("b", None).unwrap().value;
-        let c = engine.add("c", Some(Bucket::Later)).unwrap().value;
+        let a = done(engine.add("a", Some(Bucket::Now))).value;
+        let b = done(engine.add("b", None)).value;
+        let c = done(engine.add("c", Some(Bucket::Later))).value;
 
-        assert!(engine.toggle_pause().unwrap().value);
+        assert!(done(engine.toggle_pause()).value);
         assert!(engine.store().current().unwrap().is_paused());
-        engine.set_tag(b, Some(Tag::Work)).unwrap();
-        engine.set_tag(b, None).unwrap();
+        done(engine.set_tag(b, Some(Tag::Work)));
+        done(engine.set_tag(b, None));
         assert_eq!(engine.store().get(b).unwrap().tag, None);
 
-        engine.promote(c).unwrap();
+        done(engine.promote(c));
         assert_eq!(engine.store().current().unwrap().id, c);
         assert_eq!(ids(&engine, Bucket::Next), vec![a, b]);
 
-        engine.move_to(b, Bucket::Next, Some(0)).unwrap();
+        done(engine.move_to(b, Bucket::Next, Some(0)));
         assert_eq!(ids(&engine, Bucket::Next), vec![b, a]);
-        engine.move_to(b, Bucket::Next, None).unwrap();
+        done(engine.move_to(b, Bucket::Next, None));
         assert_eq!(
             ids(&engine, Bucket::Next),
             vec![a, b],
             "no index is the end"
         );
 
-        let done = engine.complete_current().unwrap().value.unwrap();
-        assert_eq!(done.id, c);
+        let completed = done(engine.complete_current()).value.unwrap();
+        assert_eq!(completed.id, c);
         assert_eq!(engine.store().current().unwrap().id, a);
-        assert!(engine.undo_complete(c).unwrap().value);
+        assert!(done(engine.undo_complete(c)).value);
         assert_eq!(engine.store().current().unwrap().id, c);
 
-        engine.complete(b).unwrap();
+        done(engine.complete(b));
         assert!(engine.store().get(b).is_none());
-        engine.remove(a).unwrap();
-        assert!(
-            !engine.undo_complete(b).unwrap().value,
-            "stale after a remove"
-        );
+        done(engine.remove(a));
+        assert!(!done(engine.undo_complete(b)).value, "stale after a remove");
 
         let state: serde_json::Value = serde_json::from_str(&engine.state_json()).unwrap();
         assert_eq!(state["current"]["id"], c);
@@ -697,9 +851,9 @@ mod tests {
     fn nothing_to_complete_or_pause_is_an_answer_not_an_error() {
         let dir = temp_dir("empty");
         let mut engine = open(&dir);
-        assert!(engine.complete_current().unwrap().value.is_none());
-        assert!(!engine.toggle_pause().unwrap().value);
-        assert!(!engine.undo_complete(1).unwrap().value);
+        assert!(done(engine.complete_current()).value.is_none());
+        assert!(!done(engine.toggle_pause()).value);
+        assert!(!done(engine.undo_complete(1)).value);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -781,12 +935,23 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The Shell extension finds the command id between the parentheses of
+    /// the D-Bus error's message (`dbus.js`, `pendingCommand`).
+    #[test]
+    fn a_pending_message_carries_the_command_id_in_parentheses() {
+        let command: Id = "0f8e6f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b".parse().unwrap();
+        assert_eq!(
+            pending_message(command),
+            "Sent, waiting for confirmation (0f8e6f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b)"
+        );
+    }
+
     /// One tick drives both the settings writer and the reminder.
     #[test]
     fn a_tick_writes_the_settings_and_delivers_a_due_flash() {
         let dir = temp_dir("tick");
         let mut engine = open(&dir);
-        engine.add("focus", Some(Bucket::Now)).unwrap();
+        done(engine.add("focus", Some(Bucket::Now)));
         engine.update_settings(|s| {
             s.interval_min = 1;
             s.intensity = Intensity::Strong;
@@ -856,7 +1021,7 @@ mod tests {
         let mut engine = open(&dir);
         assert_eq!(engine.flash_status(NOON, noon()).hold, Hold::NoCurrentTask);
         assert!(engine.flash_now(NOON, 0).is_none());
-        engine.add("!focus #p", None).unwrap();
+        done(engine.add("!focus #p", None));
         let flash = engine.flash_now(NOON + 100, 0).unwrap();
         assert_eq!(flash.palette, crate::Palette::Orange);
         assert_eq!(

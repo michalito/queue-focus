@@ -223,33 +223,6 @@ struct TimerView {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionState {
-    Online,
-    Offline,
-    NeedsAttention,
-    Recovery,
-    Durability,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClientUndo {
-    pub command: Id,
-    pub task: u64,
-    pub title: String,
-    pub remaining: u64,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SyncStatus {
-    pub state: ConnectionState,
-    pub message: Option<String>,
-    pub pending: usize,
-    pub focus_command: Option<Id>,
-    pub likely_conflicts: usize,
-    pub recovery_items: usize,
-    pub undo: Option<ClientUndo>,
-    pub last_focus_settlement: Option<Settlement>,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settlement {
     pub command: Id,
@@ -355,7 +328,7 @@ impl Client {
         clock: ClockSample,
     ) -> io::Result<Outcome<Id>> {
         self.can_edit()?;
-        if !self.fresh(clock) || !self.envelope.pending.is_empty() {
+        if !self.focus_ready(clock) {
             return Err(invalid("wait for sync before changing Now or the timer"));
         }
         let observed = self.observation.expect("fresh observation");
@@ -552,6 +525,12 @@ impl Client {
                     .is_some_and(|n| n <= FRESH_SECS * 1_000_000_000)
             })
     }
+    /// A change to Now needs a fresh view of the server and nothing else
+    /// waiting to be sent, so the server checks it against the queue the
+    /// user saw. The status tells the views the same.
+    fn focus_ready(&self, clock: ClockSample) -> bool {
+        self.fresh(clock) && self.envelope.pending.is_empty()
+    }
     pub fn server_now(&self, clock: ClockSample) -> u64 {
         match self.observation {
             Some(o) => o
@@ -585,16 +564,13 @@ impl Client {
                 None,
             )
         };
+        let focus_available = self.focus_ready(clock);
         let undo = self
             .envelope
             .confirmed
             .undo
             .as_ref()
-            .filter(|hint| {
-                self.fresh(clock)
-                    && self.envelope.pending.is_empty()
-                    && hint.until > self.server_now(clock)
-            })
+            .filter(|hint| focus_available && hint.until > self.server_now(clock))
             .and_then(|hint| {
                 Some(ClientUndo {
                     command: hint.command,
@@ -603,18 +579,29 @@ impl Client {
                     remaining: hint.until - self.server_now(clock),
                 })
             });
+        let pending = self.envelope.pending.len();
+        let focus_command = self
+            .envelope
+            .pending
+            .iter()
+            .find(|c| c.is_focus())
+            .map(|c| c.id);
+        let recovery_items = self.envelope.recovery.len();
         SyncStatus {
+            summary: status::summary(
+                state,
+                message.as_deref(),
+                focus_command,
+                pending,
+                recovery_items,
+            ),
             state,
             message,
-            pending: self.envelope.pending.len(),
-            focus_command: self
-                .envelope
-                .pending
-                .iter()
-                .find(|c| c.is_focus())
-                .map(|c| c.id),
+            focus_available,
+            pending,
+            focus_command,
             likely_conflicts: self.likely_conflicts.len(),
-            recovery_items: self.envelope.recovery.len(),
+            recovery_items,
             undo,
             last_focus_settlement: self.envelope.last_focus_settlement.clone(),
         }

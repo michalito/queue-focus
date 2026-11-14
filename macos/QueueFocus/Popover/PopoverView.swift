@@ -446,16 +446,15 @@ private struct QueueColumn: View {
 private struct AddField: View {
     @Environment(QueueModel.self) private var model
     let actions: PopoverActions
-    @State private var draft = ""
-    @State private var pendingAdd: PendingAdd?
+    @State private var draft = AddDraft()
     @State private var hovering = false
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("Add…  !now  #w #p  @later @side", text: $draft)
-                .disabled(pendingAdd != nil)
-                .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
-                .onAppear { reconcilePendingAdd() }
+        TextField("Add…  !now  #w #p  @later @side", text: $draft.text)
+            .disabled(draft.isWaiting)
+            .onChange(of: model.settledAdds) { _, _ in settle() }
+            .onAppear { settle() }
             .textFieldStyle(.plain)
             .font(Adw.font())
             .padding(.horizontal, 12)
@@ -483,23 +482,11 @@ private struct AddField: View {
     }
 
     private func submit(asCurrent: Bool) {
-        guard pendingAdd == nil else { return }
-        if model.add(draft, asCurrent: asCurrent) {
-            draft = ""
-            actions.close()
-        } else if let command = model.lastRequestPending {
-            pendingAdd = PendingAdd(command: command, text: draft)
-            reconcilePendingAdd()
-        }
+        if draft.submit(to: model, asCurrent: asCurrent) { actions.close() }
     }
 
-    private func reconcilePendingAdd() {
-        guard let pending = pendingAdd, let result = model.focusResults[pending.command] else { return }
-        pendingAdd = nil
-        if result.applied && draft == pending.text {
-            draft = ""
-            actions.close()
-        }
+    private func settle() {
+        if draft.settle(with: model) { actions.close() }
     }
 }
 

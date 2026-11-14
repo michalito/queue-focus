@@ -28,7 +28,7 @@ impl Client {
                 let (title, attempt) = match &item.command.action {
                     Action::Queued { action } => match action {
                         QueuedAction::Create { title, bucket, .. } => {
-                            (title.clone(), format!("Add to {bucket:?}"))
+                            (title.clone(), format!("Add to {}", bucket.label()))
                         }
                         QueuedAction::Rename { title, .. } => (title.clone(), "Rename task".into()),
                         QueuedAction::SetTag { task, tag, .. } => (
@@ -41,7 +41,7 @@ impl Client {
                             .into(),
                         ),
                         QueuedAction::MoveBefore { task, bucket, .. } => {
-                            (task_title(*task), format!("Move to {bucket:?}"))
+                            (task_title(*task), format!("Move to {}", bucket.label()))
                         }
                         QueuedAction::Delete { task, .. } => {
                             (task_title(*task), "Remove queued task".into())

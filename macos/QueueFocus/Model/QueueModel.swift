@@ -13,11 +13,6 @@ struct UndoOffer: Equatable {
     let expires: Date
 }
 
-struct PendingAdd {
-    let command: String
-    let text: String
-}
-
 /// What completing the current task came to.
 enum CurrentCompletion: Equatable {
     case done(QueueTask)
@@ -29,6 +24,32 @@ enum CurrentCompletion: Equatable {
 
     var task: QueueTask? {
         if case .done(let task) = self { task } else { nil }
+    }
+}
+
+/// What adding a task came to.
+enum AddResult: Equatable {
+    case added
+    /// A task for the shared Now, sent: the server decides it. The string
+    /// is the command its settlement will name.
+    case pending(String)
+    /// Nothing was added: the text had no title, or the engine refused and
+    /// the message line says why.
+    case notAdded
+}
+
+/// What a request came to, as the engine answered it. The engine's
+/// `QfError.Pending` is not a failure, so it never gets this far as one.
+enum RequestResult<Value> {
+    case done(Value)
+    /// A change to the shared Now, sent; the server decides it.
+    case pending(String)
+    /// Refused, or not saved; the message says why.
+    case failed(String)
+
+    /// The value of a request that was done.
+    var value: Value? {
+        if case .done(let value) = self { value } else { nil }
     }
 }
 
@@ -61,22 +82,19 @@ final class QueueModel {
     private(set) var undoOffer: UndoOffer?
     /// Why the last request from a view failed, for the popover's message line.
     var actionError: String?
-    private(set) var lastRequestPending: String?
-    private(set) var focusResults: [String: CommandSettlement] = [:]
+    /// The server's answers to the adds an add field waits for, by command,
+    /// each kept until its field takes it or goes.
+    private(set) var settledAdds: [String: CommandSettlement] = [:]
     private(set) var recoveryChanges: [SyncRecoveryChange]
 
+    /// Whether Now and its timer can be changed: always, without sync.
     var focusAvailable: Bool {
-        guard let sync = snapshot.sync else { return true }
-        return sync.state == "online" && sync.pending == 0
+        snapshot.sync?.focusAvailable ?? true
     }
 
+    /// The line that says how sync stands; `nil` without sync.
     var syncMessage: String? {
-        guard let sync = snapshot.sync else { return nil }
-        if let message = sync.message { return message }
-        if sync.focusCommand != nil { return "Sent, waiting for confirmation…" }
-        if sync.recoveryItems > 0 { return "Sync needs attention: \(sync.recoveryItems) saved changes need review. The saved changes can be reviewed and exported." }
-        if sync.pending > 0 { return "\(sync.pending) changes saved on this device, waiting to sync." }
-        return sync.state == "online" ? "Synced" : "Offline — queue edits are saved here. Now and timer changes need a connection."
+        snapshot.sync?.summary
     }
     /// Changes saved without being made crash-safe, and internal errors,
     /// oldest first.
@@ -92,6 +110,7 @@ final class QueueModel {
     /// Told of every problem the engine reports, after the message line is.
     @ObservationIgnored var didReport: @MainActor ([String]) -> Void = { _ in }
 
+    @ObservationIgnored private var inbox = SettlementInbox()
     @ObservationIgnored private let engine: QueueEngine
     @ObservationIgnored private let clock: () -> Date
     @ObservationIgnored private let calendar: Calendar
@@ -105,6 +124,8 @@ final class QueueModel {
         settings = engine.settings()
         now = clock()
         recoveryChanges = engine.syncRecovery()
+        // A receipt kept from before the app started was told then.
+        if let settlement = snapshot.sync?.lastFocusSettlement { inbox.alreadyTold(settlement) }
     }
 
     // MARK: Reading
@@ -118,7 +139,7 @@ final class QueueModel {
     }
 
     func exportSync(to destination: URL) -> Bool {
-        perform { try engine.exportSync(destination: destination.path) } != nil
+        perform { try engine.exportSync(destination: destination.path) }.value != nil
     }
 
     /// Unix seconds, as the engine counts them.
@@ -150,31 +171,50 @@ final class QueueModel {
 
     // MARK: The queue
 
-    /// Add a task from the add field: where the engine puts a task with no
-    /// bucket (Settings' choice, or Now while it is empty), or as the current
-    /// task. Returns whether one was added; blank text adds nothing.
+    /// Add a task from an add field: where the engine puts a task with no
+    /// bucket (Settings' choice, or, without sync, Now while it is empty), or
+    /// as the current task. Blank text adds nothing.
     @discardableResult
-    func add(_ text: String, asCurrent: Bool = false) -> Bool {
-        lastRequestPending = nil
+    func add(_ text: String, asCurrent: Bool = false) -> AddResult {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
-        return perform { try engine.add(text: text, bucket: asCurrent ? .now : nil) } != nil
+        guard !text.isEmpty else { return .notAdded }
+        switch perform({ try engine.add(text: text, bucket: asCurrent ? .now : nil) }) {
+        case .done: return .added
+        case .pending(let command): return .pending(command)
+        case .failed: return .notAdded
+        }
+    }
+
+    /// Keep the server's answer to a pending add for `draft`, until it takes
+    /// it or goes. An answer already in hand is kept at once.
+    func awaitSettlement(of command: String, by draft: AddDraft) {
+        inbox.wait(for: command, by: draft, latest: snapshot.sync?.lastFocusSettlement)
+        publishSettledAdds()
+    }
+
+    /// The server's answer to an awaited add, once it has come. Taking it
+    /// ends the wait.
+    func takeSettlement(of command: String) -> CommandSettlement? {
+        let settlement = inbox.take(command)
+        publishSettledAdds()
+        return settlement
     }
 
     /// Complete the current task, pulling the head of Next into Now. A task
     /// completed is the caller's to offer to undo.
     func completeCurrent() -> CurrentCompletion {
-        guard let completed = perform({ try engine.completeCurrent() }) else {
-            if let command = lastRequestPending { return .pending(command) }
-            return .failed(actionError ?? "")
+        switch perform({ try engine.completeCurrent() }) {
+        case .done(let task): task.map(CurrentCompletion.done) ?? .empty
+        case .pending(let command): .pending(command)
+        case .failed(let message): .failed(message)
         }
-        return completed.map(CurrentCompletion.done) ?? .empty
     }
 
-    /// Mark a listed task done. Returns whether it was.
+    /// Mark a listed task done. Returns whether it was; a completion sent to
+    /// the sync server is not done yet.
     @discardableResult
     func complete(_ task: QueueTask) -> Bool {
-        perform { try engine.complete(id: task.id) } != nil
+        perform { try engine.complete(id: task.id) }.value != nil
     }
 
     /// Offer to undo the completion of `task`, which has just been made. Only
@@ -212,14 +252,17 @@ final class QueueModel {
     /// reason.
     @discardableResult
     func undo(id: UInt64) -> UndoResult {
-        guard let undone = perform({ try engine.undoComplete(id: id) }) else {
-            if let command = lastRequestPending { return .pending(command) }
-            return .failed(actionError ?? "")
+        switch perform({ try engine.undoComplete(id: id) }) {
+        case .done(let undone):
+            if undoOffer?.id == id {
+                undoOffer = nil
+            }
+            return undone ? .undone : .stale
+        case .pending(let command):
+            return .pending(command)
+        case .failed(let message):
+            return .failed(message)
         }
-        if undoOffer?.id == id {
-            undoOffer = nil
-        }
-        return undone ? .undone : .stale
     }
 
     func togglePause() {
@@ -243,7 +286,7 @@ final class QueueModel {
     /// `false` when that row has gone since it was drawn.
     @discardableResult
     func move(id: UInt64, to bucket: Bucket, before: UInt64?) -> Bool {
-        perform { try engine.moveBefore(id: id, bucket: bucket, before: before) } ?? false
+        perform { try engine.moveBefore(id: id, bucket: bucket, before: before) }.value ?? false
     }
 
     /// Move a task up (negative) or down within its bucket.
@@ -264,7 +307,7 @@ final class QueueModel {
     @discardableResult
     func rename(id: UInt64, to title: String) -> Bool {
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return perform { try engine.rename(id: id, title: title) } != nil
+        return perform { try engine.rename(id: id, title: title) }.value != nil
     }
 
     /// Delete a task for good; unlike a completion, it cannot be undone.
@@ -322,7 +365,7 @@ final class QueueModel {
                 settingsProblem = problem
                 tell([problem])
             }
-            for settlement in tick.settlements { record(settlement) }
+            for settlement in tick.settlements where inbox.hear(settlement) { told(settlement) }
             report(tick.problems)
             if let flash = tick.flash {
                 presentFlash(flash)
@@ -368,20 +411,19 @@ final class QueueModel {
     /// Run a request; on failure say why on the message line. Either way the
     /// snapshot is fresh afterwards, since a failure can follow a change.
     @discardableResult
-    private func perform<T>(_ request: () throws -> T) -> T? {
-        lastRequestPending = nil
+    private func perform<T>(_ request: () throws -> T) -> RequestResult<T> {
         defer { refresh() }
         do {
             let value = try request()
             actionError = nil
-            return value
-        } catch QfError.Pending(let commandId, _) {
-            lastRequestPending = commandId
+            return .done(value)
+        } catch QfError.Pending(let command, _) {
             actionError = nil
-            return nil
+            return .pending(command)
         } catch {
-            actionError = Self.describe(error)
-            return nil
+            let message = Self.describe(error)
+            actionError = message
+            return .failed(message)
         }
     }
 
@@ -390,16 +432,31 @@ final class QueueModel {
         if snapshot != self.snapshot { self.snapshot = snapshot }
         let recovery = engine.syncRecovery()
         if recovery != recoveryChanges { recoveryChanges = recovery }
-        if let settlement = snapshot.sync?.lastFocusSettlement { record(settlement) }
+        // The settlement event can be missed; the status keeps the last one.
+        if let settlement = snapshot.sync?.lastFocusSettlement, inbox.hearInStatus(settlement) {
+            told(settlement)
+        }
+        if inbox.hasAbandoned {
+            inbox.dropAbandoned()
+            publishSettledAdds()
+        }
         let settings = engine.settings()
         if settings != self.settings { self.settings = settings }
         didChange()
     }
 
-    private func record(_ settlement: CommandSettlement) {
-        guard focusResults[settlement.commandId] == nil else { return }
-        focusResults[settlement.commandId] = settlement
-        if !settlement.applied { actionError = settlement.message ?? "The shared change was not applied. Your draft is retained." }
+    /// A receipt from the server, heard for the first time, by either way it
+    /// came. A refusal is said on the message line.
+    private func told(_ settlement: CommandSettlement) {
+        if !settlement.applied {
+            actionError = settlement.message ?? "The shared change was not applied."
+        }
+        publishSettledAdds()
+    }
+
+    /// Show the add fields the receipts held for them, when that changed.
+    private func publishSettledAdds() {
+        if inbox.held != settledAdds { settledAdds = inbox.held }
     }
 
     private func localTime(_ date: Date) -> TimeOfDay {
@@ -409,12 +466,13 @@ final class QueueModel {
 
     static func describe(_ error: Error) -> String {
         switch error {
-        case QfError.Pending(_, let message):
-            message
-        case QfError.Persistence(let message), QfError.InvalidArgument(let message):
+        case QfError.Pending(_, let message), QfError.Persistence(let message),
+             QfError.InvalidArgument(let message):
             message
         default:
             String(describing: error)
         }
     }
 }
+
+extension QueueModel: DraftHost {}

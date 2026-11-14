@@ -10,7 +10,8 @@
 use gtk::glib;
 use qf_core::sync::Settlement;
 use qf_core::{
-    Engine, EngineError, FlashEvent, FlashStatus, Outcome, Settings, Store, Task, TimeOfDay,
+    Engine, EngineError, FlashEvent, FlashStatus, Outcome, Settings, Store, Submitted, Task,
+    TimeOfDay,
 };
 use std::cell::{Ref, RefCell};
 use std::io;
@@ -157,7 +158,7 @@ impl Service {
         self.request(|engine| engine.update(f))
     }
 
-    pub fn complete_current(&self) -> Result<Outcome<Option<Task>>, EngineError> {
+    pub fn complete_current(&self) -> Result<Submitted<Option<Task>>, EngineError> {
         self.request(Engine::complete_current)
     }
 
@@ -340,6 +341,14 @@ mod tests {
         events
     }
 
+    /// A standalone request is applied, never left with a server.
+    fn applied<T: std::fmt::Debug>(result: Result<Submitted<T>, EngineError>) -> T {
+        match result {
+            Ok(Submitted::Applied(outcome)) => outcome.value,
+            other => panic!("expected an applied change, got {other:?}"),
+        }
+    }
+
     /// Listeners hear about saved changes, and only those: not a failed save,
     /// not a request that changed nothing.
     #[test]
@@ -354,14 +363,14 @@ mod tests {
             .unwrap()
             .value;
         assert_eq!(changes.get(), 1);
-        assert!(service.complete_current().unwrap().value.is_some());
+        assert!(applied(service.complete_current()).is_some());
         assert_eq!(changes.get(), 2);
-        assert!(service.request(|e| e.undo_complete(a)).unwrap().value);
+        assert!(applied(service.request(|e| e.undo_complete(a))));
         assert_eq!(changes.get(), 3);
 
         assert!(!service.update(|s| s.remove(999)).unwrap().value);
         assert!(service.request(|e| e.complete(999)).is_err());
-        assert!(!service.request(|e| e.undo_complete(a)).unwrap().value);
+        assert!(!applied(service.request(|e| e.undo_complete(a))));
         assert_eq!(changes.get(), 3, "no-ops are not broadcast");
 
         fs::remove_file(dir.join("tasks.json")).unwrap();
@@ -445,9 +454,7 @@ mod tests {
         assert!(!service.flash_now());
         assert!(events.borrow().is_empty());
 
-        service
-            .request(|e| e.add("real stores #p !now", None))
-            .unwrap();
+        applied(service.request(|e| e.add("real stores #p !now", None)));
         service.update_settings(|s| {
             s.vary = false;
             s.color = FlashColor::Blue;
@@ -474,9 +481,7 @@ mod tests {
     fn the_timer_delivers_a_flash_that_is_due() {
         let dir = temp_dir("timer");
         let (service, _) = Service::open_at(&dir, || qf_core::unix_now() - 3_600).unwrap();
-        service
-            .request(|e| e.add("due", Some(Bucket::Now)))
-            .unwrap();
+        applied(service.request(|e| e.add("due", Some(Bucket::Now))));
         let events = record(&service);
         let context = glib::MainContext::default();
         let _guard = context.acquire().unwrap();
@@ -515,9 +520,7 @@ mod tests {
     fn the_emitter_can_read_the_engine() {
         let dir = temp_dir("emitter");
         let service = service(&dir);
-        service
-            .request(|e| e.add("now", Some(Bucket::Now)))
-            .unwrap();
+        applied(service.request(|e| e.add("now", Some(Bucket::Now))));
         let seen = Rc::new(Cell::new(None));
         let (weak, observed) = (Rc::downgrade(&service), seen.clone());
         service.set_flash_emitter(move |_| {

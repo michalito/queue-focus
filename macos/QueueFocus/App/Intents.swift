@@ -39,11 +39,14 @@ struct AddTaskIntent: AppIntent {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw IntentFailure.failed("There was nothing to add.")
         }
-        guard model.add(text, asCurrent: asCurrent) else {
-            if model.lastRequestPending != nil { return .result(dialog: "Sent, waiting for confirmation.") }
+        switch model.add(text, asCurrent: asCurrent) {
+        case .added:
+            return .result(dialog: "Added.")
+        case .pending:
+            return .result(dialog: "Sent, waiting for confirmation.")
+        case .notAdded:
             throw IntentFailure.failed(model.actionError ?? "The task could not be added.")
         }
-        return .result(dialog: "Added.")
     }
 }
 

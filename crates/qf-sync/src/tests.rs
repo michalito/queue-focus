@@ -14,7 +14,7 @@ use std::{
 fn host_locks_standalone_and_refuses_partial_sync_directories() {
     let dir = std::env::temp_dir().join(format!("qf-host-{}", Id::new_v4()));
     let (host, mut engine, _) = Host::open(&dir).unwrap();
-    engine.add("standalone", None).unwrap();
+    assert!(engine.add("standalone", None).unwrap().applied().is_some());
     assert!(Host::open(&dir).is_err());
     assert!(DataLock::acquire(&dir).is_err());
     // Engine recovery can reopen while the same host retains its lock.
@@ -37,7 +37,11 @@ fn live_host_exports_pending_intent_and_unsaved_settings_without_changing_source
     let mut server = Server::new();
     let source = server.initialize();
     let (host, mut engine, _) = Host::open(&source).unwrap();
-    engine.add("offline capture", None).unwrap();
+    assert!(engine
+        .add("offline capture", None)
+        .unwrap()
+        .applied()
+        .is_some());
     engine.update_settings(|settings| settings.show_timer = false);
     let before = fs::read(source.join(STATE_FILE)).unwrap();
     let destination = server.dir.join("live-export");
@@ -137,7 +141,11 @@ fn native_retry_restarts_suspended_transport_with_the_same_pending_command() {
         requests
     });
     let (mut host, mut engine, _) = Host::open(&directory).unwrap();
-    engine.add("survive suspended worker", None).unwrap();
+    assert!(engine
+        .add("survive suspended worker", None)
+        .unwrap()
+        .applied()
+        .is_some());
     let pending = engine.sync_envelope().unwrap().pending.clone();
     let deadline = Instant::now() + Duration::from_secs(5);
     while engine.sync_envelope().unwrap().suspension.is_none() {
@@ -178,7 +186,12 @@ fn two_native_hosts_share_queue_now_pause_and_settlement() {
     setup::setup(&ubuntu, config, setup::Mode::Shared).unwrap();
     let (mut mac_host, mut mac_engine, _) = Host::open(&mac).unwrap();
     let (mut ubuntu_host, mut ubuntu_engine, _) = Host::open(&ubuntu).unwrap();
-    let task = mac_engine.add("shared", None).unwrap().value;
+    let task = mac_engine
+        .add("shared", None)
+        .unwrap()
+        .applied()
+        .expect("a queued add is applied")
+        .value;
     fn converge(
         first: (&mut Host, &mut qf_core::Engine),
         second: (&mut Host, &mut qf_core::Engine),
@@ -203,7 +216,7 @@ fn two_native_hosts_share_queue_now_pause_and_settlement() {
         |a, b| a.sync_status().unwrap().pending == 0 && b.store().tasks.len() == 1,
     );
     let command = match mac_engine.promote(task) {
-        Err(qf_core::EngineError::Pending { command_id }) => command_id,
+        Ok(qf_core::Submitted::Pending(command)) => command,
         other => panic!("expected pending, got {other:?}"),
     };
     assert!(mac_engine.store().current().is_none());
@@ -224,7 +237,7 @@ fn two_native_hosts_share_queue_now_pause_and_settlement() {
     );
     assert!(matches!(
         ubuntu_engine.toggle_pause(),
-        Err(qf_core::EngineError::Pending { .. })
+        Ok(qf_core::Submitted::Pending(_))
     ));
     converge(
         (&mut mac_host, &mut mac_engine),
@@ -258,7 +271,11 @@ fn worker_reopen_discards_old_response_and_retries_durable_head_once() {
     let mut server = Server::new();
     let directory = server.initialize();
     let (mut host, mut engine, _) = Host::open(&directory).unwrap();
-    engine.add("survive reopen", None).unwrap();
+    assert!(engine
+        .add("survive reopen", None)
+        .unwrap()
+        .applied()
+        .is_some());
     assert!(host.pump(&mut engine).warning.is_none());
     // The owned worker continues its first exchange while the recoverable
     // engine is reconstructed from the journal.

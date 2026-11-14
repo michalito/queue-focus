@@ -271,16 +271,36 @@ or a confirmed standalone edit. A shared focus submission returns a distinct
 typed Pending result. It must never masquerade as an ordinary successful
 completion or as a failed edit safe to resubmit under a new ID.
 
-The existing Rust/FFI `Result` signatures can represent this with a dedicated
-`Pending { command_id }` error variant; native adapters explicitly distinguish
-it from rejection. The pending command and its eventual settlement also appear
-in sync status. Pending commands cannot be resubmitted by repeated button
-presses while the original is unresolved.
+In Rust every engine request returns `Result<Submitted<T>, EngineError>`:
+`Submitted::Applied(Outcome<T>)` or `Submitted::Pending(command_id)`, and
+`EngineError` holds only refusals. The type makes each host decide what a
+pending change means where it receives one. Boundaries that can only answer
+with an error carry Pending as an error of its own, never as a refusal:
+D-Bus's `org.queuefocus.Error.Pending` and the FFI's `QfError.Pending`
+(UniFFI has no generic result), which the Swift model turns back into a
+result at once. Both use `pending_message`, `Sent, waiting for confirmation
+(<command id>)`; clients read the id from the parentheses. The command line
+prints that line and exits with status 3, neither done (0) nor failed (1).
+The pending command and its eventual settlement also appear in sync status.
+Pending commands cannot be resubmitted by repeated button presses while the
+original is unresolved.
 
 D-Bus focus methods return `org.queuefocus.Error.Pending` with the command ID.
 Old extensions therefore retain drafts and offer no undo while a request is
 pending. `GetState`/`Changed` JSON gains a `sync` object with status, pending
-focus command and eligible server `undo: {task_id, command_id, until}`.
+focus command and eligible server `undo: {task, command, title, remaining}`.
+
+The status also carries what the views show, decided once in
+`qf_core::sync::status` rather than in each host: `summary`, the one line
+that says how sync stands, and `focus_available`, whether Now and its timer
+can change. It is the rule the engine applies to a focus command (a fresh
+server response and nothing else in the journal) as of the status's last
+refresh. The engine checks again against its own clock, so a status read
+after freshness lapsed without a refresh can only offer a change that is
+then refused. Hosts refresh on every tick and disable the controls that
+change Now while it is false. An extension running against an older
+service, which lacks both fields, falls back to `state == online && pending
+== 0` and the raw `message`.
 A `CommandSettled` signal reports a durably processed receipt; FFI drains
 equivalent settlement events on tick. Events are conveniences, not durable
 truth: snapshots/status retain the pending state and undo eligibility.

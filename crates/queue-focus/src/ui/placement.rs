@@ -74,14 +74,16 @@ pub(super) enum Destination {
 }
 
 impl Destination {
+    /// Ask the engine for the move. `true` once the task is in its place;
+    /// a stale row is refused rather than turned into another place.
     pub fn apply_engine(
         self,
         engine: &mut qf_core::Engine,
         id: u64,
-    ) -> Result<qf_core::Outcome<bool>, qf_core::EngineError> {
+    ) -> Result<qf_core::Submitted<bool>, qf_core::EngineError> {
         match self {
-            Self::Current => engine.promote(id).map(|o| o.map(|_| true)),
-            Self::Append(bucket) => engine.move_to(id, bucket, None).map(|o| o.map(|_| true)),
+            Self::Current => engine.promote(id).map(|s| s.map(|()| true)),
+            Self::Append(bucket) => engine.move_to(id, bucket, None).map(|s| s.map(|()| true)),
             Self::List { bucket, before } => engine.move_before(id, bucket, before),
         }
     }

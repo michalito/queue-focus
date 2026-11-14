@@ -5,11 +5,14 @@ mod ui;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use qf_core::{EngineError, Outcome};
+use qf_core::{EngineError, Outcome, Submitted};
 use std::rc::Rc;
 use ui::Page;
 
 pub const APP_ID: &str = "org.queuefocus.QueueFocus";
+
+/// The exit status of a command whose change waits for the sync server.
+const PENDING_STATUS: i32 = 3;
 
 const USAGE: &str = "\
 usage: queue-focus [COMMAND]
@@ -225,9 +228,12 @@ fn run_command(
         Some("version") | Some("--version") => {
             cmd.print_literal(concat!("queue-focus ", env!("CARGO_PKG_VERSION"), "\n"));
         }
-        Some("done") => match command_update(cmd, service.complete_current()) {
-            Ok(Some(t)) => cmd.print_literal(&format!("done: {}\n", t.title)),
-            Ok(None) => cmd.print_literal("nothing in Now\n"),
+        Some("done") => match service.complete_current() {
+            Ok(Submitted::Applied(outcome)) => match warned(cmd, outcome) {
+                Some(t) => cmd.print_literal(&format!("done: {}\n", t.title)),
+                None => cmd.print_literal("nothing in Now\n"),
+            },
+            Ok(Submitted::Pending(command)) => return pending(cmd, command),
             Err(e) => {
                 cmd.printerr_literal(&format!("queue-focus: {e}\n"));
                 return 1;
@@ -242,8 +248,12 @@ fn run_command(
             if text.trim().is_empty() {
                 ui.quick_add_dialog();
             } else {
-                match command_update(cmd, service.request(|e| e.add(&text, None))) {
-                    Ok(id) => cmd.print_literal(&format!("added #{id}\n")),
+                match service.request(|e| e.add(&text, None)) {
+                    Ok(Submitted::Applied(outcome)) => {
+                        let id = warned(cmd, outcome);
+                        cmd.print_literal(&format!("added #{id}\n"));
+                    }
+                    Ok(Submitted::Pending(command)) => return pending(cmd, command),
                     Err(EngineError::InvalidArgument(message)) if message == "empty title" => {
                         cmd.printerr_literal("nothing to add\n");
                         return 1;
@@ -264,15 +274,19 @@ fn run_command(
     0
 }
 
-fn command_update<R>(
-    cmd: &gio::ApplicationCommandLine,
-    result: Result<Outcome<R>, EngineError>,
-) -> Result<R, EngineError> {
-    result.map(|outcome| {
-        let (value, warning) = outcome.into_parts();
-        if let Some(warning) = warning {
-            cmd.printerr_literal(&format!("queue-focus: warning: {warning}\n"));
-        }
-        value
-    })
+/// Print an applied change's durability warning, and hand back its value.
+fn warned<R>(cmd: &gio::ApplicationCommandLine, outcome: Outcome<R>) -> R {
+    let (value, warning) = outcome.into_parts();
+    if let Some(warning) = warning {
+        cmd.printerr_literal(&format!("queue-focus: warning: {warning}\n"));
+    }
+    value
+}
+
+/// A change to the shared Now went to the sync server, which decides it.
+/// Neither done nor failed, so neither status 0 nor 1: running the command
+/// again would only be refused while this one waits.
+fn pending(cmd: &gio::ApplicationCommandLine, command: qf_core::sync::Id) -> i32 {
+    cmd.print_literal(&format!("{}\n", qf_core::pending_message(command)));
+    PENDING_STATUS
 }
