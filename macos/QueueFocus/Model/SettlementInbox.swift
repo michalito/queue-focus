@@ -5,14 +5,23 @@
 /// Either can come first, and the event can be lost. The inbox tells each
 /// receipt once, however it came, and holds a receipt for an add field that
 /// waits for it, for as long as that field is there.
+///
+/// A refusal is told on the message line during the run it arrives in. The
+/// lasting record of it is the recovery item the core keeps, which the sync
+/// line counts and Settings lists, so the receipt the status keeps from
+/// before launch counts as told.
 struct SettlementInbox {
-    /// How many receipts it remembers having told. Only one change to Now is
-    /// in flight at a time, so this is many times what can arrive between a
-    /// receipt's event and its turn in the status.
+    /// How many event receipts it remembers having told. Only one change to
+    /// Now is in flight at a time, so this is many times what can arrive
+    /// between a receipt's event and its turn in the status.
     static let remembered = 64
 
     /// Receipts already told, oldest first.
     private var told: [String] = []
+    /// The receipt the status keeps. It can stay there for days, while
+    /// queued edits' receipts pass through `told`, so it is remembered here
+    /// until the status replaces it.
+    private var statusReceipt: String?
     /// The fields waiting, by command. Weak: a field that goes stops waiting.
     private var waiting: [String: Waiter] = [:]
     /// Receipts for fields still waiting, by command.
@@ -33,10 +42,18 @@ struct SettlementInbox {
         return true
     }
 
-    /// Count a receipt as told without telling it: one from before the app
-    /// started, which the user has already had the chance to see.
+    /// Hear the receipt the status keeps, as every refresh does. Returns
+    /// whether it is news: not while it is the one the status kept before.
+    mutating func hearInStatus(_ settlement: CommandSettlement) -> Bool {
+        guard settlement.commandId != statusReceipt else { return false }
+        statusReceipt = settlement.commandId
+        return hear(settlement)
+    }
+
+    /// Count the status's receipt as told without telling it: the one kept
+    /// from before the app started.
     mutating func alreadyTold(_ settlement: CommandSettlement) {
-        _ = hear(settlement)
+        _ = hearInStatus(settlement)
     }
 
     /// Hold the receipt for `command` for `field`. `latest` is the receipt

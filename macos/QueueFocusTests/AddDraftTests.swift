@@ -204,6 +204,32 @@ private func receipt(_ command: String, applied: Bool) -> CommandSettlement {
         #expect(host.inbox.held.isEmpty)
     }
 
+    /// The status keeps a refusal until the next change to Now settles,
+    /// while any number of queued edits' receipts pass as events: the
+    /// refusal is told once, not again once they have filled the memory.
+    @Test func theStatusReceiptIsToldOnceHoweverManyEventsPass() {
+        var inbox = SettlementInbox()
+        let refused = receipt("focus", applied: false)
+        var told = 0
+        if inbox.hearInStatus(refused) { told += 1 }
+        for index in 0..<(3 * SettlementInbox.remembered) {
+            _ = inbox.hear(receipt("queued-\(index)", applied: true))
+            if inbox.hearInStatus(refused) { told += 1 }
+        }
+        #expect(told == 1)
+        let next = receipt("next focus", applied: true)
+        let replaced = inbox.hearInStatus(next)
+        #expect(replaced, "a new receipt in the status is news")
+
+        var launched = SettlementInbox()
+        launched.alreadyTold(refused)
+        for index in 0..<(2 * SettlementInbox.remembered) {
+            _ = launched.hear(receipt("queued-\(index)", applied: true))
+        }
+        let again = launched.hearInStatus(refused)
+        #expect(!again, "nor is the one from before launch")
+    }
+
     @Test func theInboxRemembersABoundedNumberOfReceipts() {
         var inbox = SettlementInbox()
         let fresh = (0..<(SettlementInbox.remembered + 10)).map { index in

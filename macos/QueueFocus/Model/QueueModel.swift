@@ -365,7 +365,7 @@ final class QueueModel {
                 settingsProblem = problem
                 tell([problem])
             }
-            for settlement in tick.settlements { hear(settlement) }
+            for settlement in tick.settlements where inbox.hear(settlement) { told(settlement) }
             report(tick.problems)
             if let flash = tick.flash {
                 presentFlash(flash)
@@ -433,7 +433,9 @@ final class QueueModel {
         let recovery = engine.syncRecovery()
         if recovery != recoveryChanges { recoveryChanges = recovery }
         // The settlement event can be missed; the status keeps the last one.
-        if let settlement = snapshot.sync?.lastFocusSettlement { hear(settlement) }
+        if let settlement = snapshot.sync?.lastFocusSettlement, inbox.hearInStatus(settlement) {
+            told(settlement)
+        }
         if inbox.hasAbandoned {
             inbox.dropAbandoned()
             publishSettledAdds()
@@ -443,10 +445,9 @@ final class QueueModel {
         didChange()
     }
 
-    /// A receipt from the server, by either way it comes. A refusal is said
-    /// on the message line once, however many times it is heard.
-    private func hear(_ settlement: CommandSettlement) {
-        guard inbox.hear(settlement) else { return }
+    /// A receipt from the server, heard for the first time, by either way it
+    /// came. A refusal is said on the message line.
+    private func told(_ settlement: CommandSettlement) {
         if !settlement.applied {
             actionError = settlement.message ?? "The shared change was not applied."
         }
