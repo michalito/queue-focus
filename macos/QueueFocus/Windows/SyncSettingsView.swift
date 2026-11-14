@@ -19,7 +19,7 @@ struct SyncSettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 8) {
                             Button("Retry connection") { model.retrySync() }
-                                .disabled(sync.state == "recovery" || sync.state == "durability")
+                                .disabled(sync.state == .recovery || sync.state == .durability)
                             Button("Export recovery copy…", action: export)
                         }
                         .buttonStyle(.adwFilled)
@@ -45,7 +45,7 @@ struct SyncSettingsView: View {
                                             NSPasteboard.general.setString(item.copyText, forType: .string)
                                         }
                                         Button("Dismiss…", role: .destructive) { dismissing = item }
-                                            .disabled(sync.state == "recovery")
+                                            .disabled(sync.state == .recovery)
                                     }
                                     .buttonStyle(.adwFilled)
                                 }

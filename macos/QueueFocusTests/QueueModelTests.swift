@@ -63,11 +63,11 @@ private final class Fixture {
     @Test func addingGoesWhereSettingsSayOrToNow() throws {
         let f = try Fixture()
         // Nothing is being done yet: the first task is the one to do.
-        #expect(f.model.add("read the mail"))
+        #expect(f.model.add("read the mail") == .added)
         #expect(f.model.snapshot.current?.title == "read the mail")
-        #expect(f.model.add("write notes"))
+        #expect(f.model.add("write notes") == .added)
         #expect(f.model.snapshot.next.map(\.title) == ["write notes"])
-        #expect(f.model.add("  ship it #w  ", asCurrent: true))
+        #expect(f.model.add("  ship it #w  ", asCurrent: true) == .added)
         #expect(f.model.snapshot.current?.title == "ship it")
         #expect(f.model.snapshot.current?.tag == .work)
         #expect(f.model.snapshot.next.map(\.title) == ["read the mail", "write notes"])
@@ -173,17 +173,17 @@ private final class Fixture {
 
     @Test func blankTextAddsNothingAndSaysNothing() throws {
         let f = try Fixture()
-        #expect(!f.model.add("   "))
+        #expect(f.model.add("   ") == .notAdded)
         #expect(f.model.actionError == nil)
         #expect(f.model.snapshot.revision == 0)
     }
 
     @Test func aRefusedAddSaysWhy() throws {
         let f = try Fixture()
-        #expect(!f.model.add("#w @later"))
+        #expect(f.model.add("#w @later") == .notAdded)
         #expect(f.model.actionError == "empty title")
         // The next request that works clears the message.
-        #expect(f.model.add("real"))
+        #expect(f.model.add("real") == .added)
         #expect(f.model.actionError == nil)
     }
 

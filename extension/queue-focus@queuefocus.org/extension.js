@@ -191,19 +191,21 @@ class QueueFocusIndicator extends PanelMenu.Button {
         if (!this._refreshMenu()) this._updateClocks();
     }
 
+    /**
+     * Whether Now and its timer can be changed: always without sync, else as
+     * the service says. A service older than this extension does not say;
+     * then its own rule applies, which it enforces either way.
+     */
     _focusAvailable() {
         const sync = this._state?.sync;
-        return !sync || (sync.state === 'online' && sync.pending === 0);
+        if (!sync) return true;
+        return sync.focus_available ?? (sync.state === 'online' && sync.pending === 0);
     }
 
+    /** The service's line for sync; an older service only has its message. */
     _syncText() {
         const sync = this._state?.sync;
-        if (!sync) return '';
-        if (sync.message) return sync.message;
-        if (sync.focus_command) return 'Sent, waiting for confirmation…';
-        if (sync.recovery_items) return `Sync needs attention: ${sync.recovery_items} saved changes need review.`;
-        if (sync.pending) return `${sync.pending} changes saved here, waiting to sync.`;
-        return sync.state === 'online' ? 'Synced' : 'Offline · queue edits are saved here. Now and timer changes need a connection.';
+        return sync ? sync.summary ?? sync.message ?? '' : '';
     }
 
     _applySync(sync, refresh = true) {

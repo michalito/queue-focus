@@ -189,14 +189,13 @@ private struct WindowAddField: View {
     @Environment(QueueModel.self) private var model
     var focus: FocusState<FocusTarget?>.Binding
     let firstStop: () -> UInt64?
-    @State private var draft = ""
-    @State private var pendingAdd: PendingAdd?
+    @State private var draft = AddDraft()
 
     var body: some View {
-        TextField("Add…  !now  #w #p  @later @side  (⏎)", text: $draft)
-                .disabled(pendingAdd != nil)
-                .onChange(of: model.focusResults) { _, _ in reconcilePendingAdd() }
-                .onAppear { reconcilePendingAdd() }
+        TextField("Add…  !now  #w #p  @later @side  (⏎)", text: $draft.text)
+            .disabled(draft.isWaiting)
+            .onChange(of: model.settledAdds) { _, _ in _ = draft.settle(with: model) }
+            .onAppear { _ = draft.settle(with: model) }
             .modifier(AdwEntry(focused: focus.wrappedValue == .add))
             .focused(focus, equals: .add)
             .onSubmit {
@@ -208,37 +207,23 @@ private struct WindowAddField: View {
                 return .handled
             }
             .onKeyPress(.escape) {
-                if draft.isEmpty {
+                if draft.text.isEmpty || draft.isWaiting {
                     focus.wrappedValue = firstStop().map(FocusTarget.task)
                 } else {
-                    draft = ""
+                    draft.text = ""
                 }
                 return .handled
             }
-            .onChange(of: draft) { _, text in
+            .onChange(of: draft.text) { _, text in
                 let limit = Int(maxTitleChars())
-                if text.count > limit { draft = String(text.prefix(limit)) }
+                if text.count > limit { draft.text = String(text.prefix(limit)) }
             }
             .accessibilityLabel("Add a task")
             .accessibilityIdentifier("window-add-field")
     }
 
     private func submit(asCurrent: Bool) {
-        guard pendingAdd == nil else { return }
-        if model.add(draft, asCurrent: asCurrent) {
-            draft = ""
-        } else if let command = model.lastRequestPending {
-            pendingAdd = PendingAdd(command: command, text: draft)
-            reconcilePendingAdd()
-        }
-    }
-
-    private func reconcilePendingAdd() {
-        guard let pending = pendingAdd, let result = model.focusResults[pending.command] else { return }
-        pendingAdd = nil
-        if result.applied && draft == pending.text {
-            draft = ""
-        }
+        _ = draft.submit(to: model, asCurrent: asCurrent)
     }
 }
 

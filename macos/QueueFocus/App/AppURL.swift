@@ -92,8 +92,13 @@ struct LinkFollower {
     func follow(_ link: AppURL) {
         switch link {
         case .add(let text, let asCurrent):
-            if !model.add(text, asCurrent: asCurrent) {
-                if model.lastRequestPending != nil { show(.queue); return }
+            switch model.add(text, asCurrent: asCurrent) {
+            case .added:
+                break
+            case .pending:
+                // The queue shows the change once the server confirms it.
+                show(.queue)
+            case .notAdded:
                 failed("Could not add the task", model.actionError)
             }
         case .show(let view):

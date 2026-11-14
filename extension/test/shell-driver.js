@@ -342,6 +342,8 @@ export default class ShellTest extends Extension {
         indicator._dropUndo();
         const sync = (command = null, result = null) => {
             this._queue.sync = {state: 'online', pending: command ? 1 : 0,
+                summary: command ? 'Sent, waiting for confirmation…' : 'Synced',
+                focus_available: !command,
                 focus_command: command, recovery_items: 0, undo: null, last_focus_settlement: result};
             this._fixture.emit_signal('SyncStatusChanged',
                 new GLib.Variant('(s)', [JSON.stringify(this._queue.sync)]));
@@ -350,6 +352,8 @@ export default class ShellTest extends Extension {
         this._changed();
         indicator.menu.open();
         await this._wait(() => indicator._state?.sync, 'sync status reaches indicator');
+        check(indicator._syncLabel.text === 'Synced', 'the sync line is the service\'s summary');
+        check(indicator._pill.reactive, 'the pill works while Now can change');
         let entry = indicator._entry;
         entry.set_text('!pending shared draft');
         const submit = async command => {
@@ -361,6 +365,7 @@ export default class ShellTest extends Extension {
             sync(command);
             await this._wait(() => indicator._pendingFocusAdd?.command === command, 'pending receipt ID retained');
             check(!entry.clutter_text.editable, 'pending draft is disabled');
+            await this._wait(() => !indicator._pill.reactive, 'focus_available disables the pill');
             entry.clutter_text.emit('activate');
             check(this._requests.length === count + 1, 'pending draft cannot be resubmitted');
         };
