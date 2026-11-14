@@ -509,6 +509,11 @@ impl Store {
 
     /// Compact JSON snapshot for the shell extension / CLI.
     pub fn snapshot_json(&self) -> String {
+        self.snapshot_value().to_string()
+    }
+
+    /// The snapshot as a JSON value, for a caller that adds to it.
+    pub fn snapshot_value(&self) -> serde_json::Value {
         let task = |t: &Task| {
             serde_json::json!({
                 "id": t.id,
@@ -526,7 +531,6 @@ impl Store {
             "next": list(Bucket::Next),
             "later": list(Bucket::Later),
         })
-        .to_string()
     }
 }
 

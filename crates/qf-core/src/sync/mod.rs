@@ -7,6 +7,7 @@ mod persistence;
 mod protocol;
 mod recovery;
 mod reducer;
+mod status;
 
 pub use client::*;
 pub use clock::ClockSample;
@@ -16,6 +17,7 @@ pub use persistence::{
 pub use protocol::*;
 pub use recovery::RecoveryChange;
 pub use reducer::ServerState;
+pub use status::{ClientUndo, ConnectionState, SyncStatus};
 pub use uuid::Uuid as Id;
 
 #[cfg(test)]

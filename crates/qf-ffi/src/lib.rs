@@ -8,7 +8,7 @@ mod types;
 
 pub use types::*;
 
-use qf_core::{Engine, EngineError, Outcome};
+use qf_core::{Engine, EngineError, Outcome, Submitted};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -19,14 +19,17 @@ uniffi::setup_scaffolding!();
 /// two ticks means something is badly wrong, and the first say why.
 const MAX_PENDING_PROBLEMS: usize = 16;
 
-/// Why a request was refused. Nothing changed in either case.
+/// Why a request did not come back done. Nothing changed in any case.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum QfError {
     /// A file could not be read or a change could not be saved.
     Persistence { message: String },
     /// The arguments could not be used, or named a task that is not there.
     InvalidArgument { message: String },
-    /// Persisted shared focus command; success is reported after settlement.
+    /// Not a failure: a change to the shared Now was saved and sent, and the
+    /// server decides it. Its settlement names `command_id`. UniFFI has no
+    /// generic result to say this in, so it travels as an error, and the app
+    /// turns it back into a result of its own at once.
     Pending { command_id: String, message: String },
 }
 
@@ -48,10 +51,6 @@ impl From<EngineError> for QfError {
         match error {
             EngineError::InvalidArgument(_) => QfError::InvalidArgument { message },
             EngineError::Persistence(_) => QfError::Persistence { message },
-            EngineError::Pending { command_id } => QfError::Pending {
-                command_id: command_id.to_string(),
-                message,
-            },
         }
     }
 }
@@ -144,6 +143,17 @@ impl State {
         }
         Ok(value)
     }
+
+    /// As `settle`, for a request that may be left with the server.
+    fn submit<T>(&mut self, result: Result<Submitted<T>, EngineError>) -> Result<T, QfError> {
+        match result? {
+            Submitted::Applied(outcome) => self.settle(Ok(outcome)),
+            Submitted::Pending(command) => Err(QfError::Pending {
+                command_id: command.to_string(),
+                message: qf_core::pending_message(command),
+            }),
+        }
+    }
 }
 
 impl QueueEngine {
@@ -194,13 +204,13 @@ impl QueueEngine {
 
     fn change<T>(
         &self,
-        f: impl FnOnce(&mut Engine) -> Result<Outcome<T>, EngineError>,
+        f: impl FnOnce(&mut Engine) -> Result<Submitted<T>, EngineError>,
     ) -> Result<T, QfError> {
         let mut state = self.lock();
         state.usable()?;
         let result = f(&mut state.engine);
         self.pump(&mut state, true);
-        state.settle(result)
+        state.submit(result)
     }
 }
 
@@ -261,7 +271,7 @@ impl QueueEngine {
     }
 
     pub fn dismiss_sync_recovery(&self, command: String) -> Result<(), QfError> {
-        self.change(|e| e.dismiss_sync_recovery(&command))
+        self.change(|e| e.dismiss_sync_recovery(&command).map(Submitted::Applied))
     }
 
     pub fn retry_sync(&self) -> Result<(), QfError> {
@@ -292,8 +302,8 @@ impl QueueEngine {
     // ---- the queue -----------------------------------------------------
 
     /// Parse the add markers and create a task. Without a bucket it goes
-    /// where the settings say, or to Now while Now is empty; a marker in the
-    /// text wins either way. Returns the new task's id.
+    /// where the settings say, or, standalone, to Now while Now is empty; a
+    /// marker in the text wins either way. Returns the new task's id.
     pub fn add(&self, text: String, bucket: Option<Bucket>) -> Result<u64, QfError> {
         self.change(|e| e.add(&text, bucket.map(Into::into)))
     }
@@ -301,7 +311,7 @@ impl QueueEngine {
     /// Delete the current task and pull the head of Next into Now. Returns the
     /// task that was completed, or nothing when Now was empty.
     pub fn complete_current(&self) -> Result<Option<QueueTask>, QfError> {
-        let task = self.change(|e| e.complete_current())?;
+        let task: Option<qf_core::Task> = self.change(|e| e.complete_current())?;
         Ok(task.as_ref().map(QueueTask::from))
     }
 

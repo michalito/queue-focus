@@ -1,351 +1,376 @@
-//! Explicit native intents. Never derive a command from a mutated Store.
-use super::invalid;
-use super::*;
-use crate::sync::*;
-use crate::{QuickAdd, MAX_TITLE_CHARS};
+//! The shared queue: the engine's requests as sync commands.
+//!
+//! Every request becomes one explicit command, resolved against the queue the
+//! user sees: a cycled tag becomes the tag it cycles to, a shift becomes a
+//! move before a named neighbour. A command is never derived by diffing a
+//! mutated `Store`.
+//!
+//! Queued edits are applied to the view at once, from the journal. Changes to
+//! Now and its timer are focus commands: they need a fresh view of the server
+//! and wait for its receipt before anything changes.
+
+use super::{invalid, EngineError, Submitted};
+use crate::sync::{
+    Anchor, Client, ClockSample, FocusAction, Id, QueuedAction, SyncStatus, SyncTask,
+};
+use crate::{Bucket, Outcome, QuickAdd, Store, Tag, Task, MAX_TITLE_CHARS};
+use std::io;
 
 #[cfg(test)]
 mod tests;
 
-impl Engine {
-    /// The host owns the directory lock and the transport separately. This
-    /// constructor never reads or writes the obsolete standalone task file.
-    pub fn open_with_sync(
-        dir: &Path,
-        mut client: Client,
-        clock: ClockSample,
-    ) -> (Engine, Option<String>) {
-        let tasks = Tasks::new(client.store(clock), dir.join(TASKS_FILE));
-        let (settings, warning) = SettingsStore::load(dir.join(SETTINGS_FILE));
-        let reminder = Reminder::new(clock.wall, settings.get());
-        let status = client.status(clock);
-        (
-            Engine {
-                tasks,
-                settings,
-                reminder,
-                sync: Some(client),
-                sync_status: Some(status),
-                sync_status_revision: 0,
-            },
-            warning,
-        )
+/// The sync journal, and what the views read of it.
+#[derive(Debug)]
+pub(super) struct Shared {
+    client: Client,
+    /// The journal's projection: the confirmed queue with the queued edits
+    /// replayed over it, in the form every view reads.
+    store: Store,
+    /// Bumped when the projected tasks change.
+    revision: u64,
+    status: SyncStatus,
+    /// Bumped when `status` changes.
+    status_revision: u64,
+}
+
+impl Shared {
+    pub(super) fn new(mut client: Client, clock: ClockSample) -> Shared {
+        Shared {
+            store: client.store(clock),
+            status: client.status(clock),
+            client,
+            revision: 0,
+            status_revision: 0,
+        }
     }
 
-    pub fn sync_client_mut(&mut self) -> Option<&mut Client> {
-        self.sync.as_mut()
+    pub(super) fn store(&self) -> &Store {
+        &self.store
     }
 
-    pub fn sync_envelope(&self) -> Option<&Envelope> {
-        self.sync.as_ref().map(Client::envelope)
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
     }
 
-    pub fn sync_recovery(&self) -> Vec<RecoveryChange> {
-        self.sync
-            .as_ref()
-            .map(Client::recovery_changes)
-            .unwrap_or_default()
+    pub(super) fn status(&self) -> &SyncStatus {
+        &self.status
     }
 
-    pub fn dismiss_sync_recovery(&mut self, command: &str) -> Result<Outcome<()>, EngineError> {
+    pub(super) fn status_revision(&self) -> u64 {
+        self.status_revision
+    }
+
+    pub(super) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub(super) fn client_mut(&mut self) -> &mut Client {
+        &mut self.client
+    }
+
+    /// Read the journal again. A poll that brings nothing new changes
+    /// neither revision, so it does not rebuild the views.
+    pub(super) fn refresh(&mut self, clock: ClockSample) {
+        let status = self.client.status(clock);
+        if status != self.status {
+            self.status = status;
+            self.status_revision = self.status_revision.wrapping_add(1);
+        }
+        let store = self.client.store(clock);
+        // Reserving a handle for a pending create moves next_id, which no
+        // view shows: only the tasks count.
+        if store.tasks != self.store.tasks {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        self.store = store;
+    }
+
+    // ---- recovery ------------------------------------------------------
+
+    pub(super) fn dismiss_recovery(&mut self, command: &str) -> Result<Outcome<()>, EngineError> {
         let clock = ClockSample::now()?;
-        let command = command
+        let command: Id = command
             .parse()
             .map_err(|_| invalid("invalid command identity"))?;
-        let client = self
-            .sync
-            .as_mut()
-            .ok_or_else(|| invalid("sync is not enabled"))?;
-        if !client
+        let known = self
+            .client
             .envelope()
             .recovery
             .iter()
-            .any(|item| item.command.id == command)
-        {
+            .any(|item| item.command.id == command);
+        if !known {
             return Err(invalid("no rejected change with that identity"));
         }
-        let result = client.dismiss_recovery(command).map_err(shared_error);
-        self.refresh_sync(clock);
-        result
+        let result = self.client.dismiss_recovery(command);
+        self.refresh(clock);
+        result.map_err(command_error)
     }
 
-    pub fn retry_sync(&mut self) -> Result<Outcome<()>, EngineError> {
+    pub(super) fn retry(&mut self) -> Result<Outcome<()>, EngineError> {
         let clock = ClockSample::now()?;
-        let result = self
-            .sync
-            .as_mut()
-            .ok_or_else(|| invalid("sync is not enabled"))?
-            .resume_after_repair()
-            .map_err(shared_error);
-        self.refresh_sync(clock);
-        result
+        let result = self.client.resume_after_repair();
+        self.refresh(clock);
+        result.map_err(command_error)
     }
 
-    pub fn sync_status(&self) -> Option<&SyncStatus> {
-        self.sync_status.as_ref()
-    }
+    // ---- the requests ----------------------------------------------------
 
-    pub fn sync_status_revision(&self) -> u64 {
-        self.sync_status_revision
-    }
-
-    /// Called after each worker poll and native mutation. Status changes must
-    /// notify hosts separately when a pending focus action leaves the queue unchanged.
-    pub fn refresh_sync(&mut self, clock: ClockSample) {
-        if let Some(client) = &mut self.sync {
-            let status = client.status(clock);
-            if self.sync_status.as_ref() != Some(&status) {
-                self.sync_status_revision = self.sync_status_revision.wrapping_add(1);
-            }
-            self.tasks.replace_projection(client.store(clock));
-            self.sync_status = Some(status);
-        }
-    }
-
-    fn shared_task(&self, id: u64) -> Result<SyncTask, EngineError> {
-        let client = self.sync.as_ref().unwrap();
-        let identity = client
-            .envelope()
-            .identity(id)
-            .ok_or_else(|| invalid("no such task"))?;
-        client
-            .projected_snapshot()
-            .task(identity)
-            .cloned()
-            .map_err(|_| invalid("no such task"))
-    }
-
-    fn queued(&mut self, action: QueuedAction) -> Result<Outcome<()>, EngineError> {
-        let clock = ClockSample::now()?;
-        let result = self.sync.as_mut().unwrap().enqueue_queued(action);
-        self.refresh_sync(clock);
-        result
-            .map(|outcome| outcome.map(|_| ()))
-            .map_err(shared_error)
-    }
-
-    fn focus<T>(&mut self, action: FocusAction) -> Result<Outcome<T>, EngineError> {
-        let clock = ClockSample::now()?;
-        let result = self.sync.as_mut().unwrap().enqueue_focus(action, clock);
-        self.refresh_sync(clock);
-        // A post-rename warning is also retained in status; never return an
-        // ordinary failure that could cause a caller to repeat this intent.
-        match result {
-            Ok(outcome) => Err(EngineError::Pending {
-                command_id: outcome.value,
-            }),
-            Err(error) => Err(shared_error(error)),
-        }
-    }
-
-    pub(super) fn shared_add(
+    /// `bucket` is where a task goes when the text names none.
+    pub(super) fn add(
         &mut self,
         text: &str,
-        bucket: Option<Bucket>,
-    ) -> Result<Outcome<u64>, EngineError> {
+        bucket: Bucket,
+    ) -> Result<Submitted<u64>, EngineError> {
         let parsed = QuickAdd::parse(text).ok_or_else(|| invalid("empty title"))?;
-        let bucket = parsed
-            .bucket
-            .or(bucket)
-            .unwrap_or(self.settings().default_bucket);
-        let title: String = parsed.title.chars().take(MAX_TITLE_CHARS).collect();
+        let title = bounded(&parsed.title);
         let task = Id::new_v4();
-        if bucket == Bucket::Now {
-            return self.focus(FocusAction::Create {
-                task,
-                title,
-                tag: parsed.tag,
-            });
+        let tag = parsed.tag;
+        match parsed.bucket.unwrap_or(bucket) {
+            Bucket::Now => self.focus(FocusAction::Create { task, title, tag }),
+            bucket => {
+                let outcome = self.queued(QueuedAction::Create {
+                    task,
+                    title,
+                    tag,
+                    bucket,
+                })?;
+                // The journal gave the new task its handle when it saved it.
+                let handle = self
+                    .client
+                    .envelope()
+                    .handle(task)
+                    .expect("a saved create has a handle");
+                Ok(Submitted::Applied(outcome.map(|()| handle)))
+            }
         }
-        let result = self.queued(QueuedAction::Create {
-            task,
-            title,
-            tag: parsed.tag,
-            bucket,
-        })?;
-        let handle = self
-            .sync
-            .as_ref()
-            .unwrap()
-            .envelope()
-            .handle(task)
-            .expect("persisted create handle");
-        Ok(result.map(|_| handle))
     }
 
-    pub(super) fn shared_complete_current(&mut self) -> Result<Outcome<Option<Task>>, EngineError> {
-        if self.store().current().is_none() {
-            return Ok(Outcome::saved(None));
+    pub(super) fn complete_current(&mut self) -> Result<Submitted<Option<Task>>, EngineError> {
+        if self.store.current().is_none() {
+            return Ok(Submitted::Applied(Outcome::saved(None)));
         }
         self.focus(FocusAction::Complete)
     }
 
-    pub(super) fn shared_delete(
-        &mut self,
-        id: u64,
-        complete: bool,
-    ) -> Result<Outcome<()>, EngineError> {
-        let task = self.shared_task(id)?;
+    /// Complete or remove a task: the current one through the server, any
+    /// other as a queued edit. A queued deletion cannot be undone.
+    pub(super) fn delete(&mut self, id: u64, complete: bool) -> Result<Submitted<()>, EngineError> {
+        let task = self.task(id)?;
         if task.bucket == Bucket::Now {
-            self.focus(if complete {
+            return self.focus(if complete {
                 FocusAction::Complete
             } else {
                 FocusAction::Remove
-            })
-        } else {
-            self.queued(QueuedAction::Delete {
-                task: task.id,
-                title_version: task.versions.title,
-            })
+            });
         }
-    }
-
-    pub(super) fn shared_undo(&mut self, id: u64) -> Result<Outcome<bool>, EngineError> {
-        let clock = ClockSample::now()?;
-        let undo = self.sync.as_ref().unwrap().status(clock).undo;
-        match undo.filter(|undo| undo.task == id) {
-            Some(undo) => self.focus(FocusAction::Undo {
-                completion: undo.command,
-            }),
-            None => Ok(Outcome::saved(false)),
-        }
-    }
-
-    pub(super) fn shared_pause(&mut self) -> Result<Outcome<bool>, EngineError> {
-        let Some(task) = self.store().current() else {
-            return Ok(Outcome::saved(false));
-        };
-        self.focus(FocusAction::SetPaused {
-            paused: !task.is_paused(),
+        self.queued(QueuedAction::Delete {
+            task: task.id,
+            title_version: task.versions.title,
         })
+        .map(Submitted::Applied)
     }
 
-    pub(super) fn shared_promote(&mut self, id: u64) -> Result<Outcome<()>, EngineError> {
-        let task = self.shared_task(id)?;
+    /// Only the completion the server still offers to undo can be undone.
+    pub(super) fn undo(&mut self, id: u64) -> Result<Submitted<bool>, EngineError> {
+        let clock = ClockSample::now()?;
+        let offer = self
+            .client
+            .status(clock)
+            .undo
+            .filter(|offer| offer.task == id);
+        match offer {
+            Some(offer) => self.focus_at(
+                FocusAction::Undo {
+                    completion: offer.command,
+                },
+                clock,
+            ),
+            None => Ok(Submitted::Applied(Outcome::saved(false))),
+        }
+    }
+
+    pub(super) fn toggle_pause(&mut self) -> Result<Submitted<bool>, EngineError> {
+        let Some(current) = self.store.current() else {
+            return Ok(Submitted::Applied(Outcome::saved(false)));
+        };
+        let paused = !current.is_paused();
+        self.focus(FocusAction::SetPaused { paused })
+    }
+
+    pub(super) fn promote(&mut self, id: u64) -> Result<Submitted<()>, EngineError> {
+        let task = self.task(id)?;
         if task.bucket == Bucket::Now {
-            return Ok(Outcome::saved(()));
+            return Ok(Submitted::Applied(Outcome::saved(())));
         }
         self.focus(FocusAction::Promote { task: task.id })
     }
 
-    pub(super) fn shared_tag(
+    pub(super) fn set_tag(
         &mut self,
         id: u64,
         tag: Option<Tag>,
-    ) -> Result<Outcome<()>, EngineError> {
-        let task = self.shared_task(id)?;
+    ) -> Result<Submitted<()>, EngineError> {
+        let task = self.task(id)?;
         if task.tag == tag {
-            return Ok(Outcome::saved(()));
+            return Ok(Submitted::Applied(Outcome::saved(())));
         }
         self.queued(QueuedAction::SetTag {
             task: task.id,
             expected: task.versions.tag,
             tag,
         })
+        .map(Submitted::Applied)
     }
 
-    pub(super) fn shared_rename(
-        &mut self,
-        id: u64,
-        title: &str,
-    ) -> Result<Outcome<()>, EngineError> {
-        let task = self.shared_task(id)?;
-        let title: String = title.trim().chars().take(MAX_TITLE_CHARS).collect();
+    pub(super) fn rename(&mut self, id: u64, title: &str) -> Result<Submitted<()>, EngineError> {
+        let task = self.task(id)?;
+        let title = bounded(title.trim());
         if task.title == title {
-            return Ok(Outcome::saved(()));
+            return Ok(Submitted::Applied(Outcome::saved(())));
         }
         self.queued(QueuedAction::Rename {
             task: task.id,
             expected: task.versions.title,
             title,
         })
+        .map(Submitted::Applied)
     }
 
-    pub(super) fn shared_move_to(
+    /// `index` counts the bucket's tasks other than this one, as the
+    /// standalone queue counts them.
+    pub(super) fn move_to(
         &mut self,
         id: u64,
         bucket: Bucket,
         index: Option<usize>,
-    ) -> Result<Outcome<()>, EngineError> {
-        self.require(id)?;
+    ) -> Result<Submitted<()>, EngineError> {
         if bucket == Bucket::Now {
-            return self.shared_promote(id);
+            return self.promote(id);
         }
+        self.task(id)?;
         let before = index.and_then(|index| {
-            self.store()
+            self.store
                 .in_bucket(bucket)
                 .filter(|t| t.id != id)
                 .nth(index)
                 .map(|t| t.id)
         });
-        self.shared_move_before(id, bucket, before)
-            .map(|outcome| outcome.map(|_| ()))
+        Ok(self.move_before(id, bucket, before)?.map(|_| ()))
     }
 
-    pub(super) fn shared_move_before(
+    pub(super) fn shift(&mut self, id: u64, delta: i32) -> Result<Submitted<bool>, EngineError> {
+        let bucket = self.task(id)?.bucket;
+        let ids: Vec<u64> = self.store.in_bucket(bucket).map(|t| t.id).collect();
+        let index = ids
+            .iter()
+            .position(|candidate| *candidate == id)
+            .expect("a task is in its own bucket");
+        let last = ids.len() as i64 - 1;
+        let target = (index as i64 + i64::from(delta)).clamp(0, last) as usize;
+        if index == target {
+            return Ok(Submitted::Applied(Outcome::saved(false)));
+        }
+        Ok(self.move_to(id, bucket, Some(target))?.map(|()| true))
+    }
+
+    /// `false` when `before` has gone or left `bucket` since it was drawn.
+    pub(super) fn move_before(
         &mut self,
         id: u64,
         bucket: Bucket,
         before: Option<u64>,
-    ) -> Result<Outcome<bool>, EngineError> {
-        let task = self.shared_task(id)?;
+    ) -> Result<Submitted<bool>, EngineError> {
+        let task = self.task(id)?;
         if let Some(before) = before {
-            if !self.store().get(before).is_some_and(|t| t.bucket == bucket) {
-                return Ok(Outcome::saved(false));
+            if !self.store.get(before).is_some_and(|t| t.bucket == bucket) {
+                return Ok(Submitted::Applied(Outcome::saved(false)));
             }
             if before == id {
-                return Ok(Outcome::saved(true));
+                return Ok(Submitted::Applied(Outcome::saved(true)));
             }
         }
         if bucket == Bucket::Now {
-            return self.shared_promote(id).map(|o| o.map(|_| true));
+            return Ok(self.promote(id)?.map(|()| true));
         }
-        let anchor = before
-            .map(|id| {
-                self.shared_task(id).map(|task| Anchor {
-                    task: task.id,
-                    placement: task.versions.placement,
+        let before = match before {
+            Some(before) => {
+                let neighbour = self.task(before)?;
+                Some(Anchor {
+                    task: neighbour.id,
+                    placement: neighbour.versions.placement,
                 })
-            })
-            .transpose()?;
+            }
+            None => None,
+        };
         if task.bucket == Bucket::Now {
-            self.focus(FocusAction::MoveToQueue {
-                bucket,
-                before: anchor,
-            })
-        } else {
-            self.queued(QueuedAction::MoveBefore {
-                task: task.id,
-                expected: task.versions.placement,
-                bucket,
-                before: anchor,
-            })
-            .map(|o| o.map(|_| true))
+            return self.focus(FocusAction::MoveToQueue { bucket, before });
         }
+        let outcome = self.queued(QueuedAction::MoveBefore {
+            task: task.id,
+            expected: task.versions.placement,
+            bucket,
+            before,
+        })?;
+        Ok(Submitted::Applied(outcome.map(|()| true)))
     }
 
-    pub(super) fn shared_shift(
+    // ---- plumbing --------------------------------------------------------
+
+    /// The task behind a handle, as the journal projects it, with the field
+    /// versions a command has to name.
+    fn task(&self, id: u64) -> Result<SyncTask, EngineError> {
+        let identity = self
+            .client
+            .envelope()
+            .identity(id)
+            .ok_or_else(|| invalid("no such task"))?;
+        self.client
+            .projected_snapshot()
+            .task(identity)
+            .cloned()
+            .map_err(|_| invalid("no such task"))
+    }
+
+    /// Save a queued edit to the journal; the view shows it at once.
+    fn queued(&mut self, action: QueuedAction) -> Result<Outcome<()>, EngineError> {
+        let clock = ClockSample::now()?;
+        let result = self.client.enqueue_queued(action);
+        self.refresh(clock);
+        result
+            .map(|outcome| outcome.map(|_| ()))
+            .map_err(command_error)
+    }
+
+    fn focus<T>(&mut self, action: FocusAction) -> Result<Submitted<T>, EngineError> {
+        let clock = ClockSample::now()?;
+        self.focus_at(action, clock)
+    }
+
+    /// Save a focus command and send it; nothing changes until the receipt.
+    /// `clock` is the one instant the request was checked against.
+    ///
+    /// A save that committed but could not be made crash-safe is not lost:
+    /// the status says so until it is, and holds the worker back meanwhile.
+    fn focus_at<T>(
         &mut self,
-        id: u64,
-        delta: i32,
-    ) -> Result<Outcome<bool>, EngineError> {
-        let bucket = self
-            .store()
-            .get(id)
-            .ok_or_else(|| invalid("no such task"))?
-            .bucket;
-        let ids: Vec<_> = self.store().in_bucket(bucket).map(|t| t.id).collect();
-        let index = ids.iter().position(|candidate| *candidate == id).unwrap();
-        let target = (index as i64 + delta as i64).clamp(0, ids.len() as i64 - 1) as usize;
-        if index == target {
-            return Ok(Outcome::saved(false));
-        }
-        self.shared_move_to(id, bucket, Some(target))
-            .map(|o| o.map(|_| true))
+        action: FocusAction,
+        clock: ClockSample,
+    ) -> Result<Submitted<T>, EngineError> {
+        let result = self.client.enqueue_focus(action, clock);
+        self.refresh(clock);
+        let outcome = result.map_err(command_error)?;
+        Ok(Submitted::Pending(outcome.value))
     }
 }
 
-fn shared_error(error: io::Error) -> EngineError {
+/// A title as the protocol takes it.
+fn bounded(title: &str) -> String {
+    title.chars().take(MAX_TITLE_CHARS).collect()
+}
+
+/// The journal refuses a command it cannot take with invalid input or data;
+/// anything else is a failure to save.
+fn command_error(error: io::Error) -> EngineError {
     if matches!(
         error.kind(),
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData

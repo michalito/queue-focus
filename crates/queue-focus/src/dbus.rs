@@ -5,7 +5,7 @@ use crate::service::SharedService;
 use crate::ui::{Page, Ui};
 use adw::prelude::*;
 use gtk::{gio, glib};
-use qf_core::{Bucket, EngineError, Outcome, Tag};
+use qf_core::{Bucket, EngineError, Submitted, Tag};
 use std::rc::Rc;
 
 pub const PATH: &str = "/org/queuefocus/QueueFocus";
@@ -61,6 +61,9 @@ const XML: &str = r#"
 
 const ERR_INVALID_ARGS: &str = "org.queuefocus.Error.InvalidArgs";
 const ERR_PERSISTENCE: &str = "org.queuefocus.Error.Persistence";
+/// Not a failure: the change went to the sync server, which decides it. The
+/// message carries the command id in parentheses, where clients read it.
+const ERR_PENDING: &str = "org.queuefocus.Error.Pending";
 
 /// Export the object on `conn` and start broadcasting changes.
 /// Called from `QfApplication::dbus_register`, i.e. before the bus name is owned.
@@ -274,15 +277,20 @@ pub(crate) fn handle(
 
 /// Answer a task request. A refusal is a D-Bus error; a change that committed
 /// with a durability warning still succeeds, and the warning is broadcast
-/// because the caller is the one who should hear about it.
+/// because the caller is the one who should hear about it. A change left with
+/// the sync server can only be told as an error too, one of its own, so that
+/// a caller neither takes it as done nor sends it again.
 fn reply<R>(
     conn: &gio::DBusConnection,
     inv: gio::DBusMethodInvocation,
-    result: Result<Outcome<R>, EngineError>,
+    result: Result<Submitted<R>, EngineError>,
     to_reply: impl FnOnce(R) -> Option<glib::Variant>,
 ) {
     match result {
-        Ok(outcome) => {
+        Ok(Submitted::Pending(command)) => {
+            inv.return_dbus_error(ERR_PENDING, &qf_core::pending_message(command))
+        }
+        Ok(Submitted::Applied(outcome)) => {
             let (value, warning) = outcome.into_parts();
             inv.return_value(to_reply(value).as_ref());
             if let Some(warning) = warning {
@@ -301,7 +309,6 @@ fn reply_error(inv: gio::DBusMethodInvocation, error: EngineError) {
     let name = match error {
         EngineError::InvalidArgument(_) => ERR_INVALID_ARGS,
         EngineError::Persistence(_) => ERR_PERSISTENCE,
-        EngineError::Pending { .. } => "org.queuefocus.Error.Pending",
     };
     inv.return_dbus_error(name, &error.to_string());
 }

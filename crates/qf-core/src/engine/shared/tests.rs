@@ -1,5 +1,8 @@
-use super::*;
-use std::{fs, path::PathBuf};
+use super::super::{Engine, EngineError, Submitted};
+use crate::store::TASKS_FILE;
+use crate::sync::*;
+use crate::{Bucket, Outcome, Tag};
+use std::{fmt, fs, path::PathBuf};
 
 struct Fixture {
     dir: PathBuf,
@@ -65,20 +68,12 @@ impl Fixture {
         settlement
     }
     fn drain(&mut self) {
-        while !self
-            .engine
-            .sync
-            .as_ref()
-            .unwrap()
-            .envelope()
-            .pending
-            .is_empty()
-        {
+        while !self.engine.sync_envelope().unwrap().pending.is_empty() {
             self.exchange();
         }
     }
     fn reopen(&mut self) {
-        let device = self.engine.sync.as_ref().unwrap().envelope().device;
+        let device = self.engine.sync_envelope().unwrap().device;
         let client = Client::open(&self.dir.join(STATE_FILE), device).unwrap();
         self.engine = Engine::open_with_sync(&self.dir, client, ClockSample::now().unwrap()).0;
     }
@@ -88,23 +83,31 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.dir);
     }
 }
-fn pending<T: fmt::Debug>(result: Result<Outcome<T>, EngineError>) -> Id {
+fn pending<T: fmt::Debug>(result: Result<Submitted<T>, EngineError>) -> Id {
     match result {
-        Err(EngineError::Pending { command_id }) => command_id,
+        Ok(Submitted::Pending(command)) => command,
         other => panic!("expected pending, got {other:?}"),
+    }
+}
+
+/// A queued edit is applied at once.
+fn done<T: fmt::Debug>(result: Result<Submitted<T>, EngineError>) -> Outcome<T> {
+    match result {
+        Ok(Submitted::Applied(outcome)) => outcome,
+        other => panic!("expected an applied change, got {other:?}"),
     }
 }
 
 #[test]
 fn offline_capture_and_chained_edits_never_acquire_now_or_touch_legacy_file() {
     let mut f = Fixture::new();
-    let a = f.engine.add("offline #w", None).unwrap().value;
-    let b = f.engine.add("second", None).unwrap().value;
+    let a = done(f.engine.add("offline #w", None)).value;
+    let b = done(f.engine.add("second", None)).value;
     assert!(f.engine.store().current().is_none());
-    f.engine.rename(a, "renamed").unwrap();
-    f.engine.cycle_tag(a).unwrap();
-    f.engine.move_before(a, Bucket::Next, Some(b)).unwrap();
-    f.engine.move_to(b, Bucket::Side, None).unwrap();
+    done(f.engine.rename(a, "renamed"));
+    done(f.engine.cycle_tag(a));
+    done(f.engine.move_before(a, Bucket::Next, Some(b)));
+    done(f.engine.move_to(b, Bucket::Side, None));
     assert!(f.engine.update(|s| s.remove(a)).is_err());
     assert!(f.engine.promote(a).is_err(), "offline focus refused");
     f.reopen();
@@ -160,8 +163,8 @@ fn focus_is_pending_until_receipt_and_settlement_survives_restart() {
 #[test]
 fn shared_completion_undo_uses_server_metadata_and_queued_completion_cannot_undo() {
     let mut f = Fixture::new();
-    let a = f.engine.add("a", None).unwrap().value;
-    let b = f.engine.add("b", None).unwrap().value;
+    let a = done(f.engine.add("a", None)).value;
+    let b = done(f.engine.add("b", None)).value;
     f.drain();
     pending(f.engine.promote(a));
     f.exchange();
@@ -176,10 +179,10 @@ fn shared_completion_undo_uses_server_metadata_and_queued_completion_cannot_undo
     pending(f.engine.undo_complete(a));
     f.exchange();
     assert_eq!(f.engine.store().current().unwrap().id, a);
-    f.engine.complete(b).unwrap();
-    assert!(!f.engine.undo_complete(b).unwrap().value);
+    done(f.engine.complete(b));
+    assert!(!done(f.engine.undo_complete(b)).value);
     f.exchange();
-    assert!(!f.engine.undo_complete(b).unwrap().value);
+    assert!(!done(f.engine.undo_complete(b)).value);
     assert!(f.engine.sync_status().unwrap().undo.is_none());
 }
 
@@ -217,7 +220,7 @@ fn stale_focus_rejection_keeps_server_state_and_persists_result() {
     let copy: RecoveryItem = serde_json::from_str(&recovery[0].copy_text).unwrap();
     assert_eq!(copy.command.id, command);
     // Dismissal removes only a definitive rejection, never uncertain work.
-    f.engine.add("still pending", None).unwrap();
+    done(f.engine.add("still pending", None));
     let pending = f.engine.sync_envelope().unwrap().pending.clone();
     assert!(f
         .engine
@@ -236,7 +239,7 @@ fn stale_focus_rejection_keeps_server_state_and_persists_result() {
 #[test]
 fn quarantined_recovery_cannot_be_dismissed_or_retried() {
     let mut f = Fixture::new();
-    f.engine.add("preserved", None).unwrap();
+    done(f.engine.add("preserved", None));
     f.engine
         .sync_client_mut()
         .unwrap()
@@ -255,11 +258,11 @@ fn quarantined_recovery_cannot_be_dismissed_or_retried() {
 #[test]
 fn shared_move_indices_and_anchor_refusals_match_native_contract() {
     let mut f = Fixture::new();
-    let a = f.engine.add("a", None).unwrap().value;
-    let b = f.engine.add("b", None).unwrap().value;
-    let c = f.engine.add("c", None).unwrap().value;
-    assert!(!f.engine.shift(a, -1).unwrap().value);
-    assert!(f.engine.shift(a, 1).unwrap().value);
+    let a = done(f.engine.add("a", None)).value;
+    let b = done(f.engine.add("b", None)).value;
+    let c = done(f.engine.add("c", None)).value;
+    assert!(!done(f.engine.shift(a, -1)).value);
+    assert!(done(f.engine.shift(a, 1)).value);
     assert_eq!(
         f.engine
             .store()
@@ -270,12 +273,7 @@ fn shared_move_indices_and_anchor_refusals_match_native_contract() {
         vec![b, a, c]
     );
     let before = f.engine.revision();
-    assert!(
-        !f.engine
-            .move_before(a, Bucket::Later, Some(b))
-            .unwrap()
-            .value
-    );
+    assert!(!done(f.engine.move_before(a, Bucket::Later, Some(b))).value);
     assert_eq!(before, f.engine.revision());
     f.drain();
     pending(f.engine.promote(a));
@@ -304,15 +302,8 @@ fn configured_now_refuses_offline_without_saving_elsewhere() {
         Err(EngineError::InvalidArgument(_))
     ));
     assert!(f.engine.store().is_empty());
-    assert!(f
-        .engine
-        .sync
-        .as_ref()
-        .unwrap()
-        .envelope()
-        .pending
-        .is_empty());
-    let queued = f.engine.add("explicit @later", None).unwrap().value;
+    assert!(f.engine.sync_envelope().unwrap().pending.is_empty());
+    let queued = done(f.engine.add("explicit @later", None)).value;
     assert_eq!(f.engine.store().get(queued).unwrap().bucket, Bucket::Later);
     f.drain();
     pending(f.engine.add("configured Now online", None));
@@ -322,4 +313,73 @@ fn configured_now_refuses_offline_without_saving_elsewhere() {
         f.engine.store().current().unwrap().title,
         "configured Now online"
     );
+}
+
+/// The status says when Now can change, and the engine takes a change to Now
+/// exactly then: a view that follows the status never offers one that fails.
+#[test]
+fn focus_available_is_when_the_engine_takes_a_change_to_now() {
+    let mut f = Fixture::new();
+    let a = done(f.engine.add("a", None)).value;
+    let status = f.engine.sync_status().unwrap();
+    assert!(
+        !status.focus_available,
+        "no fresh answer, and an edit to send"
+    );
+    assert_eq!(
+        status.summary,
+        "1 change saved on this device, waiting to sync."
+    );
+    let b = done(f.engine.add("b", None)).value;
+    assert!(f.engine.promote(a).is_err());
+
+    f.drain();
+    let status = f.engine.sync_status().unwrap();
+    assert!(status.focus_available);
+    assert_eq!(status.summary, "Synced");
+    let command = pending(f.engine.promote(a));
+
+    let status = f.engine.sync_status().unwrap();
+    assert!(!status.focus_available, "one change to Now at a time");
+    assert_eq!(status.focus_command, Some(command));
+    assert_eq!(status.summary, "Sent, waiting for confirmation…");
+    assert!(f.engine.promote(b).is_err());
+
+    f.exchange();
+    assert!(f.engine.sync_status().unwrap().focus_available);
+    assert_eq!(f.engine.store().current().unwrap().id, a);
+}
+
+#[test]
+fn get_state_carries_the_sync_status_and_a_standalone_queue_does_not() {
+    let mut f = Fixture::new();
+    f.exchange();
+    let state: serde_json::Value = serde_json::from_str(&f.engine.state_json()).unwrap();
+    assert_eq!(state["sync"]["state"], "online");
+    assert_eq!(state["sync"]["summary"], "Synced");
+    assert_eq!(state["sync"]["focus_available"], true);
+    assert!(state["current"].is_null());
+
+    let dir = f.dir.join("standalone");
+    fs::create_dir_all(&dir).unwrap();
+    let (standalone, _) = Engine::open(&dir, crate::unix_now).unwrap();
+    assert!(standalone.sync_status().is_none());
+    let state: serde_json::Value = serde_json::from_str(&standalone.state_json()).unwrap();
+    assert!(state.get("sync").is_none());
+}
+
+#[test]
+fn a_standalone_queue_refuses_the_sync_requests() {
+    let dir = std::env::temp_dir().join(format!("qf-standalone-sync-{}", Id::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let (mut engine, _) = Engine::open(&dir, crate::unix_now).unwrap();
+    for result in [
+        engine.retry_sync(),
+        engine.dismiss_sync_recovery(&Id::new_v4().to_string()),
+    ] {
+        assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
+    }
+    assert!(engine.sync_envelope().is_none() && engine.sync_recovery().is_empty());
+    assert_eq!(engine.sync_status_revision(), 0);
+    fs::remove_dir_all(dir).unwrap();
 }

@@ -24,7 +24,7 @@ impl Ui {
         let this = Rc::downgrade(self);
         retry.connect_clicked(move |_| {
             if let Some(ui) = this.upgrade() {
-                let _ = ui.report(ui.service.retry_sync());
+                ui.report(ui.service.retry_sync().map(Submitted::Applied));
             }
         });
         actions.append(&retry);
@@ -125,7 +125,7 @@ impl Ui {
             let command = command.clone();
             dialog.connect_response(Some("dismiss"), move |_, _| {
                 if let Some(ui) = this.upgrade() {
-                    let _ = ui.update(|e| e.dismiss_sync_recovery(&command));
+                    ui.update(|e| e.dismiss_sync_recovery(&command).map(Submitted::Applied));
                 }
             });
             dialog.present(ui.visible_window().as_ref());

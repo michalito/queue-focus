@@ -537,7 +537,7 @@ queue-focus --help
 
 `queue-focus add` opens the quick add window. When text follows `add`, the task is added without opening a window. The same marker syntax is accepted.
 
-`queue-focus done` completes the current task. It prints the deleted title, or `nothing in Now`.
+`queue-focus done` completes the current task. It prints the deleted title, or `nothing in Now`. With [sync](#sync-between-macos-and-ubuntu) on, a change to Now waits for the server: `done`, and `add` with `!`, print `Sent, waiting for confirmation (<id>)` and exit with status 3 instead of 0.
 
 `queue-focus status` prints a compact JSON snapshot with `current`, `now`, `side`, `next`, and `later` fields. `now` lists the Now bucket like the other three, so it holds the current task and nothing else, or is empty. Each task in the snapshot carries its id, title, tag, start time, and pause time. This is a view of the current state, not the storage file format.
 
@@ -634,6 +634,8 @@ The `Changed(json)` signal is emitted after a saved task change. The `SettingsCh
 The `Flash(json)` signal asks the shell extension to draw one flash. Its JSON carries `style`, `intensity`, `palette`, `title`, and `timer`. The service resolves all five, so a shell that has only just connected still draws the right thing. `style` is one of `wash`, `wash2`, `edges`, `edgesSoft`, `topbar`, and `topbarBeam`; `palette` is `blue` or `orange`.
 
 Invalid arguments use `org.queuefocus.Error.InvalidArgs`. Save failures use `org.queuefocus.Error.Persistence`.
+
+With sync on, `GetState` and `Changed` carry a `sync` object. Its `summary` is the line to show for sync, and `focus_available` says whether Now and its timer can change; controls that would change them should be disabled while it is false. A method that changes Now does not change it at once: it answers `org.queuefocus.Error.Pending` with `Sent, waiting for confirmation (<id>)`. That is not a failure, and the call must not be repeated. The `CommandSettled(json)` signal, and `sync.last_focus_settlement`, report the server's answer for that id; `SyncStatusChanged(json)` carries the `sync` object whenever it changes.
 
 The service is activated on demand through its D Bus service file. A client does not need to start it first.
 

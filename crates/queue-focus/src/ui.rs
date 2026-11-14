@@ -9,9 +9,10 @@
 use crate::service::SharedService;
 use adw::prelude::*;
 use gtk::{gdk, glib, pango};
+use qf_core::sync::{Id, ReceiptOutcome, Settlement};
 use qf_core::{
-    long_elapsed, Bucket, Engine, EngineError, FlashColor, Intensity, Outcome, Settings, Tag, Task,
-    Theme, INTERVAL_MAX, INTERVAL_MIN, MAX_TITLE_CHARS,
+    long_elapsed, Bucket, Engine, EngineError, FlashColor, Intensity, Settings, Submitted, Tag,
+    Task, Theme, INTERVAL_MAX, INTERVAL_MIN, MAX_TITLE_CHARS,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -235,7 +236,9 @@ pub struct Ui {
     dirty: Cell<bool>,
     quick: RefCell<Option<(gtk::Window, gtk::Entry)>>,
     sync_labels: RefCell<Vec<glib::WeakRef<gtk::Label>>>,
-    pending_adds: RefCell<Vec<(qf_core::sync::Id, gtk::Entry, String)>>,
+    /// Entries whose task waits for the server: the command, the entry, and
+    /// the text it held when sent. The entry stays disabled until it settles.
+    pending_adds: RefCell<Vec<(Id, gtk::Entry, String)>>,
     focus_controls: RefCell<Vec<glib::WeakRef<gtk::Widget>>>,
 }
 
@@ -370,40 +373,45 @@ impl Ui {
         }
     }
 
-    /// Run a persisted mutation asked for from this window and report on it.
+    /// Run a request made in this window and report on it. Returns the value
+    /// of a change that was applied; `None` for one that was refused, or that
+    /// waits for the sync server.
     fn update<R>(
         &self,
-        f: impl FnOnce(&mut Engine) -> Result<Outcome<R>, EngineError>,
-    ) -> Result<R, EngineError> {
+        f: impl FnOnce(&mut Engine) -> Result<Submitted<R>, EngineError>,
+    ) -> Option<R> {
         self.report(self.service.request(f))
     }
 
     /// Mark a task done. Only completing the current task pulls the head of
     /// Next; either can be undone, from the top bar. A row that has already
     /// gone is not worth an alert.
-    fn complete(&self, id: u64) -> bool {
+    fn complete(&self, id: u64) {
         match self.service.request(|e| e.complete(id)) {
-            Err(EngineError::InvalidArgument(_)) => false,
-            result => self.report(result).is_ok(),
+            Err(EngineError::InvalidArgument(_)) => {}
+            result => {
+                self.report(result);
+            }
         }
     }
 
     /// A failure to commit is an error the user must see; a change that
     /// committed but may not be crash-safe is a warning. Both go to the
-    /// window the user is looking at, and always to stderr.
-    fn report<R>(&self, result: Result<Outcome<R>, EngineError>) -> Result<R, EngineError> {
+    /// window the user is looking at, and always to stderr. A change sent to
+    /// the sync server is neither: the sync line says it is waiting.
+    fn report<R>(&self, result: Result<Submitted<R>, EngineError>) -> Option<R> {
         match result {
-            Ok(outcome) => {
+            Ok(Submitted::Applied(outcome)) => {
                 let (value, warning) = outcome.into_parts();
                 if let Some(warning) = warning {
                     self.alert("Task change saved with a warning", &warning.to_string());
                 }
-                Ok(value)
+                Some(value)
             }
-            Err(e @ EngineError::Pending { .. }) => Err(e),
+            Ok(Submitted::Pending(_)) => None,
             Err(e) => {
                 self.alert("Could not safely save task changes", &e.to_string());
-                Err(e)
+                None
             }
         }
     }
@@ -653,21 +661,20 @@ impl Ui {
             return false;
         }
         match self.service.request(|engine| engine.add(&text, bucket)) {
-            Err(EngineError::Pending { command_id }) => {
+            Ok(Submitted::Pending(command)) => {
                 e.set_sensitive(false);
                 self.pending_adds
                     .borrow_mut()
-                    .push((command_id, e.clone(), text));
+                    .push((command, e.clone(), text));
                 self.update_sync_status();
                 false
             }
             result => {
-                if self.report(result).is_ok() {
+                let added = self.report(result).is_some();
+                if added {
                     e.set_text("");
-                    true
-                } else {
-                    false
                 }
+                added
             }
         }
     }
@@ -695,48 +702,23 @@ impl Ui {
         widget.set_sensitive(self.focus_available());
     }
 
+    /// Whether Now and its timer can be changed: always, standalone.
     fn focus_available(&self) -> bool {
         self.service
             .engine()
             .sync_status()
-            .is_none_or(|s| s.state == qf_core::sync::ConnectionState::Online && s.pending == 0)
+            .is_none_or(|s| s.focus_available)
     }
 
     fn update_sync_status(&self) {
-        use qf_core::sync::ConnectionState;
         let status = self.service.engine().sync_status().cloned();
-        let message = status.as_ref().map(|s| {
-            if let Some(message) = &s.message {
-                return message.clone();
-            }
-            if s.focus_command.is_some() {
-                return "Sent, waiting for confirmation…".into();
-            }
-            if s.recovery_items > 0 {
-                return format!(
-                    "Sync needs attention: {} saved changes need review.",
-                    s.recovery_items
-                );
-            }
-            if s.pending > 0 {
-                return format!(
-                    "{} changes saved on this device, waiting to sync.",
-                    s.pending
-                );
-            }
-            if s.state == ConnectionState::Online {
-                "Synced".into()
-            } else {
-                "Offline — queue edits are saved here. Now and timer changes need a connection."
-                    .into()
-            }
-        });
+        let message = status.as_ref().map(|s| s.summary.as_str());
         self.sync_labels.borrow_mut().retain(|weak| {
             let Some(label) = weak.upgrade() else {
                 return false;
             };
             label.set_visible(message.is_some());
-            label.set_text(message.as_deref().unwrap_or(""));
+            label.set_text(message.unwrap_or(""));
             true
         });
         let enabled = self.focus_available();
@@ -747,12 +729,15 @@ impl Ui {
             widget.set_sensitive(enabled);
             true
         });
+        // The settlement event can be missed; the status keeps the last one.
         if let Some(settlement) = status.and_then(|s| s.last_focus_settlement) {
             self.settle_add(&settlement);
         }
     }
 
-    fn settle_add(&self, settlement: &qf_core::sync::Settlement) {
+    /// Give back an entry whose task the server has decided on: cleared when
+    /// it was added and still holds what was sent, kept when it was refused.
+    fn settle_add(&self, settlement: &Settlement) {
         let mut matched = Vec::new();
         self.pending_adds.borrow_mut().retain(|(id, entry, text)| {
             if *id == settlement.command {
@@ -765,7 +750,7 @@ impl Ui {
         for (entry, text) in matched {
             entry.set_sensitive(true);
             match &settlement.outcome {
-                qf_core::sync::ReceiptOutcome::Applied { .. } => {
+                ReceiptOutcome::Applied { .. } => {
                     if entry.text().as_str() == text {
                         entry.set_text("");
                         if let Some((window, quick)) = self.quick.borrow().as_ref() {
@@ -775,7 +760,7 @@ impl Ui {
                         }
                     }
                 }
-                qf_core::sync::ReceiptOutcome::Rejected { reason } => {
+                ReceiptOutcome::Rejected { reason } => {
                     self.alert("Shared task was not added", &reason.to_string());
                 }
             }
@@ -1670,7 +1655,7 @@ impl Ui {
         let this = self.clone();
         list.connect_row_activated(move |_, row| {
             if let Some(id) = row_id(row) {
-                let _ = this.update(|s| s.promote(id));
+                this.update(|s| s.promote(id));
             }
         });
 
@@ -1995,7 +1980,7 @@ impl Ui {
         clickable(&button);
         let this = self.clone();
         button.connect_clicked(move |_| {
-            let _ = this.update(|s| s.cycle_tag(id));
+            this.update(|s| s.cycle_tag(id));
         });
         button
     }
@@ -2034,7 +2019,7 @@ impl Ui {
         clickable(&button);
         let this = self.clone();
         button.connect_clicked(move |_| {
-            let _ = this.update(|s| s.toggle_pause());
+            this.update(|s| s.toggle_pause());
         });
         self.focus_control(&button);
         self.timers.borrow_mut().push(timer);
@@ -2133,7 +2118,7 @@ impl Ui {
                 "Make current (⏎)",
                 &["flat", "row-btn"],
                 move || {
-                    let _ = this.update(|s| s.promote(id));
+                    this.update(|s| s.promote(id));
                 },
             );
             self.focus_control(&promote);
@@ -2150,7 +2135,7 @@ impl Ui {
                 .build();
             clickable(&to_next);
             to_next.connect_clicked(move |_| {
-                let _ = this.update(|s| s.move_to(id, Bucket::Next, None));
+                this.update(|s| s.move_to(id, Bucket::Next, None));
             });
             content.append(&to_next);
         }
@@ -2174,7 +2159,7 @@ impl Ui {
         if bucket != Bucket::Now {
             let this = self.clone();
             let promote = menu_item(&popover, "Make current", Some("⏎"), false, move || {
-                let _ = this.update(|s| s.promote(id));
+                this.update(|s| s.promote(id));
             });
             self.focus_control(&promote);
             items.append(&promote);
@@ -2186,7 +2171,7 @@ impl Ui {
             Some("t"),
             false,
             move || {
-                let _ = this.update(|s| s.cycle_tag(id));
+                this.update(|s| s.cycle_tag(id));
             },
         ));
         let this = self.clone();
@@ -2207,7 +2192,7 @@ impl Ui {
                 None,
                 false,
                 move || {
-                    let _ = this.update(|s| s.move_to(id, b, None));
+                    this.update(|s| s.move_to(id, b, None));
                 },
             ));
         }
@@ -2225,7 +2210,7 @@ impl Ui {
         ));
         let this = self.clone();
         items.append(&menu_item(&popover, "Delete", None, true, move || {
-            let _ = this.update(|s| s.remove(id));
+            this.update(|s| s.remove(id));
         }));
 
         popover.set_child(Some(&items));
@@ -2285,7 +2270,7 @@ impl Ui {
                     return;
                 }
                 // A failed save never notifies, so put the title back by hand.
-                if this.update(|s| s.rename(id, &text)).is_err() {
+                if this.update(|s| s.rename(id, &text)).is_none() {
                     this.rebuild();
                 }
             });
@@ -2394,7 +2379,7 @@ impl Ui {
             gdk::Key::j => self.focus_relative(1),
             gdk::Key::k => self.focus_relative(-1),
             gdk::Key::p => {
-                let _ = self.update(|s| s.toggle_pause());
+                self.update(|s| s.toggle_pause());
             }
             gdk::Key::question => self.toggle_shortcuts(),
             gdk::Key::r | gdk::Key::F2 => {
@@ -2406,23 +2391,31 @@ impl Ui {
                 let Some(id) = id else {
                     return glib::Propagation::Proceed;
                 };
-                let changed =
-                    match key {
-                        gdk::Key::J => self.update(|s| s.shift(id, 1)),
-                        gdk::Key::K => self.update(|s| s.shift(id, -1)),
-                        gdk::Key::d | gdk::Key::x | gdk::Key::Delete => Ok(self.complete(id)),
-                        gdk::Key::t => self.update(|s| s.cycle_tag(id).map(|o| o.map(|_| true))),
-                        gdk::Key::_1 => self.update(|s| s.promote(id).map(|o| o.map(|_| true))),
-                        gdk::Key::_2 => self
-                            .update(|s| s.move_to(id, Bucket::Next, None).map(|o| o.map(|_| true))),
-                        gdk::Key::_3 => self.update(|s| {
-                            s.move_to(id, Bucket::Later, None).map(|o| o.map(|_| true))
-                        }),
-                        gdk::Key::_4 => self
-                            .update(|s| s.move_to(id, Bucket::Side, None).map(|o| o.map(|_| true))),
-                        _ => return glib::Propagation::Proceed,
-                    };
-                let _ = changed;
+                match key {
+                    gdk::Key::J => {
+                        self.update(|s| s.shift(id, 1));
+                    }
+                    gdk::Key::K => {
+                        self.update(|s| s.shift(id, -1));
+                    }
+                    gdk::Key::d | gdk::Key::x | gdk::Key::Delete => self.complete(id),
+                    gdk::Key::t => {
+                        self.update(|s| s.cycle_tag(id));
+                    }
+                    gdk::Key::_1 => {
+                        self.update(|s| s.promote(id));
+                    }
+                    gdk::Key::_2 => {
+                        self.update(|s| s.move_to(id, Bucket::Next, None));
+                    }
+                    gdk::Key::_3 => {
+                        self.update(|s| s.move_to(id, Bucket::Later, None));
+                    }
+                    gdk::Key::_4 => {
+                        self.update(|s| s.move_to(id, Bucket::Side, None));
+                    }
+                    _ => return glib::Propagation::Proceed,
+                }
             }
         }
         glib::Propagation::Stop

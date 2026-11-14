@@ -100,16 +100,20 @@ fn sync_pending_crosses_ffi_and_panic_recovery_keeps_the_host_lock() {
             command_id,
             message,
         }) => {
-            assert!(message.contains("waiting for confirmation"));
+            assert_eq!(
+                message,
+                format!("Sent, waiting for confirmation ({command_id})")
+            );
             command_id
         }
         other => panic!("expected typed Pending, got {other:?}"),
     };
     assert!(engine.snapshot().current.is_none());
-    assert_eq!(
-        engine.snapshot().sync.unwrap().focus_command.as_deref(),
-        Some(command_id.as_str())
-    );
+    let sync = engine.snapshot().sync.unwrap();
+    assert_eq!(sync.focus_command.as_deref(), Some(command_id.as_str()));
+    assert_eq!(sync.state, SyncState::Online);
+    assert!(!sync.focus_available, "one change to Now at a time");
+    assert_eq!(sync.summary, "Sent, waiting for confirmation…");
     let worker = &engine;
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _state = worker.state.lock().unwrap();
@@ -552,6 +556,7 @@ fn panic_mid_change(engine: &Arc<QueueEngine>) {
                 s.tasks[0].title = "half made".into();
                 panic!("injected after a change in memory");
             })
+            .map(Submitted::Applied)
         });
     })
     .join();

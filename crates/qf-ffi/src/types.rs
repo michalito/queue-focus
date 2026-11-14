@@ -217,10 +217,40 @@ impl From<qf_core::sync::RecoveryChange> for SyncRecoveryChange {
     }
 }
 
+/// How the shared queue's connection stands. See `qf_core::sync::ConnectionState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SyncState {
+    Online,
+    Offline,
+    NeedsAttention,
+    Recovery,
+    Durability,
+}
+
+impl From<qf_core::sync::ConnectionState> for SyncState {
+    fn from(state: qf_core::sync::ConnectionState) -> Self {
+        use qf_core::sync::ConnectionState;
+        match state {
+            ConnectionState::Online => SyncState::Online,
+            ConnectionState::Offline => SyncState::Offline,
+            ConnectionState::NeedsAttention => SyncState::NeedsAttention,
+            ConnectionState::Recovery => SyncState::Recovery,
+            ConnectionState::Durability => SyncState::Durability,
+        }
+    }
+}
+
+/// The shared queue's status, as the views show it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SyncInfo {
-    pub state: String,
+    pub state: SyncState,
+    /// Why sync is held up, when it is.
     pub message: Option<String>,
+    /// The one line the views show for sync.
+    pub summary: String,
+    /// Whether Now and its timer can be changed; controls that would are
+    /// disabled otherwise.
+    pub focus_available: bool,
     pub pending: u64,
     pub focus_command: Option<String>,
     pub likely_conflicts: u64,
@@ -228,19 +258,14 @@ pub struct SyncInfo {
     pub undo: Option<SyncUndo>,
     pub last_focus_settlement: Option<CommandSettlement>,
 }
+
 impl From<&qf_core::sync::SyncStatus> for SyncInfo {
     fn from(value: &qf_core::sync::SyncStatus) -> Self {
-        use qf_core::sync::ConnectionState;
         Self {
-            state: match value.state {
-                ConnectionState::Online => "online",
-                ConnectionState::Offline => "offline",
-                ConnectionState::NeedsAttention => "needs_attention",
-                ConnectionState::Recovery => "recovery",
-                ConnectionState::Durability => "durability",
-            }
-            .into(),
+            state: value.state.into(),
             message: value.message.clone(),
+            summary: value.summary.clone(),
+            focus_available: value.focus_available,
             pending: value.pending as u64,
             focus_command: value.focus_command.map(|id| id.to_string()),
             likely_conflicts: value.likely_conflicts as u64,

@@ -14,6 +14,7 @@ BIN = ROOT / "target/debug"
 NAME = "org.queuefocus.QueueFocus"
 OBJECT = "/org/queuefocus/QueueFocus"
 processes = []
+PENDING = re.compile(r"Sent, waiting for confirmation \([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)")
 
 
 def run(argv, env=None, ok=True):
@@ -116,10 +117,21 @@ with tempfile.TemporaryDirectory(prefix="qf-sync-native-") as temporary:
                           "--method", f"{NAME}1.{method}", *args], device["env"], ok=not pending)
             if pending:
                 assert result.returncode and "org.queuefocus.Error.Pending:" in result.stderr, result.stderr
+                # Clients read the command id back out of the parentheses.
+                assert PENDING.search(result.stderr), result.stderr
             return result
+
+        def cli_pending(device, *argv):
+            """A CLI change to the shared Now: neither done (0) nor failed (1)."""
+            result = run([BIN / "queue-focus", *argv], device["env"], ok=False)
+            assert result.returncode == 3, (result.returncode, result.stdout, result.stderr)
+            assert PENDING.search(result.stdout), result.stdout
 
         a, b = devices
         wait_for(lambda: all(state(d)["sync"]["state"] == "online" for d in devices), "clients online")
+        # The views read these from the service instead of working them out.
+        assert all(state(d)["sync"]["summary"] == "Synced"
+                   and state(d)["sync"]["focus_available"] is True for d in devices)
         run([BIN / "queue-focus", "add", "Alpha"], a["env"])
         wait_for(lambda: all([t["title"] for t in state(d)["next"]] == ["Alpha"]
                             and state(d)["sync"]["pending"] == 0 for d in devices), "queued capture")
@@ -135,8 +147,10 @@ with tempfile.TemporaryDirectory(prefix="qf-sync-native-") as temporary:
 
         stop(server)
         wait_for(lambda: all(state(d)["sync"]["state"] == "offline" for d in devices), "offline status")
+        assert all(state(d)["sync"]["focus_available"] is False for d in devices)
         run([BIN / "queue-focus", "add", "Offline capture"], a["env"])
         assert state(a)["sync"]["pending"] == 1
+        assert state(a)["sync"]["summary"] == "1 change saved on this device, waiting to sync."
         run([BIN / "queue-focus", "quit"], a["env"])
         a["app"].wait(timeout=5)
         a["app"] = launch([BIN / "queue-focus", "service"], env=a["env"],
@@ -162,6 +176,12 @@ with tempfile.TemporaryDirectory(prefix="qf-sync-native-") as temporary:
         assert "false" in call(a, "UndoComplete", str(queued)).stdout, "queued completion offered undo"
         wait_for(lambda: all(not state(d)["next"] and state(d)["sync"]["pending"] == 0
                             for d in devices), "queued deletion")
+        cli_pending(a, "add", "!Final")
+        wait_for(lambda: all(state(d)["current"] and state(d)["current"]["title"] == "Final"
+                            and state(d)["sync"]["pending"] == 0 for d in devices), "CLI add to Now")
+        cli_pending(b, "done")
+        wait_for(lambda: all(state(d)["current"] and state(d)["current"]["title"] == "Alpha"
+                            and state(d)["sync"]["pending"] == 0 for d in devices), "CLI completion")
         for device in devices:
             assert json.loads((device["data"] / "tasks.json").read_text())["tasks"].startswith("Sync is enabled")
         print("native sync integration passed: two primary services, forwarded CLI, shared Now/pause/undo, offline restart and convergence")
