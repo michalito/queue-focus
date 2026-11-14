@@ -44,7 +44,10 @@ impl Fixture {
         }
     }
     fn exchange(&mut self) -> Option<Settlement> {
-        let clock = ClockSample::now().unwrap();
+        self.exchange_at(ClockSample::now().unwrap())
+    }
+    /// An exchange whose response arrived at `clock`.
+    fn exchange_at(&mut self, clock: ClockSample) -> Option<Settlement> {
         let client = self.engine.sync_client_mut().unwrap();
         let request = client.request().unwrap();
         let receipt = request.command.as_ref().map(|command| Receipt {
@@ -315,8 +318,8 @@ fn configured_now_refuses_offline_without_saving_elsewhere() {
     );
 }
 
-/// The status says when Now can change, and the engine takes a change to Now
-/// exactly then: a view that follows the status never offers one that fails.
+/// The status says when Now can change, by the rule the engine applies to a
+/// change to Now: a view that follows a fresh status offers only what works.
 #[test]
 fn focus_available_is_when_the_engine_takes_a_change_to_now() {
     let mut f = Fixture::new();
@@ -382,4 +385,68 @@ fn a_standalone_queue_refuses_the_sync_requests() {
     assert!(engine.sync_envelope().is_none() && engine.sync_recovery().is_empty());
     assert_eq!(engine.sync_status_revision(), 0);
     fs::remove_dir_all(dir).unwrap();
+}
+
+/// A poll that brings nothing new changes neither revision, so the hosts
+/// neither rebuild their views nor tell anyone.
+#[test]
+fn an_identical_poll_bumps_neither_revision() {
+    let mut f = Fixture::new();
+    done(f.engine.add("a", None));
+    f.drain();
+    f.exchange();
+    let revisions = (f.engine.revision(), f.engine.sync_status_revision());
+    for _ in 0..3 {
+        assert!(f.exchange().is_none());
+        f.engine.refresh_sync(ClockSample::now().unwrap());
+    }
+    assert_eq!(
+        (f.engine.revision(), f.engine.sync_status_revision()),
+        revisions
+    );
+}
+
+/// Availability is the status's as of its last refresh. Left unrefreshed
+/// past freshness, it still offers a change to Now, which the engine then
+/// refuses by its own clock; a refresh withdraws the offer, and changes the
+/// status without counting as a change to the queue.
+#[test]
+fn availability_is_as_of_the_last_refresh_and_lapsing_changes_only_the_status() {
+    let mut f = Fixture::new();
+    let a = done(f.engine.add("a", None)).value;
+    f.drain();
+    // A response read six seconds ago, and the status taken then.
+    let mut then = ClockSample::now().unwrap();
+    then.boot -= (FRESH_SECS + 1) * 1_000_000_000;
+    f.exchange_at(then);
+    assert!(
+        f.engine.sync_status().unwrap().focus_available,
+        "as of then"
+    );
+    let revisions = (f.engine.revision(), f.engine.sync_status_revision());
+
+    f.engine.refresh_sync(ClockSample::now().unwrap());
+    let status = f.engine.sync_status().unwrap();
+    assert!(!status.focus_available);
+    assert_eq!(status.state, ConnectionState::Offline);
+    assert_eq!(f.engine.revision(), revisions.0, "the queue is as it was");
+    assert_eq!(f.engine.sync_status_revision(), revisions.1 + 1);
+
+    // A stale offer taken anyway is refused, and nothing is sent.
+    f.exchange_at(then);
+    assert!(
+        f.engine.sync_status().unwrap().focus_available,
+        "stale again"
+    );
+    match f.engine.promote(a) {
+        Err(EngineError::InvalidArgument(message)) => {
+            assert!(message.contains("wait for sync"), "{message}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(f.engine.sync_envelope().unwrap().pending.is_empty());
+    assert!(
+        !f.engine.sync_status().unwrap().focus_available,
+        "refreshed"
+    );
 }

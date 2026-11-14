@@ -42,8 +42,11 @@ pub struct SyncStatus {
     pub message: Option<String>,
     /// The one line a view shows for sync.
     pub summary: String,
-    /// Whether Now and its timer can be changed. Each change to them needs a
-    /// fresh answer from the server and nothing else waiting to be sent.
+    /// Whether Now and its timer could be changed when the status was taken:
+    /// each change to them needs a fresh answer from the server and nothing
+    /// else waiting to be sent. The engine checks again when asked, so a
+    /// status left unrefreshed past freshness only offers a change that is
+    /// then refused, never lets one through.
     pub focus_available: bool,
     /// Commands saved here and not yet confirmed.
     pub pending: usize,

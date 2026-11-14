@@ -293,9 +293,12 @@ focus command and eligible server `undo: {task, command, title, remaining}`.
 The status also carries what the views show, decided once in
 `qf_core::sync::status` rather than in each host: `summary`, the one line
 that says how sync stands, and `focus_available`, whether Now and its timer
-can change. That is exactly when the engine takes a focus command: a fresh
-server response and nothing else in the journal. Hosts disable the controls
-that change Now while it is false. An extension running against an older
+can change. It is the rule the engine applies to a focus command (a fresh
+server response and nothing else in the journal) as of the status's last
+refresh. The engine checks again against its own clock, so a status read
+after freshness lapsed without a refresh can only offer a change that is
+then refused. Hosts refresh on every tick and disable the controls that
+change Now while it is false. An extension running against an older
 service, which lacks both fields, falls back to `state == online && pending
 == 0` and the raw `message`.
 A `CommandSettled` signal reports a durably processed receipt; FFI drains
